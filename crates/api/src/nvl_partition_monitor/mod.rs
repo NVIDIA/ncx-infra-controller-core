@@ -1262,7 +1262,12 @@ impl NvlPartitionMonitor {
                     db_partition_nmx_m_id,
                 )) = partition_ctx.get_db_partition_info(&nmxm_partition.id)
                 else {
-                    tracing::error!("No partition found with nmx_m_id = {}", nmxm_partition.id);
+                    if !is_nmx_m_default_partition(nmxm_partition) {
+                        tracing::error!(
+                            "No partition found with nmx_m_id = {} while processing removal of GPU {gpu:?} in admin network",
+                            nmxm_partition.id,
+                        );
+                    }
                     continue;
                 };
 
