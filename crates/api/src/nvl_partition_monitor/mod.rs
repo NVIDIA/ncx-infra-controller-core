@@ -1566,7 +1566,7 @@ impl NvlPartitionMonitor {
                             continue;
                         }
                     };
-                    let result = nmxm_client
+                    let get_operation_result = nmxm_client
                         .get_operation(operation_id.to_string())
                         .await
                         .map_err(|e| {
@@ -1577,10 +1577,10 @@ impl NvlPartitionMonitor {
                             ))
                         })?;
 
-                    match result.status {
+                    match get_operation_result.status {
                         libnmxm::nmxm_model::OperationStatus::Completed => {
                             tracing::info!(
-                                "Operation {operation:?} for logical partition {logical_partition_id} completed successfully"
+                                "Operation {get_operation_result:?} for logical partition {logical_partition_id} completed successfully"
                             );
                             completed_operations_for_this_logical_partition.push(operation.clone());
                             operations_to_remove.push(*logical_partition_id);
@@ -1600,9 +1600,17 @@ impl NvlPartitionMonitor {
                                 .push(start_time.elapsed());
                         }
                         libnmxm::nmxm_model::OperationStatus::Failed => {
-                            tracing::error!(
-                                "Operation {operation:?} for logical partition {logical_partition_id} failed with error"
-                            );
+                            if let Some(result) = get_operation_result.result.clone() {
+                                let error = result.error.unwrap_or_default();
+                                let error_details = result.details.unwrap_or_default();
+                                tracing::error!(
+                                    "Operation {get_operation_result:?} for logical partition {logical_partition_id} failed with error: {error} {error_details}"
+                                );
+                            } else {
+                                tracing::error!(
+                                    "Operation {get_operation_result:?} for logical partition {logical_partition_id} failed with unknown error"
+                                );
+                            }
                             operations_to_remove.push(*logical_partition_id);
 
                             let applied_change = AppliedChange {
