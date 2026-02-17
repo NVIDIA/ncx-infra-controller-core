@@ -80,8 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let config = nras::Config {
-        nras_url: args.nras_url.clone(),
-        nras_gpu_url_suffix: args.nras_gpu_url_suffix.clone(),
+        nras_url: args.nras_url,
+        nras_gpu_url_suffix: args.nras_gpu_url_suffix,
         nras_jwks_url,
         ..Default::default()
     };
