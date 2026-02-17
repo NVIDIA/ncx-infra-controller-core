@@ -1375,7 +1375,7 @@ pub async fn update_dpu_reprovision_explicit_start_time(
 ) -> Result<(), DatabaseError> {
     let query = r#"UPDATE machines
                         SET reprovisioning_requested=
-                                    jsonb_set(host_reprovisioning_requested,
+                                    jsonb_set(reprovisioning_requested,
                                                 '{started_at}', $2, true)
                        WHERE id=$1 RETURNING id"#;
     let _id = sqlx::query_as::<_, MachineId>(query)
