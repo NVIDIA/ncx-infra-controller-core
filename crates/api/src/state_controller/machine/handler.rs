@@ -8681,6 +8681,7 @@ async fn needs_ipmi_restart(
 }
 
 /// Perform an IPMI chassis power reset for the given machine
+#[allow(txn_held_across_await)]
 async fn do_ipmi_restart(
     machine: &Machine,
     ctx: &mut StateHandlerContext<'_, MachineStateHandlerContextObjects>,
