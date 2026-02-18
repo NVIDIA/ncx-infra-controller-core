@@ -1668,7 +1668,6 @@ pub mod test_support {
             &self,
             _controller_id: &str,
             _volume_name: &str,
-            _raid_type: &str,
         ) -> Result<Option<String>, RedfishError> {
             Ok(None)
         }
