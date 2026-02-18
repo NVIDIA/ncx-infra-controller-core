@@ -99,7 +99,7 @@ impl StateHandler for IBPartitionStateHandler {
                                     let mut txn = ctx.services.db_pool.begin().await?;
                                     let instance_count =
                                         db::ib_partition::count_instances_referencing_partition(
-                                            &mut txn,
+                                            txn.as_mut(),
                                             *partition_id,
                                         )
                                         .await?;

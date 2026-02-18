@@ -1130,19 +1130,14 @@ async fn test_count_instances_referencing_partition(pool: sqlx::PgPool) {
     .await;
 
     // No instances yet — count should be 0
-    let mut txn = env.pool.begin().await.unwrap();
-    let count = db::ib_partition::count_instances_referencing_partition(
-        &mut txn,
-        ib_partition_id,
-    )
-    .await
-    .unwrap();
-    txn.commit().await.unwrap();
+    let count = db::ib_partition::count_instances_referencing_partition(&env.pool, ib_partition_id)
+        .await
+        .unwrap();
     assert_eq!(count, 0, "No instances should reference the partition yet");
 
     // Create a managed host and an instance with two IB interfaces both
-    // referencing the same partition. The count query uses EXISTS so it
-    // should still return 1 (one instance), not 2.
+    // referencing the same partition. The count query uses containment (@>)
+    // so it should still return 1 (one instance), not 2.
     let mh = create_managed_host(&env).await;
     let ib_config = rpc::forge::InstanceInfinibandConfig {
         ib_interfaces: vec![
@@ -1168,15 +1163,13 @@ async fn test_count_instances_referencing_partition(pool: sqlx::PgPool) {
         create_instance_with_ib_config(&env, &mh, ib_config, segment_id).await;
 
     // Two interfaces reference the partition, but it's one instance — count should be 1
-    let mut txn = env.pool.begin().await.unwrap();
-    let count = db::ib_partition::count_instances_referencing_partition(
-        &mut txn,
-        ib_partition_id,
-    )
-    .await
-    .unwrap();
-    txn.commit().await.unwrap();
-    assert_eq!(count, 1, "One instance (with two IB interfaces) should be counted once");
+    let count = db::ib_partition::count_instances_referencing_partition(&env.pool, ib_partition_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "One instance (with two IB interfaces) should be counted once"
+    );
 
     // Mark the instance as deleted (set the deleted timestamp).
     let mut txn = env.pool.begin().await.unwrap();
@@ -1188,14 +1181,9 @@ async fn test_count_instances_referencing_partition(pool: sqlx::PgPool) {
     txn.commit().await.unwrap();
 
     // After mark_as_deleted, count should still be 1 (instance row still exists)
-    let mut txn = env.pool.begin().await.unwrap();
-    let count = db::ib_partition::count_instances_referencing_partition(
-        &mut txn,
-        ib_partition_id,
-    )
-    .await
-    .unwrap();
-    txn.commit().await.unwrap();
+    let count = db::ib_partition::count_instances_referencing_partition(&env.pool, ib_partition_id)
+        .await
+        .unwrap();
     assert_eq!(
         count, 1,
         "Instance marked as deleted should still be counted (cleanup not finished)"
@@ -1214,14 +1202,9 @@ async fn test_count_instances_referencing_partition(pool: sqlx::PgPool) {
         .unwrap();
     txn.commit().await.unwrap();
 
-    let mut txn = env.pool.begin().await.unwrap();
-    let count = db::ib_partition::count_instances_referencing_partition(
-        &mut txn,
-        ib_partition_id,
-    )
-    .await
-    .unwrap();
-    txn.commit().await.unwrap();
+    let count = db::ib_partition::count_instances_referencing_partition(&env.pool, ib_partition_id)
+        .await
+        .unwrap();
     assert_eq!(
         count, 0,
         "No instances should reference the partition after final delete"
@@ -1307,10 +1290,7 @@ async fn test_postpone_partition_deletion_while_instances_reference_it(pool: sql
         .unwrap();
     let guids: Vec<String> = ports.into_iter().map(|p| p.guid).collect();
     if !guids.is_empty() {
-        ib_conn
-            .unbind_ib_ports(pkey_u16, guids)
-            .await
-            .unwrap();
+        ib_conn.unbind_ib_ports(pkey_u16, guids).await.unwrap();
     }
 
     // Delete the partition via the API (marks it for deletion).
@@ -1438,28 +1418,20 @@ async fn test_count_instances_multi_partition_multi_interface(pool: sqlx::PgPool
     let segment_id = env.create_vpc_and_tenant_segment().await;
 
     // Create two partitions: A and B
-    let (partition_a_id, _) = create_ib_partition(
-        &env,
-        "partition_a".to_string(),
-        DEFAULT_TENANT.to_string(),
-    )
-    .await;
-    let (partition_b_id, _) = create_ib_partition(
-        &env,
-        "partition_b".to_string(),
-        DEFAULT_TENANT.to_string(),
-    )
-    .await;
+    let (partition_a_id, _) =
+        create_ib_partition(&env, "partition_a".to_string(), DEFAULT_TENANT.to_string()).await;
+    let (partition_b_id, _) =
+        create_ib_partition(&env, "partition_b".to_string(), DEFAULT_TENANT.to_string()).await;
 
     // No instances yet — both counts should be 0
-    let mut txn = env.pool.begin().await.unwrap();
-    let count_a = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_a_id,
-    ).await.unwrap();
-    let count_b = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_b_id,
-    ).await.unwrap();
-    txn.commit().await.unwrap();
+    let count_a =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_a_id)
+            .await
+            .unwrap();
+    let count_b =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_b_id)
+            .await
+            .unwrap();
     assert_eq!(count_a, 0, "No instances should reference partition A yet");
     assert_eq!(count_b, 0, "No instances should reference partition B yet");
 
@@ -1469,16 +1441,14 @@ async fn test_count_instances_multi_partition_multi_interface(pool: sqlx::PgPool
 
     // Instance 1 (host 1): 1 IB interface bound to partition A
     let ib_config_1 = rpc::forge::InstanceInfinibandConfig {
-        ib_interfaces: vec![
-            rpc::forge::InstanceIbInterfaceConfig {
-                function_type: rpc::forge::InterfaceFunctionType::Physical as i32,
-                virtual_function_id: None,
-                ib_partition_id: Some(partition_a_id),
-                device: "MT2910 Family [ConnectX-7]".to_string(),
-                vendor: None,
-                device_instance: 0,
-            },
-        ],
+        ib_interfaces: vec![rpc::forge::InstanceIbInterfaceConfig {
+            function_type: rpc::forge::InterfaceFunctionType::Physical as i32,
+            virtual_function_id: None,
+            ib_partition_id: Some(partition_a_id),
+            device: "MT2910 Family [ConnectX-7]".to_string(),
+            vendor: None,
+            device_instance: 0,
+        }],
     };
 
     // Instance 2 (host 2): 3 IB interfaces — 2 on partition A, 1 on partition B
@@ -1511,23 +1481,27 @@ async fn test_count_instances_multi_partition_multi_interface(pool: sqlx::PgPool
         ],
     };
 
-    let (tinstance1, _) =
-        create_instance_with_ib_config(&env, &mh1, ib_config_1, segment_id).await;
-    let (tinstance2, _) =
-        create_instance_with_ib_config(&env, &mh2, ib_config_2, segment_id).await;
+    let (tinstance1, _) = create_instance_with_ib_config(&env, &mh1, ib_config_1, segment_id).await;
+    let (tinstance2, _) = create_instance_with_ib_config(&env, &mh2, ib_config_2, segment_id).await;
 
     // Partition A: referenced by instance 1 (1 iface) and instance 2 (2 ifaces) → count = 2
     // Partition B: referenced by instance 2 only (1 iface) → count = 1
-    let mut txn = env.pool.begin().await.unwrap();
-    let count_a = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_a_id,
-    ).await.unwrap();
-    let count_b = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_b_id,
-    ).await.unwrap();
-    txn.commit().await.unwrap();
-    assert_eq!(count_a, 2, "Both instances reference partition A → count should be 2");
-    assert_eq!(count_b, 1, "Only instance 2 references partition B → count should be 1");
+    let count_a =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_a_id)
+            .await
+            .unwrap();
+    let count_b =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_b_id)
+            .await
+            .unwrap();
+    assert_eq!(
+        count_a, 2,
+        "Both instances reference partition A → count should be 2"
+    );
+    assert_eq!(
+        count_b, 1,
+        "Only instance 2 references partition B → count should be 1"
+    );
 
     // Soft-delete instance 1 (mark as deleted). Row still in DB, counts unchanged.
     let mut txn = env.pool.begin().await.unwrap();
@@ -1538,16 +1512,22 @@ async fn test_count_instances_multi_partition_multi_interface(pool: sqlx::PgPool
         .unwrap();
     txn.commit().await.unwrap();
 
-    let mut txn = env.pool.begin().await.unwrap();
-    let count_a = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_a_id,
-    ).await.unwrap();
-    let count_b = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_b_id,
-    ).await.unwrap();
-    txn.commit().await.unwrap();
-    assert_eq!(count_a, 2, "Soft-deleted instance 1 still counted for partition A");
-    assert_eq!(count_b, 1, "Partition B unaffected by instance 1 soft-delete");
+    let count_a =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_a_id)
+            .await
+            .unwrap();
+    let count_b =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_b_id)
+            .await
+            .unwrap();
+    assert_eq!(
+        count_a, 2,
+        "Soft-deleted instance 1 still counted for partition A"
+    );
+    assert_eq!(
+        count_b, 1,
+        "Partition B unaffected by instance 1 soft-delete"
+    );
 
     // Must delete instance_addresses first due to FK constraint.
     let mut txn = env.pool.begin().await.unwrap();
@@ -1565,15 +1545,18 @@ async fn test_count_instances_multi_partition_multi_interface(pool: sqlx::PgPool
 
     // Partition A drops to 1 (only instance 2 remains).
     // Partition B stays at 1 (instance 2 still references it).
-    let mut txn = env.pool.begin().await.unwrap();
-    let count_a = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_a_id,
-    ).await.unwrap();
-    let count_b = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_b_id,
-    ).await.unwrap();
-    txn.commit().await.unwrap();
-    assert_eq!(count_a, 1, "After hard-deleting instance 1, only instance 2 references partition A");
+    let count_a =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_a_id)
+            .await
+            .unwrap();
+    let count_b =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_b_id)
+            .await
+            .unwrap();
+    assert_eq!(
+        count_a, 1,
+        "After hard-deleting instance 1, only instance 2 references partition A"
+    );
     assert_eq!(count_b, 1, "Instance 2 still references partition B");
 
     let mut txn = env.pool.begin().await.unwrap();
@@ -1590,14 +1573,20 @@ async fn test_count_instances_multi_partition_multi_interface(pool: sqlx::PgPool
     txn.commit().await.unwrap();
 
     // Both counts should be 0
-    let mut txn = env.pool.begin().await.unwrap();
-    let count_a = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_a_id,
-    ).await.unwrap();
-    let count_b = db::ib_partition::count_instances_referencing_partition(
-        &mut txn, partition_b_id,
-    ).await.unwrap();
-    txn.commit().await.unwrap();
-    assert_eq!(count_a, 0, "No instances reference partition A after both hard-deleted");
-    assert_eq!(count_b, 0, "No instances reference partition B after both hard-deleted");
+    let count_a =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_a_id)
+            .await
+            .unwrap();
+    let count_b =
+        db::ib_partition::count_instances_referencing_partition(&env.pool, partition_b_id)
+            .await
+            .unwrap();
+    assert_eq!(
+        count_a, 0,
+        "No instances reference partition A after both hard-deleted"
+    );
+    assert_eq!(
+        count_b, 0,
+        "No instances reference partition B after both hard-deleted"
+    );
 }
