@@ -31,7 +31,7 @@ sed -e 's|/.*carbide/dev|'"$CUR_DIR"'/dev|' < dev/mac-local-dev/carbide-api-conf
 export DATABASE_URL="postgresql://postgres:admin@localhost"
 
 export CARBIDE_WEB_AUTH_TYPE=oauth2
-export CARBIDE_WEB_OAUTH2_CLIENT_SECRET="$(sops -d forged/bases/carbide/api/secrets/azure-carbide-web-sso-NONPRODUCTION.enc.yaml  | sed -En 's/.*client_secret: (.*)/\1/p' | base64 -d)"
+export CARBIDE_WEB_OAUTH2_CLIENT_SECRET=${CARBIDE_WEB_OAUTH2_CLIENT_SECRET:unset}
 export CARBIDE_WEB_PRIVATE_COOKIEJAR_KEY="$(openssl rand -base64 64)"
 
 export VAULT_ADDR="http://localhost:8200"

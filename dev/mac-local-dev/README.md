@@ -4,18 +4,12 @@ Notes:
 - technically you can start machine-a-tron but it is useless on a Mac since its magic relies on Linux-specific features. It may work in docker on Mac...
 - which is why we should run carbide on Mac in docker too. But for now this run native on Mac.
 
-Assumptions:
-- ~/.config/sops/age/keys.txt exists with content similar to 'AGE-SECRET-KEY-1MUQYH7VZ9RZ5ZWQ602A3ZCEJXU0T03W59C0C7S59RZ5TUVD70N5Q8239HT'
-
 ## To run carbide from the carbide directory:
-```bash
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt FORGED_DIRECTORY="$(pwd)/../forged" just run-mac-carbide
-```
 This will setup everything and run carbide-api binary.
 
 You can verify carbide-api is running by doing:
 ```bash
-grpcurl -plaintext localhost:1079 list 
+grpcurl -plaintext localhost:1079 list
 ````
 If you configure carbide to run with TLS , you can do:
 ```bash
@@ -36,17 +30,13 @@ It should output something like:
 # required variables to run carbide-api:
 export VAULT_PKI_ROLE_NAME=role
 export VAULT_ADDR=http://localhost:8200
-export CARBIDE_WEB_OAUTH2_CLIENT_SECRET=cVS8Q~wY2EC8QU~qhgDbbpFuAdfCUap5864bMcO0
+export CARBIDE_WEB_OAUTH2_CLIENT_SECRET=<set to azure config>
 export VAULT_PKI_MOUNT_LOCATION=certs
 export VAULT_KV_MOUNT_LOCATION=secrets
-export VAULT_TOKEN=hvs.fwlLLz8J7LfFchupSRf6le2U
+export VAULT_TOKEN=<set to localdev test token>
 export CARBIDE_WEB_AUTH_TYPE=oauth2
-export CARBIDE_WEB_PRIVATE_COOKIEJAR_KEY=hFMh7Dasr8BHPGap86rEOr2OrzoOaXR1MEOlI3sYHvMNcJAz2eNnrNvsNO1BtOkP
+export CARBIDE_WEB_PRIVATE_COOKIEJAR_KEY=<encoded base64 for cookie encryption>
 export DATABASE_URL=postgresql://postgres:admin@localhost
-
-# variables on a single line to feed IntelliJ run configuration:
-VAULT_PKI_ROLE_NAME=role;VAULT_ADDR=http://localhost:8200;CARBIDE_WEB_OAUTH2_CLIENT_SECRET=cVS8Q~wY2EC8QU~qhgDbbpFuAdfCUap5864bMcO0;VAULT_PKI_MOUNT_LOCATION=certs;VAULT_KV_MOUNT_LOCATION=secrets;VAULT_TOKEN=hvs.fwlLLz8J7LfFchupSRf6le2U;CARBIDE_WEB_AUTH_TYPE=oauth2;CARBIDE_WEB_PRIVATE_COOKIEJAR_KEY=hFMh7Dasr8BHPGap86rEOr2OrzoOaXR1MEOlI3sYHvMNcJAz2eNnrNvsNO1BtOkP
-```
 
 You will need to create/modify a run configuration for carbide-api.
 - cargo command parameters:
@@ -85,27 +75,12 @@ Start the elektra-site-agent:
 cd cloud-local
 scripts/setup-site.sh
 ````
-# Exposing a remote 'dev' carbide-api to cloud-local
 
-BEFORE setting the cloud-local environment you MUST configure auth by replacing 'kas-legacy' in `deploy/kustomize/overlays/local/configmap.yaml` by the following:
-```yaml
-- name: nvidia
-  origin: 4 # TokenOriginCustom
-  url: https://stg.authn.nvidia.com/pubJWKS
-  issuer: "stg.auth.ngc.nvidia.com"
-  serviceAccount: True
-```
-
-Setup cloud-local (<8m):
-```bash
-cd cloud-local
-scripts/setup-forge-cloud.sh --clean
-```
 
 Make available the local carbide-api to cloud-local by running:
 - use SSH port forwarding to expose carbide-api running remotely on your local machine.<br>
   Example: `ssh -L 10443:10.217.117.194:443 mydev`
-  You can check access by going to 
+  You can check access by going to
 - configure cloud-local to use your remote carbide-api by running:
 ```bash
 cd cloud-local

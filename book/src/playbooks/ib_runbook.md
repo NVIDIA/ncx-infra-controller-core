@@ -176,7 +176,7 @@ Update the password of the admin as follows. The default password of the admin i
 * Maximum length is 30, composed of alphanumeric and "_" characters
 
 ```
-root:/# curl -s -k -XPUT -H "Content-Type: application/json" -u admin:123456 -d '{"password": "45364nnfgd"}' https://172.16.110.44:443/ufmRest/app/users/admin
+root:/# curl -s -k -XPUT -H "Content-Type: application/json" -u admin:123456 -d '{"password": "45364nnfgd"}' https://ufm.example.org:443/ufmRest/app/users/admin
 {
   "name": "admin"
 }
@@ -185,9 +185,9 @@ root:/# curl -s -k -XPUT -H "Content-Type: application/json" -u admin:123456 -d 
 Generate a token for admin as follows:
 
 ```
-root:/# curl -s -k -XPOST -u admin:45364nnfgd https://172.16.110.44:443/ufmRest/app/tokens | jq
+root:/# curl -s -k -XPOST -u admin:x https://ufm.example.org:443/ufmRest/app/tokens | jq
 {
-  "access_token": "XlojlA7zgotVegyIEIP5vnw5C7ZYT9",
+  "access_token": "x",
   "revoked": false,
   "issued_at": 1711608244,
   "expires_in": 315360000,
@@ -226,10 +226,10 @@ Follow the instructions in the section that applies to the selected option.
 Get the token of the admin user in UFM in above step, or get it again by following the rest api (the password of the admin user is required to get the token):
 
 ```
-root:/# curl -s -k -XGET -u admin:45364nnfgd https://172.16.110.44:443/ufmRest/app/tokens | jq
+root:/# curl -s -k -XGET -u admin:password https://ufm:443/ufmRest/app/tokens | jq
 [
   {
-    "access_token": "XlojlA7zgotVegyIEIP5vnw5C7ZYT9",
+    "access_token": "token",
     "revoked": false,
     "issued_at": 1711609276,
     "expires_in": 315360000,
