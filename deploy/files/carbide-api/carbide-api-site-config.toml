@@ -21,7 +21,7 @@ dhcp_servers = ["CARBIDE_DHCP_EXTERNAL_IP"]
 #   "FRR_ROUTING_2_EXTERNAL_IP"
 # ]
 enable_route_servers = true
-initial_domain_name = "ENVIORNMENT_NAME.frg.nvidia.com"
+initial_domain_name = "ENVIORNMENT_NAME.example.com"
 sitename = "ENVIORNMENT_NAME"
 attestation_enabled = false
 bypass_rbac = true

@@ -68,6 +68,6 @@ See [carbide-admin-cli access on a Carbide cluster](../sites/forge_admin_cli.md)
 ### 3. Execute the `carbide-admin-cli instance reboot --custom-pxe` command
 
 ```
-carbide-admin-cli -f json -c https://api-dev4.frg.nvidia.com/ instance reboot --custom-pxe -i 26204c21-83ac-445e-8ea7-b9130deb6315
+carbide-admin-cli -f json -c https://127.0.0.1079/ instance reboot --custom-pxe -i 26204c21-83ac-445e-8ea7-b9130deb6315
 Reboot for instance 26204c21-83ac-445e-8ea7-b9130deb6315 (machine fm100hti4deucakqqgteo692efnfo7egh7pq1lkl7vkgas4o6e0c42hnb80) is requested successfully!
 ```

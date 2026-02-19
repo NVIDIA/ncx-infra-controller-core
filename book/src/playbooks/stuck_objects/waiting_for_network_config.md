@@ -33,15 +33,11 @@ not met by inspecting the last report from the Host and DPUs
   - ```
     carbide-admin-cli machine network status
     ```
-- via Forge Admin Web UI:
-  - [https://api-pdx01.frg.nvidia.com/admin/managed-host/fm100psa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg](https://api-pdx01.frg.nvidia.com/admin/managed-host/fm100psa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg)
-  - [https://api-pdx01.frg.nvidia.com/admin/machine/fm100psa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg](https://api-pdx01.frg.nvidia.com/admin/machine/fm100psa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg)
-  - [https://api-pdx01.frg.nvidia.com/admin/machine/fm100dsa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg](https://api-pdx01.frg.nvidia.com/admin/machine/fm100dsa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg)
 
 E.g. in the following report
 ```
 /opt/carbide/carbide-admin-cli managed-host show fm100psa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg
-Hostname    : 10-217-18-95
+Hostname    : 192-168-18-95
 State       : DPUInitializing/WaitingForNetworkConfig
     Time in State : 296 days and 29 minutes
     State SLA     : 30 minutes
@@ -52,7 +48,7 @@ Host:
 ----------------------------------------
   ID                    : fm100psa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg
   Memory                : Unknown
-  Admin IP              : 10.217.18.95
+  Admin IP              : 192.168.18.95
   Admin MAC             : B8:3F:D2:B7:70:64
   Health
     Probe Alerts        : HeartbeatTimeout [Target: forge-dpu-agent]:
@@ -74,12 +70,12 @@ DPU0:
   Last seen             : 2023-12-13 17:24:15.454965 UTC
   Serial Number         : MT2244XZ022R
   BIOS Version          : BlueField:3.9.3-7-g8f2d8ca
-  Admin IP              : 10.217.134.233
+  Admin IP              : 192.168.134.233
   Admin MAC             : B8:3F:D2:B7:70:72
   BMC
     Version             : 1
     Firmware Version    : 2.08
-    IP                  : 10.217.134.234
+    IP                  : 192.168.134.234
     MAC                 : B8:3F:D2:B7:70:66
   Health
     Probe Alerts        : HeartbeatTimeout [Target: forge-dpu-agent]: No health data was received from DPU
@@ -111,8 +107,7 @@ The network status details show:
 ```
 
 In this case we learn that the DPU was alive before, and acknowledged network config version `V2-T1702485344893918`. This is still the desired network configuration version for
-this DPU. The target configuration for a DPU can be found on the `Network Config` block
-the DPU page in the admin Web UI: [https://api-pdx01.frg.nvidia.com/admin/machine/fm100dsa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg](https://api-pdx01.frg.nvidia.com/admin/machine/fm100dsa0aqpqvll7vi4jfrvtqv058mo8ifb0vtg761j06sqhq466b0slmg)
+this DPU. The target configuration for a DPU can be found on the `Network Config` block the DPU page in the admin Web UI.
 
 The summary for this example is that the Machine is stuck because the DPU
 - is either not healthy at all (e.g. not booted)
@@ -146,10 +141,8 @@ infrastructure. They can be queried from there via Loki.
 Search strings for DPU can be:
 ```
 {systemd_unit="forge-dpu-agent.service", machine_id="fm100ds006eliqt3u4h65ou9ebrqfq9th2jf39qqki68k9ueu2amearv47g"}
-{systemd_unit="forge-dpu-agent.service", host_name="10-217-155-135.dev3.frg.nvidia.com"}
+{systemd_unit="forge-dpu-agent.service", host_name="192-168-155-135.bmm.example.org"}
 ```
-
-These can be used in the Grafana Explore Screen, e.g. [like here](https://grafana-dev3.frg.nvidia.com/explore?panes=%7B%22uNJ%22:%7B%22datasource%22:%22P8E80F9AEF21F6940%22,%22queries%22:%5B%7B%22refId%22:%22A%22,%22expr%22:%22%7Bsystemd_unit%3D%5C%22forge-dpu-agent.service%5C%22,%20host_name%3D%5C%2210-217-155-135.dev3.frg.nvidia.com%5C%22%7D%22,%22queryType%22:%22range%22,%22datasource%22:%7B%22type%22:%22loki%22,%22uid%22:%22P8E80F9AEF21F6940%22%7D,%22editorMode%22:%22code%22%7D%5D,%22range%22:%7B%22from%22:%22now-6h%22,%22to%22:%22now%22%7D%7D%7D&schemaVersion=1&orgId=1).
 
 **Note that the query using the MachineId will only work if the DPU once had been fully ingested
 and is aware of its Machine ID. Otherwise only searches by `host_name` will work.**
@@ -184,9 +177,7 @@ their workloads. Only perform these step if its clear that the Tenant no longer 
 If the DPU is unresponsive, powering off the Host and back on can help. This will
 restart the DPU.
 
-The Host can be powercycled using the Explored-Endpoint view in the Admin Web UI,
-e.g. [https://api-dev3.frg.nvidia.com/admin/explored-endpoint/10.217.155.16](https://api-dev3.frg.nvidia.com/admin/explored-endpoint/10.217.155.16).
-The DPU Machine details page will link to the explored endpoint by clicking on the DPU BMC IP.
+The Host can be powercycled using the Explored-Endpoint view in the Admin Web UI, The DPU Machine details page will link to the explored endpoint by clicking on the DPU BMC IP.
 
 ### Restarting forge-dpu-agent
 

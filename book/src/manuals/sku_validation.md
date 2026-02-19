@@ -122,8 +122,6 @@ Some example SKU names:
 You can view all the SKUs for a site, and click into their specific configurations and list assigned machines
 by visting the admin page for a site and clicking "SKUs" from the left-side navigation bar.
 
-e.g. [https://api-pdx01.frg.nvidia.com/admin/sku](https://api-pdx01.frg.nvidia.com/admin/sku)
-
 ### Viewing SKU information
 
 There are 2 commands for showing information related to SKUs:

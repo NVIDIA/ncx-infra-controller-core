@@ -35,12 +35,10 @@ Wait for 5 minutes after restarting the service and check the metrics again:
 ```bash
 curl http://127.0.0.1:9999/metrics | grep telemetry_stats
 ...
-telemetry_stats_log_records_total{component="telemetry_stats",grouping="logs_by_component",host_name="10-217-134-165.pdx01.frg.nvidia.com",http_scheme="http",instance="127.0.0.1:8890",job="log-stats",log_component="journald",machine_id="fm100ds5eue9nh4kmhb2mkdh1jrthqso8r3lve4jvn51biitt509s86e8gg",net_host_port="8890",service_instance_id="127.0.0.1:8890",service_name="log-stats",source="telemetrystatsprocessor:0.0.1",systemd_unit="kernel"} 20
+telemetry_stats_log_records_total{component="telemetry_stats",grouping="logs_by_component",host_name="192-168-134-165.bmm.example.org",http_scheme="http",instance="127.0.0.1:8890",job="log-stats",log_component="journald",machine_id="fm100ds5eue9nh4kmhb2mkdh1jrthqso8r3lve4jvn51biitt509s86e8gg",net_host_port="8890",service_instance_id="127.0.0.1:8890",service_name="log-stats",source="telemetrystatsprocessor:0.0.1",systemd_unit="kernel"} 20
 ...
 ```
-In this example the host_name is now set to 10-217-134-165.pdx01.frg.nvidia.com.
-
-For further information on this specific issue, please refer to [NVBugs 5318791](https://nvbugspro.nvidia.com/bug/5318791)
+In this example the host_name is now set to 192-168-134-165.bmm.example.org.
 
 5. Check carbide-hardware-health pod for errors scraping information from the IP address for the DPU:
 ```bash

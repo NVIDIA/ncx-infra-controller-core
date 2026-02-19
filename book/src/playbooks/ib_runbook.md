@@ -258,7 +258,7 @@ Note:
 - `<ufm host name>` should be as `default.ufm.forge`, `default.ufm.<site domain name>`. Where <site domain name> is taken from `initial_domain_name` BMM configuration parameter.
 ```
 openssl x509 -in server.crt -text -noout | grep DNS
-                DNS:default.ufm.forge, DNS:default.ufm.az22.frg.nvidia.com
+                DNS:default.ufm.forge, DNS:default.ufm.bmm.example.org
 ```
 - direct IP address is not supported.
 - for UFM version less than 6.18.0-5 following patch should be applied as

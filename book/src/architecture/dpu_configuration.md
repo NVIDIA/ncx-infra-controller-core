@@ -119,11 +119,11 @@ The isolated configuration is only applied when the site controller is unaware o
 {
   "asn": 4294967000,
   "dhcp_servers": [
-    "10.217.126.2"
+    "192.168.126.2"
   ],
   "vni_device": "vxlan48",
   "managed_host_config": {
-    "loopback_ip": "10.217.96.36",
+    "loopback_ip": "192.168.96.36",
     "quarantine_state": null
   },
   "managed_host_config_version": "V3-T1733950583707475",
@@ -132,13 +132,13 @@ The isolated configuration is only applied when the site controller is unaware o
     "function_type": 0,
     "vlan_id": 14,
     "vni": 0,
-    "gateway": "10.217.97.1/24",
-    "ip": "10.217.97.49",
-    "interface_prefix": "10.217.97.49/32",
+    "gateway": "192.168.97.1/24",
+    "ip": "192.168.97.49",
+    "interface_prefix": "192.168.97.49/32",
     "virtual_function_id": null,
     "vpc_prefixes": [],
-    "prefix": "10.217.97.0/24",
-    "fqdn": "10-217-97-49.dev3.frg.nvidia.com",
+    "prefix": "192.168.97.0/24",
+    "fqdn": "192.168-97-49.example.com",
     "booturl": null,
     "vpc_vni": 0,
     "svi_ip": null,
@@ -153,15 +153,15 @@ The isolated configuration is only applied when the site controller is unaware o
       "function_type": 0,
       "vlan_id": 16,
       "vni": 1025032,
-      "gateway": "10.217.98.1/26",
-      "ip": "10.217.98.11",
-      "interface_prefix": "10.217.98.11/32",
+      "gateway": "192.168.98.1/26",
+      "ip": "192.168.98.11",
+      "interface_prefix": "192.168.98.11/32",
       "virtual_function_id": null,
       "vpc_prefixes": [
-        "10.217.98.0/26"
+        "192.168.98.0/26"
       ],
-      "prefix": "10.217.98.0/26",
-      "fqdn": "10-217-98-11.unknowndomain",
+      "prefix": "192.168.98.0/26",
+      "fqdn": "192.168-98-11.unknowndomain",
       "booturl": null,
       "vpc_vni": 42,
       "svi_ip": null,
@@ -179,21 +179,21 @@ The isolated configuration is only applied when the site controller is unaware o
   "network_virtualization_type": 2,
   "vpc_vni": 42,
   "route_servers": [
-    "10.217.126.5",
-    "10.217.126.11",
-    "10.217.126.12"
+    "192.168.126.5",
+    "192.168.126.11",
+    "192.168.126.12"
   ],
   "remote_id": "c3046v74fnh6n4fs5kqvha0t76ub7ug7r9eh1dtilj0pe89eh99g",
   "deprecated_deny_prefixes": [
-    "10.217.4.128/26",
-    "10.217.98.0/24",
+    "192.168.4.128/26",
+    "192.168.98.0/24",
     "172.16.205.0/24"
   ],
   "dpu_network_pinger_type": "OobNetBind",
   "deny_prefixes": [],
   "site_fabric_prefixes": [
-    "10.217.4.128/26",
-    "10.217.98.0/24",
+    "192.168.4.128/26",
+    "192.168.98.0/24",
     "172.16.205.0/24"
   ],
   "vpc_isolation_behavior": 2,
