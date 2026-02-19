@@ -19,7 +19,7 @@
 //!
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::ops::Deref;
 use std::str::FromStr;
 
@@ -298,7 +298,7 @@ pub async fn find(
 
 pub async fn find_by_ip(
     txn: &mut PgConnection,
-    ip: &Ipv4Addr,
+    ip: &IpAddr,
 ) -> Result<Option<Machine>, DatabaseError> {
     lazy_static! {
         static ref query: String = format!(
@@ -517,7 +517,7 @@ pub async fn find_by_query(
         return find_one(txn, &id, MachineSearchConfig::default()).await;
     }
 
-    if let Ok(ip) = Ipv4Addr::from_str(query) {
+    if let Ok(ip) = IpAddr::from_str(query) {
         return find_by_ip(txn, &ip).await;
     }
 

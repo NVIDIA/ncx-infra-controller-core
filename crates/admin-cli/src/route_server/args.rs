@@ -40,8 +40,8 @@ pub enum Cmd {
 // file at start.
 #[derive(Parser, Debug)]
 pub struct AddressArgs {
-    #[arg(value_delimiter = ',', help = "Comma-separated list of IPv4 addresses")]
-    pub ip: Vec<std::net::Ipv4Addr>,
+    #[arg(value_delimiter = ',', help = "Comma-separated list of IP addresses")]
+    pub ip: Vec<std::net::IpAddr>,
 
     // The optional source_type to set. If unset, this
     // defaults to admin_api, which is what we'd expect.

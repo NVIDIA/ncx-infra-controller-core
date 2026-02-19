@@ -101,6 +101,43 @@ async fn test_find_machine_by_ip(pool: sqlx::PgPool) {
 }
 
 #[crate::sqlx_test]
+// test_find_machine_by_ipv6 is a super basic unit test to just
+// ensure `find_by_query` changes to accommodate `IpAddr` (and
+// as such IPv6), work as expected. This compliments the unit
+// test "test_find_machine_by_ip" above, which is IPv4.
+async fn test_find_machine_by_ipv6(pool: sqlx::PgPool) {
+    let env = create_test_env(pool.clone()).await;
+    let host_config = env.managed_host_config();
+    let dpu_machine_id = create_dpu_machine(&env, &host_config).await;
+
+    let mut txn = env.pool.begin().await.unwrap();
+    let dpu_machine =
+        db::machine::find_one(&mut txn, &dpu_machine_id, MachineSearchConfig::default())
+            .await
+            .unwrap()
+            .unwrap();
+    let interface_id = dpu_machine.interfaces[0].id;
+
+    // Add an IPv6 address to the interface.
+    let ipv6: IpAddr = "fd00::100".parse().unwrap();
+    sqlx::query("INSERT INTO machine_interface_addresses (interface_id, address) VALUES ($1, $2)")
+        .bind(interface_id)
+        .bind(ipv6)
+        .execute(&mut *txn)
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+
+    // Look up the machine by its IPv6 address.
+    let mut txn = pool.begin().await.unwrap();
+    let machine = db::machine::find_by_query(&mut txn, "fd00::100")
+        .await
+        .unwrap()
+        .expect("should find machine by IPv6 address");
+    assert_eq!(machine.id, dpu_machine_id);
+}
+
+#[crate::sqlx_test]
 async fn test_find_machine_without_sku(pool: sqlx::PgPool) {
     let env = create_test_env(pool).await;
     let mh = create_managed_host(&env).await;
