@@ -17,7 +17,7 @@
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::ops::Add;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -230,13 +230,13 @@ pub async fn setup_and_run(
 
         let nameservers = url_resolver.nameservers();
         ServiceAddresses {
-            pxe_ip,
-            ntpservers,
+            pxe_ip: pxe_ip.into(),
+            ntpservers: ntpservers.into_iter().map(IpAddr::from).collect(),
             nameservers,
         }
     } else {
         ServiceAddresses {
-            pxe_ip: Ipv4Addr::from([127, 0, 0, 1]),
+            pxe_ip: IpAddr::from([127, 0, 0, 1]),
             ntpservers: vec![],
             nameservers: vec![IpAddr::from([127, 0, 0, 1])],
         }

@@ -143,10 +143,14 @@ struct DhcpServerPaths {
     host_config: FPath,
 }
 
-/// Stores addresses of dependent services that the DHCP module announces
+/// Stores addresses of dependent services that the DHCP module announces.
+/// Note that these can apply to both IPv4 and IPv6; pxe_ip is actually
+/// UEFI HTTP boot in this case, and NTP is still NTP. We should be able
+/// to leverage this struct even in DHCPv6 land (whereas other things don't
+/// really carry through to DHCPv6).
 pub struct ServiceAddresses {
-    pub pxe_ip: Ipv4Addr,
-    pub ntpservers: Vec<Ipv4Addr>,
+    pub pxe_ip: IpAddr,
+    pub ntpservers: Vec<IpAddr>,
     pub nameservers: Vec<IpAddr>,
 }
 
@@ -519,6 +523,9 @@ pub async fn update_traffic_intercept_bridging(
         }
     };
 
+    // IPv4 only for now. Internal HBN bridge plumbing uses 169.254.x.x
+    // link-local addressing for DPU to HBN communication. An IPv6 equivalent
+    // (fe80:: or similar) may be needed in the future for dual-stack bridging.
     let bridge_prefix = bridge_config
         .internal_bridge_routing_prefix
         .parse::<Ipv4Net>()?;
@@ -1029,6 +1036,10 @@ pub async fn reset(
 // 2. Copy dhcp_config file
 // 3. Copy host_config file
 // 4. Reload supervisord
+//
+// This is currently scoped to IPv4 only, and there are
+// a few IPv4-specific checks for things like NTP servers,
+// UEFI HTTP/PXE IP, and nameservers below.
 fn write_dhcp_server_config(
     dhcp_relay_path: &FPath,
     dhcp_server_path: &DhcpServerPaths,
@@ -1093,7 +1104,11 @@ fn write_dhcp_server_config(
 
     let loopback_ip = mh_nc.loopback_ip.parse()?;
 
-    let nameservers = service_addrs
+    // Filter nameservers, NTP servers, and our UEFI HTTP server
+    // addresses to IPv4 for the DHCPv4 server config. Now that
+    // ServiceAddresses holds both families, we need to ensure
+    // DHCPv4 options only carry IPv4 addresses.
+    let nameservers_v4 = service_addrs
         .nameservers
         .iter()
         .filter_map(|x| match x {
@@ -1101,6 +1116,25 @@ fn write_dhcp_server_config(
             _ => None,
         })
         .collect::<Vec<Ipv4Addr>>();
+
+    let ntpservers_v4 = service_addrs
+        .ntpservers
+        .iter()
+        .filter_map(|x| match x {
+            IpAddr::V4(x) => Some(*x),
+            _ => None,
+        })
+        .collect::<Vec<Ipv4Addr>>();
+
+    let pxe_ip_v4 = match service_addrs.pxe_ip {
+        IpAddr::V4(v4) => v4,
+        IpAddr::V6(_) => {
+            return Err(eyre::eyre!(
+                "DHCPv4 server config requires an IPv4 PXE/UEFI HTTP boot address, got {}",
+                service_addrs.pxe_ip
+            ));
+        }
+    };
 
     let mut has_changes = false;
 
@@ -1120,12 +1154,8 @@ fn write_dhcp_server_config(
         Err(err) => tracing::error!("Write DHCP server {}: {err:#}", dhcp_server_path.server),
     }
 
-    let next_contents = dhcp::build_server_config(
-        service_addrs.pxe_ip,
-        service_addrs.ntpservers.clone(),
-        nameservers,
-        loopback_ip,
-    )?;
+    let next_contents =
+        dhcp::build_server_config(pxe_ip_v4, ntpservers_v4, nameservers_v4, loopback_ip)?;
     match write(
         next_contents,
         &dhcp_server_path.config,
@@ -2974,11 +3004,11 @@ mod tests {
         let ip = FPath(PathBuf::from(i.path()));
 
         let service_addrs = ServiceAddresses {
-            pxe_ip: Ipv4Addr::from([10, 0, 0, 1]),
+            pxe_ip: IpAddr::from([10, 0, 0, 1]),
             ntpservers: vec![
-                Ipv4Addr::from([127, 0, 0, 1]),
-                Ipv4Addr::from([127, 0, 0, 2]),
-                Ipv4Addr::from([127, 0, 0, 3]),
+                IpAddr::from([127, 0, 0, 1]),
+                IpAddr::from([127, 0, 0, 2]),
+                IpAddr::from([127, 0, 0, 3]),
             ],
             nameservers: vec![IpAddr::from([10, 1, 1, 1])],
         };
@@ -3042,7 +3072,7 @@ mod tests {
         assert!(host_config_str.contains("mtu: 1500"));
 
         let service_addrs = ServiceAddresses {
-            pxe_ip: Ipv4Addr::from([10, 0, 0, 1]),
+            pxe_ip: IpAddr::from([10, 0, 0, 1]),
             ntpservers: vec![],
             nameservers: vec![IpAddr::from([10, 1, 1, 1])],
         };
