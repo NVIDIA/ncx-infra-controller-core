@@ -654,32 +654,27 @@ impl CarbideConfig {
     }
 
     pub fn is_dpa_enabled(&self) -> bool {
-        if self.dpa_config.is_none() {
+        let Some(conf) = &self.dpa_config else {
             return false;
-        }
-
-        let conf = self.dpa_config.clone().unwrap();
+        };
 
         conf.enabled
     }
 
     pub fn get_dpa_subnet_ip(&self) -> Result<Ipv4Addr, eyre::Report> {
-        if self.dpa_config.is_none() {
+        let Some(conf) = &self.dpa_config else {
             tracing::error!("get_dpa_subnet_ip: DPA config missing");
             return Err(eyre::eyre!("get_dpa_subnet_ip: DPA config missing"));
-        }
+        };
 
-        let conf = self.dpa_config.clone().unwrap();
         Ok(conf.subnet_ip)
     }
 
     pub fn get_dpa_subnet_mask(&self) -> Result<i32, eyre::Report> {
-        if self.dpa_config.is_none() {
+        let Some(conf) = &self.dpa_config else {
             tracing::error!("get_dpa_subnet_mask: DPA config missing");
             return Err(eyre::eyre!("get_dpa_subnet_mask: DPA config missing"));
-        }
-
-        let conf = self.dpa_config.clone().unwrap();
+        };
 
         Ok(conf.subnet_mask)
     }

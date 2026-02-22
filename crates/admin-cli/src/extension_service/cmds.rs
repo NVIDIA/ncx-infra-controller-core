@@ -93,25 +93,24 @@ pub async fn handle_update(
 ) -> CarbideCliResult<()> {
     let is_json = output_format == OutputFormat::Json;
 
-    let credential =
-        if args.username.is_some() || args.password.is_some() || args.registry_url.is_some() {
-            if args.username.is_none() || args.password.is_none() || args.registry_url.is_none() {
-                return Err(CarbideCliError::GenericError(
-                    "All of username, password and registry URL are required to create credential"
-                        .to_string(),
-                ));
-            }
-
+    let credential = match (args.username, args.password, args.registry_url) {
+        (Some(username), Some(password), Some(registry_url)) => {
             Some(::rpc::forge::DpuExtensionServiceCredential {
-                registry_url: args.registry_url.unwrap(),
+                registry_url,
                 r#type: Some(Type::UsernamePassword(rpc::forge::UsernamePassword {
-                    username: args.username.unwrap(),
-                    password: args.password.unwrap(),
+                    username,
+                    password,
                 })),
             })
-        } else {
-            None
-        };
+        }
+        (None, None, None) => None,
+        _ => {
+            return Err(CarbideCliError::GenericError(
+                "All of username, password and registry URL are required to create credential"
+                    .to_string(),
+            ));
+        }
+    };
 
     let observability = if let Some(r) = args.observability {
         serde_json::from_str(&r)?

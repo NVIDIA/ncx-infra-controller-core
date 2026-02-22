@@ -441,11 +441,10 @@ async fn handle_mlxreport_action(
     machine_id: &MachineId,
     data: Option<ForgeAgentControlExtraInfo>,
 ) {
-    if data.is_none() {
+    let Some(ed) = data else {
         tracing::error!("handle_mlxreport_action Did not expect extra data to be empty");
         return;
-    }
-    let ed = data.unwrap();
+    };
 
     // The Extra data is an array of key value pairs.
     // The key is the pci_name of a DPA NIC.

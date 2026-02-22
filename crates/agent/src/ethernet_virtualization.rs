@@ -1420,10 +1420,13 @@ fn parse_fdb(fdb_json: &str) -> eyre::Result<HashMap<u32, Vec<Fdb>>> {
     let all_fdb: Vec<Fdb> = serde_json::from_str(fdb_json)?;
     let mut out: HashMap<u32, Vec<Fdb>> = HashMap::new();
     for fdb in all_fdb.into_iter() {
-        if fdb.vlan.is_none() || fdb.state == "permanent" {
+        let Some(vlan) = fdb.vlan else {
+            continue;
+        };
+        if fdb.state == "permanent" {
             continue;
         }
-        out.entry(fdb.vlan.unwrap())
+        out.entry(vlan)
             .and_modify(|v| v.push(fdb.clone()))
             .or_insert_with(|| vec![fdb]);
     }

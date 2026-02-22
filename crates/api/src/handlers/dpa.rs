@@ -502,8 +502,8 @@ async fn process_mlx_observation(
             firmware_report: None,
         });
 
-        if obs.lock_status.is_some() {
-            let ls = match DpaLockMode::try_from(obs.lock_status.unwrap()) {
+        if let Some(lock_status) = obs.lock_status {
+            let ls = match DpaLockMode::try_from(lock_status) {
                 Ok(ls) => ls,
                 Err(e) => {
                     tracing::error!("process_mlx_observation Error from LockStatus::try_from {e}");
@@ -572,10 +572,8 @@ pub(crate) async fn publish_mlx_device_report(
         );
 
         // Without a machine_id, we can't create dpa interfaces
-        if report.machine_id.is_some() {
+        if let Some(machine_id) = report.machine_id {
             let mut spx_nics: i32 = 0;
-
-            let machine_id = report.machine_id.unwrap();
 
             // Go over each of the MlxDeviceInfo reports from the
             // MlxDeviceReport. Each MlxDeviceInfo corresponds to
@@ -587,8 +585,9 @@ pub(crate) async fn publish_mlx_device_report(
                 // Change this to base device detection using part numbers rather
                 // than device description.
                 // XXX TODO XXX
-                if device_info.device_description.is_some() && device_info.base_mac.is_some() {
-                    let descr = device_info.device_description.clone().unwrap();
+                if let (Some(descr), Some(mac_address)) =
+                    (device_info.device_description.clone(), device_info.base_mac)
+                {
                     if descr.contains("SuperNIC") {
                         spx_nics += 1;
 
@@ -597,7 +596,6 @@ pub(crate) async fn publish_mlx_device_report(
                         // the TODO(chet) below about create_internal behavior.
                         // I think we can refactor all of this so these hoops
                         // aren't needed.
-                        let mac_address = device_info.base_mac.unwrap();
                         let pci_name = device_info.pci_name.clone();
                         let device_type = device_info.device_type.clone();
                         let dpa_info = NewDpaInterface {

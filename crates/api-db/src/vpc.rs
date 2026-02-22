@@ -107,31 +107,40 @@ pub async fn find_ids(
         if has_filter {
             builder.push(" AND ");
         }
-        if label.key.is_empty() && label.value.is_some() {
-            builder.push(
-                " EXISTS (
+        match (label.key.is_empty(), label.value) {
+            // Label key is empty, label value is set.
+            (true, Some(value)) => {
+                builder.push(
+                    " EXISTS (
                         SELECT 1
                         FROM jsonb_each_text(labels) AS kv
                         WHERE kv.value = ",
-            );
-            builder.push_bind(label.value.unwrap());
-            builder.push(")");
-            has_filter = true;
-        } else if label.key.is_empty() && label.value.is_none() {
-            return Err(DatabaseError::InvalidArgument(
-                "finding VPCs based on label needs either key or a value.".to_string(),
-            ));
-        } else if !label.key.is_empty() && label.value.is_none() {
-            builder.push(" labels ->> ");
-            builder.push_bind(label.key);
-            builder.push(" IS NOT NULL");
-            has_filter = true;
-        } else if !label.key.is_empty() && label.value.is_some() {
-            builder.push(" labels ->> ");
-            builder.push_bind(label.key);
-            builder.push(" = ");
-            builder.push_bind(label.value.unwrap());
-            has_filter = true;
+                );
+                builder.push_bind(value);
+                builder.push(")");
+                has_filter = true;
+            }
+            // Label key is empty, label value is not set.
+            (true, None) => {
+                return Err(DatabaseError::InvalidArgument(
+                    "finding VPCs based on label needs either key or a value.".to_string(),
+                ));
+            }
+            // Label key is not empty, label value is not set.
+            (false, None) => {
+                builder.push(" labels ->> ");
+                builder.push_bind(label.key);
+                builder.push(" IS NOT NULL");
+                has_filter = true;
+            }
+            // Label key is not empty, label value is set.
+            (false, Some(value)) => {
+                builder.push(" labels ->> ");
+                builder.push_bind(label.key);
+                builder.push(" = ");
+                builder.push_bind(value);
+                has_filter = true;
+            }
         }
     }
     if has_filter {
