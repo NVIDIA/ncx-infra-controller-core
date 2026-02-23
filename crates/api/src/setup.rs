@@ -749,8 +749,6 @@ pub async fn initialize_and_start_controllers(
         .build_and_spawn()
         .expect("Unable to build NetworkSegmentController");
 
-    let dpa_pool_vni = common_pools.dpa.pool_dpa_vni.clone();
-
     let mut _dpa_interface_state_controller_handle: Option<
         crate::state_controller::controller::StateControllerHandle,
     > = None;
@@ -766,7 +764,7 @@ pub async fn initialize_and_start_controllers(
                 .iteration_config(
                     (&carbide_config.dpa_interface_state_controller.controller).into(),
                 )
-                .state_handler(Arc::new(DpaInterfaceStateHandler::new(dpa_pool_vni)))
+                .state_handler(Arc::new(DpaInterfaceStateHandler::new()))
                 .build_and_spawn()
                 .expect("Unable to build DpaInterfaceStateController"),
         );
