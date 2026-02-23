@@ -8885,8 +8885,8 @@ async fn is_machine_validation_requested(state: &ManagedHostStateSnapshot) -> bo
 }
 
 async fn log_host_config(redfish_client: &dyn Redfish, mh_snapshot: &ManagedHostStateSnapshot) {
-    let host_id = mh_snapshot.host_snapshot.id.to_string();
-    let managed_state = mh_snapshot.managed_state.to_string();
+    let host_id = mh_snapshot.host_snapshot.id;
+    let managed_state = &mh_snapshot.managed_state;
 
     let boot_options = match redfish_client.get_boot_options().await {
         Ok(opts) => opts,
