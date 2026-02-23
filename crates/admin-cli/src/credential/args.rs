@@ -15,8 +15,13 @@
  * limitations under the License.
  */
 
+use ::rpc::admin_cli::CarbideCliResult;
 use clap::{Parser, ValueEnum};
 use mac_address::MacAddress;
+
+use super::cmds;
+use crate::cfg::run::Run;
+use crate::cfg::runtime::RuntimeContext;
 
 const DEFAULT_IB_FABRIC_NAME: &str = "default";
 
@@ -174,4 +179,64 @@ pub struct AddNmxMCredential {
 pub struct DeleteNmxMCredential {
     #[clap(long, required(true), help = "NmxM url")]
     pub username: String,
+}
+
+impl Run for AddUFMCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::add_ufm(self, &ctx.api_client).await
+    }
+}
+
+impl Run for DeleteUFMCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::delete_ufm(self, &ctx.api_client).await
+    }
+}
+
+impl Run for GenerateUFMCertCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::generate_ufm_cert(self, &ctx.api_client).await
+    }
+}
+
+impl Run for AddBMCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::add_bmc(self, &ctx.api_client).await
+    }
+}
+
+impl Run for DeleteBMCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::delete_bmc(self, &ctx.api_client).await
+    }
+}
+
+impl Run for AddUefiCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::add_uefi(self, &ctx.api_client).await
+    }
+}
+
+impl Run for AddHostFactoryDefaultCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::add_host_factory_default(self, &ctx.api_client).await
+    }
+}
+
+impl Run for AddDpuFactoryDefaultCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::add_dpu_factory_default(self, &ctx.api_client).await
+    }
+}
+
+impl Run for AddNmxMCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::add_nmxm(self, &ctx.api_client).await
+    }
+}
+
+impl Run for DeleteNmxMCredential {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmds::delete_nmxm(self, &ctx.api_client).await
+    }
 }

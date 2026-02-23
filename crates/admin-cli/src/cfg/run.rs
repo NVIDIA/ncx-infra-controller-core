@@ -14,8 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use ::rpc::admin_cli::CarbideCliResult;
+
+use crate::cfg::runtime::RuntimeContext;
+
+// Run is a trait implemented by leaf argument structs,
+// allowing them to execute themselves given a RuntimeContext.
+// This complements Dispatch (which is implemented on the
+// top-level Cmd enum) by pushing execution logic down to
+// the individual command structs.
+pub(crate) trait Run {
+    fn run(
+        self,
+        ctx: &mut RuntimeContext,
+    ) -> impl std::future::Future<Output = CarbideCliResult<()>>;
+}
