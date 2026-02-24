@@ -1332,46 +1332,23 @@ impl MachineStateHandler {
                                 Ok(StateHandlerOutcome::transition(next_state))
                             }
                             CreateBossVolumeState::WaitForJobScheduled => {
-                                let job_id = match &create_boss_volume_context
+                                let job_id = create_boss_volume_context
                                     .create_boss_volume_jid
-                                {
-                                    Some(jid) => Ok(jid),
-                                    None => Err(StateHandlerError::GenericError(eyre::eyre!(
-                                        "could not find job ID in the Create BOSS Volume Context"
-                                    ))),
-                                }?;
-
-                                let job_state = redfish_client
-                                    .get_job_state(job_id)
-                                    .await
-                                    .map_err(|e| StateHandlerError::RedfishError {
-                                        operation: "get_job_state",
-                                        error: e,
+                                    .clone()
+                                    .ok_or_else(|| {
+                                        StateHandlerError::GenericError(eyre::eyre!(
+                                            "could not find job ID in the Create BOSS Volume Context"
+                                        ))
                                     })?;
 
-                                if !matches!(job_state, libredfish::JobState::Scheduled) {
-                                    return Ok(StateHandlerOutcome::wait(format!(
-                                        "waiting for job {:#?} to be scheduled; current state: {job_state:#?}",
-                                        job_id
-                                    )));
-                                }
-
-                                let next_state: ManagedHostState =
-                                    ManagedHostState::WaitingForCleanup {
-                                        cleanup_state: CleanupState::CreateBossVolume {
-                                            create_boss_volume_context: CreateBossVolumeContext {
-                                                boss_controller_id,
-                                                create_boss_volume_jid: create_boss_volume_context
-                                                    .create_boss_volume_jid
-                                                    .clone(),
-                                                create_boss_volume_state:
-                                                    CreateBossVolumeState::RebootHost,
-                                                iteration: create_boss_volume_context.iteration,
-                                            },
-                                        },
-                                    };
-
-                                Ok(StateHandlerOutcome::transition(next_state))
+                                wait_for_boss_controller_job_to_scheduled(
+                                    redfish_client.as_ref(),
+                                    mh_snapshot,
+                                    boss_controller_id,
+                                    job_id,
+                                    create_boss_volume_context.iteration,
+                                )
+                                .await
                             }
                             CreateBossVolumeState::RebootHost => {
                                 redfish_client
@@ -8335,6 +8312,82 @@ fn handle_boss_controller_job_error(
     };
 
     let next_state: ManagedHostState = ManagedHostState::WaitingForCleanup { cleanup_state };
+
+    Ok(StateHandlerOutcome::transition(next_state))
+}
+
+async fn wait_for_boss_controller_job_to_scheduled(
+    redfish_client: &dyn Redfish,
+    mh_snapshot: &ManagedHostStateSnapshot,
+    boss_controller_id: String,
+    job_id: String,
+    iteration: Option<u32>,
+) -> Result<StateHandlerOutcome<ManagedHostState>, StateHandlerError> {
+    let job_state = match redfish_client.get_job_state(&job_id).await {
+        Ok(state) => state,
+        Err(e) => {
+            return handle_boss_controller_job_error(
+                boss_controller_id,
+                iteration.unwrap_or_default(),
+                false,
+                StateHandlerError::RedfishError {
+                    operation: "get_job_state",
+                    error: e,
+                },
+                mh_snapshot.host_snapshot.state.version.since_state_change(),
+            );
+        }
+    };
+
+    let next_state = match job_state {
+        libredfish::JobState::Scheduled => ManagedHostState::WaitingForCleanup {
+            cleanup_state: CleanupState::CreateBossVolume {
+                create_boss_volume_context: CreateBossVolumeContext {
+                    boss_controller_id,
+                    create_boss_volume_jid: Some(job_id),
+                    create_boss_volume_state: CreateBossVolumeState::RebootHost,
+                    iteration,
+                },
+            },
+        },
+        libredfish::JobState::Completed => {
+            tracing::warn!(
+                "CreateBossVolume: job {} for {} completed before being scheduled, skipping reboot",
+                job_id,
+                mh_snapshot.host_snapshot.id,
+            );
+
+            ManagedHostState::WaitingForCleanup {
+                cleanup_state: CleanupState::CreateBossVolume {
+                    create_boss_volume_context: CreateBossVolumeContext {
+                        boss_controller_id,
+                        create_boss_volume_jid: Some(job_id),
+                        create_boss_volume_state: CreateBossVolumeState::WaitForJobCompletion,
+                        iteration,
+                    },
+                },
+            }
+        }
+        libredfish::JobState::ScheduledWithErrors | libredfish::JobState::CompletedWithErrors => {
+            return handle_boss_controller_job_error(
+                boss_controller_id,
+                iteration.unwrap_or_default(),
+                false,
+                StateHandlerError::GenericError(eyre::eyre!(
+                    "CreateBossVolume: job {} failed for {} with state {job_state:#?}",
+                    job_id,
+                    mh_snapshot.host_snapshot.id,
+                )),
+                mh_snapshot.host_snapshot.state.version.since_state_change(),
+            );
+        }
+        _ => {
+            return Ok(StateHandlerOutcome::wait(format!(
+                "waiting for job {:#?} to be scheduled; current state: {job_state:#?}",
+                job_id
+            )));
+        }
+    };
 
     Ok(StateHandlerOutcome::transition(next_state))
 }
