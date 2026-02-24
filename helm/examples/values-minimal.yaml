@@ -45,16 +45,8 @@ carbide-dsx-exchange-consumer:
 carbide-hardware-health:
   enabled: true
 
-## carbide-nginx: Web UI and boot artifact server
-carbide-nginx:
-  enabled: true
-
 ## carbide-ntp: Time sync for bare metal hosts
 carbide-ntp:
-  enabled: true
-
-## carbide-nvpasswd-unexpirer: Prevents password expiry on managed nodes
-carbide-nvpasswd-unexpirer:
   enabled: true
 
 ## carbide-pxe: PXE boot server
@@ -64,17 +56,6 @@ carbide-pxe:
 ## carbide-ssh-console-rs: SSH console proxy
 carbide-ssh-console-rs:
   enabled: true
-
-## carbide-ufm: InfiniBand UFM monitoring (disable if no InfiniBand)
-carbide-ufm:
-  enabled: true
-
-## frrouting: BGP routing — set your own FRR image
-frrouting:
-  enabled: true
-  image:
-    repository: ""   # e.g. your-registry.example.com/frr
-    tag: ""          # e.g. 9.1.0
 
 ## unbound: Recursive DNS resolver — set your own images and forwarders
 unbound:

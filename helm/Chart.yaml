@@ -26,27 +26,15 @@ dependencies:
   - name: carbide-hardware-health
     version: "0.1.0"
     condition: carbide-hardware-health.enabled
-  - name: carbide-nginx
-    version: "0.1.0"
-    condition: carbide-nginx.enabled
   - name: carbide-ntp
     version: "0.1.0"
     condition: carbide-ntp.enabled
-  - name: carbide-nvpasswd-unexpirer
-    version: "0.1.0"
-    condition: carbide-nvpasswd-unexpirer.enabled
   - name: carbide-pxe
     version: "0.1.0"
     condition: carbide-pxe.enabled
   - name: carbide-ssh-console-rs
     version: "0.1.0"
     condition: carbide-ssh-console-rs.enabled
-  - name: carbide-ufm
-    version: "0.1.0"
-    condition: carbide-ufm.enabled
-  - name: frrouting
-    version: "0.1.0"
-    condition: frrouting.enabled
   - name: unbound
     version: "0.1.0"
     condition: unbound.enabled

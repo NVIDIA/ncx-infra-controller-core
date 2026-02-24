@@ -4,9 +4,9 @@ NVIDIA Bare Metal Manager (Carbide) -- Kubernetes Deployment
 
 ## Overview
 
-Carbide (also known as NVIDIA Bare Metal Manager) is a platform for provisioning, managing, and monitoring bare metal GPU servers, including DGX and HGX systems. This Helm chart deploys all Carbide services into a Kubernetes cluster as a single umbrella chart with 13 independently toggleable subcharts.
+Carbide (also known as NVIDIA Bare Metal Manager) is a platform for provisioning, managing, and monitoring bare metal GPU servers, including DGX and HGX systems. This Helm chart deploys Carbide services into a Kubernetes cluster as a single umbrella chart with 9 independently toggleable subcharts.
 
-The chart is designed for production environments where Carbide manages the full lifecycle of bare metal infrastructure: DHCP/PXE-based OS provisioning, DNS resolution, BGP network peering, hardware health monitoring, SSH console access, NTP time synchronization, and a unified REST/gRPC API.
+The chart is designed for production environments where Carbide manages the full lifecycle of bare metal infrastructure: DHCP/PXE-based OS provisioning, DNS resolution, hardware health monitoring, SSH console access, NTP time synchronization, and a unified REST/gRPC API.
 
 ## Subcharts
 
@@ -17,14 +17,10 @@ The chart is designed for production environments where Carbide manages the full
 | 3 | **carbide-dns** | Authoritative DNS server for managed machines and VPCs. |
 | 4 | **carbide-dsx-exchange-consumer** | Consumes DSX exchange messages for machine telemetry and state updates. |
 | 5 | **carbide-hardware-health** | Collects and reports hardware health metrics from managed machines. |
-| 6 | **carbide-nginx** | Nginx reverse proxy for serving boot artifacts and the web UI. |
-| 7 | **carbide-ntp** | Chrony NTP server providing time synchronization to bare metal hosts. |
-| 8 | **carbide-nvpasswd-unexpirer** | DaemonSet that prevents password expiry on managed nodes. |
-| 9 | **carbide-pxe** | PXE boot server (HTTP-based) for OS provisioning workflows. |
-| 10 | **carbide-ssh-console-rs** | SSH console proxy for remote access to managed machine BMCs and consoles. |
-| 11 | **carbide-ufm** | UFM (Unified Fabric Manager) scrape config for InfiniBand monitoring. |
-| 12 | **frrouting** | FRRouting BGP daemon for network peering and route advertisement. |
-| 13 | **unbound** | Recursive DNS resolver forwarding queries for managed infrastructure. |
+| 6 | **carbide-ntp** | Chrony NTP server providing time synchronization to bare metal hosts. |
+| 7 | **carbide-pxe** | PXE boot server (HTTP-based) for OS provisioning workflows. |
+| 8 | **carbide-ssh-console-rs** | SSH console proxy for remote access to managed machine BMCs and consoles. |
+| 9 | **unbound** | Recursive DNS resolver forwarding queries for managed infrastructure. |
 
 ## Prerequisites
 
@@ -33,7 +29,7 @@ The chart is designed for production environments where Carbide manages the full
 - **cert-manager** with a `ClusterIssuer` configured (default issuer name: `vault-forge-issuer`)
 - **HashiCorp Vault** for PKI certificate issuance and secret storage
 - **PostgreSQL** (SSL-enabled) for the `carbide-api` database backend
-- **Prometheus Operator CRDs** if you enable `ServiceMonitor` or `PodMonitor` resources
+- **Prometheus Operator CRDs** if you enable `ServiceMonitor` resources
 - **Required Kubernetes Secrets and ConfigMaps** (Vault tokens, database credentials, SSO secrets, etc.)
 
 For the full list of required secrets, ConfigMaps, and infrastructure setup steps, see [PREREQUISITES.md](./PREREQUISITES.md).
@@ -93,20 +89,12 @@ carbide-dsx-exchange-consumer:
   enabled: true        # DSX exchange telemetry consumer
 carbide-hardware-health:
   enabled: true        # Hardware health monitoring
-carbide-nginx:
-  enabled: true        # Nginx reverse proxy / web UI
 carbide-ntp:
   enabled: true        # NTP time server
-carbide-nvpasswd-unexpirer:
-  enabled: true        # Password unexpiry DaemonSet
 carbide-pxe:
   enabled: true        # PXE boot server
 carbide-ssh-console-rs:
   enabled: true        # SSH console proxy
-carbide-ufm:
-  enabled: true        # UFM InfiniBand scrape config
-frrouting:
-  enabled: true        # BGP routing daemon
 unbound:
   enabled: true        # Recursive DNS resolver
 ```
@@ -118,9 +106,6 @@ The `global.image.repository` and `global.image.tag` values **must** be set -- t
 | Subchart | Image Parameter | Default |
 |----------|----------------|---------|
 | `carbide-ntp` | `carbide-ntp.image.repository` / `.tag` | `""` (must be set) |
-| `carbide-nvpasswd-unexpirer` | `carbide-nvpasswd-unexpirer.image.repository` / `.tag` | `""` (must be set) |
-| `frrouting` | `frrouting.image.repository` / `.tag` | `""` (must be set) |
-| `frrouting` (exporter) | `frrouting.exporterImage.repository` / `.tag` | `""` (must be set) |
 | `carbide-ssh-console-rs` (log collector) | `carbide-ssh-console-rs.lokiLogCollector.image.repository` / `.tag` | `""` (must be set) |
 | `unbound` | `unbound.image.repository` / `.tag` | `""` (must be set) |
 | `unbound` (exporter) | `unbound.exporterImage.repository` / `.tag` | `""` (must be set) |
@@ -155,9 +140,9 @@ carbide-api:
       metallb.universe.tf/loadBalancerIPs: "10.x.x.x"
 ```
 
-Services with external LoadBalancer support: `carbide-api`, `carbide-dhcp`, `carbide-dns`, `carbide-nginx`, `carbide-ntp`, `carbide-pxe`, `carbide-ssh-console-rs`, and `frrouting`.
+Services with external LoadBalancer support: `carbide-api`, `carbide-dhcp`, `carbide-dns`, `carbide-ntp`, `carbide-pxe`, and `carbide-ssh-console-rs`.
 
-For StatefulSet-based services (`carbide-dns`, `carbide-ntp`, `frrouting`), per-pod LoadBalancer IPs can be assigned:
+For StatefulSet-based services (`carbide-dns`, `carbide-ntp`), per-pod LoadBalancer IPs can be assigned:
 
 ```yaml
 carbide-dns:
@@ -179,13 +164,9 @@ carbide-dns:
 | carbide-dns | StatefulSet | 53/TCP, 53/UDP | Yes | -- |
 | carbide-dsx-exchange-consumer | Deployment | 9009 | Yes | ServiceMonitor |
 | carbide-hardware-health | Deployment | 9009 | Yes | ServiceMonitor |
-| carbide-nginx | Deployment | 80 | Yes | -- |
 | carbide-ntp | StatefulSet | 123/UDP | No | -- |
-| carbide-nvpasswd-unexpirer | DaemonSet | -- | No | -- |
 | carbide-pxe | Deployment | 8080 | Yes | ServiceMonitor |
 | carbide-ssh-console-rs | Deployment | 22, 9009 (metrics) | Yes | ServiceMonitor |
-| carbide-ufm | -- (ScrapeConfig only) | -- | No | ScrapeConfig |
-| frrouting | StatefulSet | 179 (BGP) | No | PodMonitor |
 | unbound | Deployment | 53 | No | ServiceMonitor |
 
 ### Service Dependencies
@@ -197,13 +178,12 @@ carbide-dns:
                                   |
           +-----------+-----------+-----------+-----------+
           |           |           |           |           |
-    carbide-dhcp  carbide-dns  carbide-pxe  carbide-nginx  carbide-ssh-console-rs
+    carbide-dhcp  carbide-dns  carbide-pxe  carbide-ntp  carbide-ssh-console-rs
           |                       |
           v                       v
      Bare Metal            Bare Metal
      (PXE boot)            (OS install)
 
-    frrouting (BGP) <---> Network Fabric
     carbide-ntp     <---> Bare Metal (time sync)
     unbound         <---> Upstream DNS
 ```

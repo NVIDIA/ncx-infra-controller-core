@@ -25,7 +25,7 @@ global:
   ## Services that share this image: carbide-api, carbide-dhcp, carbide-dns,
   ## carbide-dsx-exchange-consumer, carbide-hardware-health, carbide-pxe,
   ## carbide-ssh-console-rs.
-  ## NOTE: frrouting, unbound, and carbide-ntp use their own image settings.
+  ## NOTE: unbound and carbide-ntp use their own image settings.
   image:
     repository: ""
     tag: ""
@@ -92,25 +92,11 @@ carbide-hardware-health:
   enabled: true
 
 ## ---------------------------------------------------------------------------
-## carbide-nginx — Nginx reverse proxy
-## Serves boot artifacts and the Carbide web UI.
-## ---------------------------------------------------------------------------
-carbide-nginx:
-  enabled: true
-
-## ---------------------------------------------------------------------------
 ## carbide-ntp — Chrony NTP server
 ## Provides time synchronization to bare metal hosts.
 ## NOTE: Uses its own image (dockurr/chrony), not global.image.
 ## ---------------------------------------------------------------------------
 carbide-ntp:
-  enabled: true
-
-## ---------------------------------------------------------------------------
-## carbide-nvpasswd-unexpirer — Password unexpiry DaemonSet
-## Prevents password expiry on managed nodes.
-## ---------------------------------------------------------------------------
-carbide-nvpasswd-unexpirer:
   enabled: true
 
 ## ---------------------------------------------------------------------------
@@ -126,22 +112,6 @@ carbide-pxe:
 ## NOTE: This chart reads .Values.imagePullSecrets (not global).
 ## ---------------------------------------------------------------------------
 carbide-ssh-console-rs:
-  enabled: true
-
-## ---------------------------------------------------------------------------
-## carbide-ufm — UFM scrape config
-## Configures Prometheus scrape targets for InfiniBand UFM monitoring.
-## ---------------------------------------------------------------------------
-carbide-ufm:
-  enabled: true
-
-## ---------------------------------------------------------------------------
-## frrouting — FRRouting BGP daemon
-## Runs BGP for network peering and route advertisement.
-## NOTE: Uses its own image.repository / image.tag (not global.image).
-##       Reads global.imagePullSecrets for pull secrets.
-## ---------------------------------------------------------------------------
-frrouting:
   enabled: true
 
 ## ---------------------------------------------------------------------------

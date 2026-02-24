@@ -216,23 +216,6 @@ carbide-hardware-health:
     scrapeTimeout: 25s
 
 ## ---------------------------------------------------------------------------
-## carbide-nginx — Nginx reverse proxy
-## ---------------------------------------------------------------------------
-carbide-nginx:
-  enabled: true
-  replicas: 1
-
-  ## Optional: boot artifact init containers
-  initContainers: []
-
-  externalService:
-    enabled: true
-    type: LoadBalancer
-    externalTrafficPolicy: Local
-    annotations:
-      metallb.universe.tf/loadBalancerIPs: "10.0.0.12"
-
-## ---------------------------------------------------------------------------
 ## carbide-ntp — Chrony NTP server
 ## ---------------------------------------------------------------------------
 carbide-ntp:
@@ -249,12 +232,6 @@ carbide-ntp:
       - metallb.universe.tf/loadBalancerIPs: "10.0.0.30"   # pod-0
       - metallb.universe.tf/loadBalancerIPs: "10.0.0.31"   # pod-1
       - metallb.universe.tf/loadBalancerIPs: "10.0.0.32"   # pod-2
-
-## ---------------------------------------------------------------------------
-## carbide-nvpasswd-unexpirer — Password unexpiry DaemonSet
-## ---------------------------------------------------------------------------
-carbide-nvpasswd-unexpirer:
-  enabled: true
 
 ## ---------------------------------------------------------------------------
 ## carbide-pxe — PXE boot server
@@ -282,41 +259,6 @@ carbide-ssh-console-rs:
     type: LoadBalancer
     annotations:
       metallb.universe.tf/loadBalancerIPs: "10.0.0.13"
-
-## ---------------------------------------------------------------------------
-## carbide-ufm — UFM monitoring
-## ---------------------------------------------------------------------------
-carbide-ufm:
-  enabled: true
-
-  scrapeConfig:
-    targets:
-      - "ufm.example.com:443"
-
-## ---------------------------------------------------------------------------
-## frrouting — BGP routing
-## ---------------------------------------------------------------------------
-frrouting:
-  enabled: true
-  replicas: 3
-
-  image:
-    repository: "your-registry.example.com/frr"
-    tag: "9.1.0"
-    pullPolicy: IfNotPresent
-
-  exporterImage:
-    repository: ghcr.io/tynany/frr_exporter
-    tag: ""
-    pullPolicy: IfNotPresent
-
-  externalService:
-    enabled: true
-    type: LoadBalancer
-    perPodAnnotations:
-      - metallb.universe.tf/loadBalancerIPs: "10.0.0.50"   # pod-0
-      - metallb.universe.tf/loadBalancerIPs: "10.0.0.51"   # pod-1
-      - metallb.universe.tf/loadBalancerIPs: "10.0.0.52"   # pod-2
 
 ## ---------------------------------------------------------------------------
 ## unbound — Recursive DNS resolver
