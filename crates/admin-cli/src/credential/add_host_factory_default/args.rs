@@ -14,8 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use clap::Parser;
+
+#[derive(Parser, Debug, Clone)]
+pub struct Args {
+    #[clap(long, required(true), help = "Default username: root, ADMIN, etc")]
+    pub username: String,
+    #[clap(long, required(true), help = "Manufacturer default password")]
+    pub password: String,
+    #[clap(long, required(true))]
+    pub vendor: bmc_vendor::BMCVendor,
+}

@@ -14,8 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use ::rpc::admin_cli::CarbideCliResult;
+use ::rpc::{CredentialType, forge as forgerpc};
+
+use super::args::Args;
+use crate::rpc::ApiClient;
+
+pub async fn generate_ufm_cert(c: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
+    let req = forgerpc::CredentialCreationRequest {
+        credential_type: CredentialType::Ufm.into(),
+        username: None,
+        password: "".to_string(),
+        mac_address: None,
+        vendor: Some(c.fabric),
+    };
+    api_client.0.create_credential(req).await?;
+    Ok(())
+}

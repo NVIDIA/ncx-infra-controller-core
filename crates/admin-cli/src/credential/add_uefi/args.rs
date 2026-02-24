@@ -14,8 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use clap::Parser;
+
+use crate::credential::common::UefiCredentialType;
+
+#[derive(Parser, Debug, Clone)]
+pub struct Args {
+    #[clap(long, require_equals(true), required(true), help = "The UEFI kind")]
+    pub kind: UefiCredentialType,
+
+    #[clap(long, require_equals(true), help = "The UEFI password")]
+    pub password: String,
+}

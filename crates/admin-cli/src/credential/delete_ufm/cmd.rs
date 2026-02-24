@@ -14,8 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use ::rpc::admin_cli::CarbideCliResult;
+use ::rpc::{CredentialType, forge as forgerpc};
+
+use super::args::Args;
+use crate::credential::common::url_validator;
+use crate::rpc::ApiClient;
+
+pub async fn delete_ufm(c: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
+    let username = url_validator(c.url)?;
+    let req = forgerpc::CredentialDeletionRequest {
+        credential_type: CredentialType::Ufm.into(),
+        username: Some(username),
+        mac_address: None,
+    };
+    api_client.0.delete_credential(req).await?;
+    Ok(())
+}

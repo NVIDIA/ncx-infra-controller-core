@@ -14,8 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use clap::Parser;
+use mac_address::MacAddress;
+
+use crate::credential::common::BmcCredentialType;
+
+#[derive(Parser, Debug, Clone)]
+pub struct Args {
+    #[clap(
+        long,
+        require_equals(true),
+        required(true),
+        help = "The BMC Credential kind"
+    )]
+    pub kind: BmcCredentialType,
+    #[clap(long, required(true), help = "The password of BMC")]
+    pub password: String,
+    #[clap(long, help = "The username of BMC")]
+    pub username: Option<String>,
+    #[clap(long, help = "The MAC address of the BMC")]
+    pub mac_address: Option<MacAddress>,
+}

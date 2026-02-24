@@ -14,8 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use clap::Parser;
+
+use crate::credential::common::DEFAULT_IB_FABRIC_NAME;
+
+#[derive(Parser, Debug, Clone)]
+pub struct Args {
+    #[clap(long, default_value_t = DEFAULT_IB_FABRIC_NAME.to_string(), help = "Infiniband fabric.")]
+    pub fabric: String,
+}

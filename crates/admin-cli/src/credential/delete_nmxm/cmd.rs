@@ -14,8 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod cli_options;
-pub mod dispatch;
-pub mod measurement;
-pub mod run;
-pub mod runtime;
+
+use ::rpc::admin_cli::CarbideCliResult;
+use ::rpc::{CredentialType, forge as forgerpc};
+
+use super::args::Args;
+use crate::rpc::ApiClient;
+
+pub async fn delete_nmxm(c: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
+    let req = forgerpc::CredentialDeletionRequest {
+        credential_type: CredentialType::NmxM.into(),
+        username: Some(c.username),
+        mac_address: None,
+    };
+    api_client.0.delete_credential(req).await?;
+    Ok(())
+}
