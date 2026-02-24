@@ -33,6 +33,7 @@ use model::expected_machine::ExpectedHostNic;
 use model::hardware_info::HardwareInfo;
 use model::machine::MachineInterfaceSnapshot;
 use model::machine_interface_address::MachineInterfaceAssociation;
+use model::network_prefix::NetworkPrefix;
 use model::network_segment::{NetworkSegment, NetworkSegmentType};
 use model::predicted_machine_interface::PredictedMachineInterface;
 use sqlx::{FromRow, PgConnection, PgTransaction};
@@ -45,6 +46,8 @@ use crate::{DatabaseError, DatabaseResult, Transaction, network_segment as db_ne
 const SQL_VIOLATION_DUPLICATE_MAC: &str = "machine_interfaces_segment_id_mac_address_key";
 const SQL_VIOLATION_ONE_PRIMARY_INTERFACE: &str = "one_primary_interface_per_machine";
 const SQL_VIOLATION_MAX_ONE_ASSOCIATION: &str = "chk_max_one_association";
+const FAST_PATH_MAX_RETRIES: usize = 128;
+const FAST_PATH_CANDIDATE_BATCH: i64 = 32;
 
 pub struct UsedAdminNetworkIpResolver {
     pub segment_id: NetworkSegmentId,
@@ -409,8 +412,92 @@ pub async fn validate_existing_mac_and_create(
     }
 }
 
-#[allow(txn_held_across_await)]
 pub async fn create(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    macaddr: &MacAddress,
+    domain_id: Option<DomainId>,
+    primary_interface: bool,
+    address_strategy: AddressSelectionStrategy,
+) -> DatabaseResult<MachineInterfaceSnapshot> {
+    if matches!(
+        address_strategy,
+        AddressSelectionStrategy::NextAvailableIp | AddressSelectionStrategy::Automatic
+    ) && segment
+        .prefixes
+        .iter()
+        .all(|prefix| prefix.prefix.is_ipv4())
+    {
+        create_fast_path(txn, segment, macaddr, domain_id, primary_interface).await
+    } else {
+        create_slow_path(
+            txn,
+            segment,
+            macaddr,
+            domain_id,
+            primary_interface,
+            address_strategy,
+        )
+        .await
+    }
+}
+
+#[allow(txn_held_across_await)]
+async fn create_fast_path(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    macaddr: &MacAddress,
+    domain_id: Option<DomainId>,
+    primary_interface: bool,
+) -> DatabaseResult<MachineInterfaceSnapshot> {
+    for _ in 0..FAST_PATH_MAX_RETRIES {
+        let mut fast_txn = Transaction::begin_inner(txn).await?;
+        match try_create_fast_path(
+            fast_txn.as_pgconn(),
+            segment,
+            macaddr,
+            domain_id,
+            primary_interface,
+        )
+        .await
+        {
+            Ok(interface_id) => {
+                fast_txn.commit().await?;
+                return Ok(
+                    find_by(txn, ObjectColumnFilter::One(IdColumn, &interface_id))
+                        .await?
+                        .remove(0),
+                );
+            }
+            Err(err) if err.is_fqdn_conflict() => {
+                // Another simultaneous create got the same FQDN, try again.
+                fast_txn.rollback().await?;
+                tokio::task::yield_now().await;
+                continue;
+            }
+            Err(err) => {
+                // Some other error, roll back the inner transaction
+                fast_txn.rollback().await?;
+                return Err(err);
+            }
+        }
+    }
+
+    Err(DatabaseError::internal(format!(
+        "unable to create machine interface in v4 fast path for segment {} after {} retries",
+        segment.id, FAST_PATH_MAX_RETRIES
+    )))
+}
+
+/// Create a machine interface and allocate IP addresses, slow path for IPv6 prefixes.
+///
+/// This uses [`crate::IpAllocator`], which requires:
+///
+/// - Locking the machine_interfaces_lock table
+/// - Reading all used IP's from the database for the given segment
+/// - Selecting a batch of IP's according to the selection strategy
+#[allow(txn_held_across_await)]
+pub async fn create_slow_path(
     txn: &mut PgConnection,
     segment: &NetworkSegment,
     macaddr: &MacAddress,
@@ -430,13 +517,6 @@ pub async fn create(
         .map_err(|e| DatabaseError::query(query, e))?;
 
     // Collect SVI IPs so the allocator knows they're already reserved.
-    //
-    // TODO(chet): This was the previous behavior before the SQL fast
-    // path was introduced (and subsquently reverted after realizing it
-    // got rid of dual-stack logic + didn't support IPv6), BUT, since
-    // all of this information is known within the allocator, maybe
-    // we can skip over well-known reserved IPs there instead of building
-    // up a reserved list here.
     let mut reserved_ips = vec![];
     for prefix in &segment.prefixes {
         if let Some(svi_ip) = prefix.svi_ip {
@@ -465,29 +545,83 @@ pub async fn create(
         let address = maybe_address?;
         allocated_addresses.push(address.ip());
     }
-    if allocated_addresses.is_empty() {
-        let prefixes: Vec<_> = segment
-            .prefixes
-            .iter()
-            .map(|p| p.prefix.to_string())
-            .collect();
-        return Err(crate::DatabaseError::ResourceExhausted(format!(
-            "No IP addresses left in network segment (prefixes: {})",
-            prefixes.join(", ")
-        )));
+
+    let interface_id = create_inner(
+        inner_txn.as_pgconn(),
+        segment,
+        macaddr,
+        domain_id,
+        primary_interface,
+        &allocated_addresses,
+    )
+    .await?;
+    inner_txn.commit().await?;
+
+    Ok(
+        find_by(txn, ObjectColumnFilter::One(IdColumn, &interface_id))
+            .await?
+            .remove(0),
+    )
+}
+
+/// Fast path for IPv4-only single-IP allocation.
+///
+/// This allocates a single candidate IP per prefix entirely in the database, without having to read
+/// all the used IP's.
+async fn try_create_fast_path(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    macaddr: &MacAddress,
+    domain_id: Option<DomainId>,
+    primary_interface: bool,
+) -> DatabaseResult<MachineInterfaceId> {
+    let mut allocated_addresses = Vec::with_capacity(segment.prefixes.len());
+    for prefix in &segment.prefixes {
+        let address = allocate_next_v4_ip_with_retry(txn, segment, prefix).await?;
+        allocated_addresses.push(address);
     }
 
+    create_inner(
+        txn,
+        segment,
+        macaddr,
+        domain_id,
+        primary_interface,
+        &allocated_addresses,
+    )
+    .await
+}
+
+/// Create the actual machine interface once we know what addresses we want.
+async fn create_inner(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    macaddr: &MacAddress,
+    domain_id: Option<DomainId>,
+    primary_interface: bool,
+    allocated_addresses: &[IpAddr],
+) -> DatabaseResult<MachineInterfaceId> {
     // Prefer IPv4 for hostname (more human-readable), fall back to
     // an IPv6-derived hostname otherwise.
     let hostname_address = allocated_addresses
         .iter()
         .find(|a| a.is_ipv4())
         .or(allocated_addresses.first())
-        .unwrap(); // Safe: allocated_addresses is non-empty.
+        .ok_or_else(|| {
+            let prefixes: Vec<_> = segment
+                .prefixes
+                .iter()
+                .map(|p| p.prefix.to_string())
+                .collect();
+            crate::DatabaseError::ResourceExhausted(format!(
+                "No IP addresses left in network segment (prefixes: {})",
+                prefixes.join(", ")
+            ))
+        })?;
     let hostname = address_to_hostname(hostname_address)?;
 
     let interface_id = insert_machine_interface(
-        &mut inner_txn,
+        txn,
         &segment.id,
         macaddr,
         hostname,
@@ -496,17 +630,92 @@ pub async fn create(
     )
     .await?;
 
-    for address in &allocated_addresses {
-        insert_machine_interface_address(&mut inner_txn, &interface_id, address).await?;
+    for address in allocated_addresses {
+        insert_machine_interface_address(txn, &interface_id, address).await?;
     }
 
-    inner_txn.commit().await?;
+    Ok(interface_id)
+}
 
-    Ok(
-        find_by(txn, ObjectColumnFilter::One(IdColumn, &interface_id))
-            .await?
-            .remove(0),
-    )
+/// Retries IPv4 allocation for a single prefix which may be under contention.
+///
+/// Each iteration fetches a small free-IP batch, tries to take an advisory lock
+/// on each candidate, and returns once one lock is acquired.
+///
+/// This is for eliminating a big shared lock when we have lots of machines DHCP'ing for the first
+/// time simultaneously: By requesting a batch of free IP's at once and trying locks on each one, we
+/// can process roughly [`FAST_PATH_CANDIDATE_BATCH`] initial DHCP requests concurrently.
+async fn allocate_next_v4_ip_with_retry(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    prefix: &NetworkPrefix,
+) -> DatabaseResult<IpAddr> {
+    let reserved = if prefix.gateway.is_none() {
+        prefix.num_reserved.max(2)
+    } else {
+        prefix.num_reserved.max(1)
+    };
+
+    for _ in 0..FAST_PATH_MAX_RETRIES {
+        // Grab FAST_PATH_CANDIDATE_BATCH IP's at once
+        let query = r#"
+SELECT ($1::inet + ip_series.n)::inet AS ip
+FROM generate_series($3, (1 << (32 - $2)) - 2) AS ip_series(n)
+LEFT JOIN machine_interface_addresses AS mia
+  ON mia.address = ($1::inet + ip_series.n)::inet
+WHERE mia.address IS NULL
+  AND ($4::inet IS NULL OR ($1::inet + ip_series.n)::inet <> $4::inet)
+  AND ($5::inet IS NULL OR ($1::inet + ip_series.n)::inet <> $5::inet)
+ORDER BY ip
+LIMIT $6;
+    "#;
+        let candidates = sqlx::query_scalar::<_, IpAddr>(query)
+            .bind(prefix.prefix.ip())
+            .bind(prefix.prefix.prefix() as i32)
+            .bind(reserved)
+            .bind(prefix.gateway)
+            .bind(prefix.svi_ip)
+            .bind(FAST_PATH_CANDIDATE_BATCH)
+            .fetch_all(&mut *txn)
+            .await
+            .map_err(|e| DatabaseError::query(query, e))?;
+
+        if candidates.is_empty() {
+            return Err(DatabaseError::ResourceExhausted(format!(
+                "No IPv4 addresses left in prefix {}",
+                prefix.prefix
+            )));
+        }
+
+        // Try to lock an IP (in case multiple allocation requests are happening at once)
+        for candidate in candidates {
+            if try_lock_ip_candidate(txn, segment, candidate).await? {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    Err(DatabaseError::internal(format!(
+        "unable to reserve free IPv4 address in prefix {} after {} retries",
+        prefix.prefix, FAST_PATH_MAX_RETRIES
+    )))
+}
+
+/// Attempts to acquire a transaction-scoped advisory lock for one IP candidate.
+///
+/// A successful lock means this transaction "owns" that candidate for the current attempt, which
+/// avoids same-IP races across concurrent allocations.
+async fn try_lock_ip_candidate(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    ip: IpAddr,
+) -> DatabaseResult<bool> {
+    let query = "SELECT pg_try_advisory_xact_lock(hashtextextended($1::text, 0))";
+    sqlx::query_scalar::<_, bool>(query)
+        .bind(format!("{}:{}", segment.id, ip))
+        .fetch_one(txn)
+        .await
+        .map_err(|e| DatabaseError::query(query, e))
 }
 
 pub async fn allocate_svi_ip(

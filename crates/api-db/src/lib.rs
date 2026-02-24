@@ -401,6 +401,18 @@ impl DatabaseError {
             _ => self,
         }
     }
+
+    pub fn is_fqdn_conflict(&self) -> bool {
+        match self {
+            DatabaseError::Sqlx(sqlx_error) => match &sqlx_error.source {
+                sqlx::Error::Database(database_error) => {
+                    database_error.constraint() == Some("fqdn_must_be_unique")
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 pub type DatabaseResult<T> = Result<T, DatabaseError>;
