@@ -8,7 +8,6 @@
 
 ## Global settings (overridden by umbrella chart)
 global:
-  namespace: default
   image:
     repository: ""
     tag: ""
@@ -29,6 +28,9 @@ global:
   labels:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: site-controller
+
+## Override the release namespace (defaults to helm install -n <namespace>)
+namespaceOverride: ""
 
 replicas: 1
 serviceAccountName: carbide-api
@@ -67,19 +69,19 @@ certificate:
   extraDnsNames: []
   extraUris: []
 
+## Container command (override to customise startup)
+command:
+  - /bin/sh
+  - -c
+  - /opt/carbide/carbide-api run --config-path /etc/forge/carbide-api/carbide-api-config.toml --site-config-path /etc/forge/carbide-api/site/carbide-api-site-config.toml
+
 ## Environment variables for carbide-api
 env:
   VAULT_PKI_ROLE_NAME: "forge-cluster"
-  ## OAuth2/SSO authentication -- set CARBIDE_WEB_AUTH_TYPE to "oauth2" to enable
-  CARBIDE_WEB_AUTH_TYPE: ""
-  CARBIDE_WEB_OAUTH2_AUTH_ENDPOINT: ""
-  CARBIDE_WEB_OAUTH2_TOKEN_ENDPOINT: ""
-  CARBIDE_WEB_OAUTH2_CLIENT_ID: ""
-  CARBIDE_WEB_ALLOWED_ACCESS_GROUPS: ""
-  CARBIDE_WEB_ALLOWED_ACCESS_GROUPS_ID_LIST: ""
-  BITNAMI_DEBUG: "false"
   RUST_BACKTRACE: "full"
   RUST_LIB_BACKTRACE: "0"
+
+extraEnv: []
 
 ## External secret/configmap references mounted into the pod
 envFrom:
@@ -93,8 +95,6 @@ envFrom:
     secretName: forge-system.carbide.forge-pg-cluster.credentials
   databaseConfig:
     configMapName: forge-system-carbide-database-config
-  azureSsoSecret:
-    secretName: azure-sso-carbide-web-client-secret
   carbideWebHostname:
     configMapName: carbide-web-api-hostname
 
@@ -109,12 +109,9 @@ livenessProbe:
   timeoutSeconds: 20
 
 serviceMonitor:
-  enabled: true
+  enabled: false
   interval: 30s
   scrapeTimeout: 25s
-
-migration:
-  enabled: true
 
 ## Config files -- can be overridden with custom content
 configFiles:
@@ -129,18 +126,15 @@ siteConfig:
 ## Carbide Web UI hostname (always created as ConfigMap)
 hostname: "carbide.local"
 
-## External infrastructure ConfigMaps -- set enabled=true to create them from values
-## In production these are typically managed by operators (Vault, PG, etc.)
-externalConfig:
-  enabled: false
-  vaultClusterInfo:
-    VAULT_SERVICE: ""
-    FORGE_VAULT_MOUNT: "secrets"
-    FORGE_VAULT_PKI_MOUNT: "forgeca"
-  databaseConfig:
-    DB_HOST: "postgresql.default.svc.cluster.local"
-    DB_PORT: "5432"
-    DB_NAME: "carbide"
+vaultClusterInfo: {}
+#  VAULT_SERVICE: "https://vault.example.com"
+#  FORGE_VAULT_MOUNT: "secrets"
+#  FORGE_VAULT_PKI_MOUNT: "forgeca"
+
+databaseConfig: {}
+#  DB_HOST: "postgresql.forge-system.svc.cluster.local"
+#  DB_PORT: "5432"
+#  DB_NAME: "carbide"
 
 ## External LoadBalancer Service (for bare-metal / MetalLB)
 externalService:

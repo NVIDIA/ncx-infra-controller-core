@@ -1,7 +1,6 @@
 ## carbide-dhcp — DHCP server (Kea-based) for PXE boot and network assignment
 ## Global settings (overridden by umbrella chart)
 global:
-  namespace: default
   image:
     repository: ""
     tag: ""
@@ -23,6 +22,9 @@ global:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: site-controller
 
+## Override the release namespace (defaults to helm install -n <namespace>)
+namespaceOverride: ""
+
 replicas: 1
 annotations:
   configmap.reloader.stakater.com/reload: "carbide-dhcp-config"
@@ -34,7 +36,7 @@ metrics:
   port: 1089
 
 certificate:
-  ## serviceName is used to auto-generate dnsNames and SPIFFE URIs based on global.namespace
+  ## serviceName is used to auto-generate dnsNames and SPIFFE URIs based on the release namespace
   serviceName: carbide-dhcp
   extraDnsNames: []
   extraUris: []
@@ -100,7 +102,7 @@ config:
     }
 
 serviceMonitor:
-  enabled: true
+  enabled: false
   interval: 30s
   scrapeTimeout: 25s
 

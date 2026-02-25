@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: carbide-hardware-health
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-hardware-health.namespace" . }}
   labels:
     {{- include "carbide-hardware-health.labels" . | nindent 4 }}
 spec:

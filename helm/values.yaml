@@ -18,9 +18,6 @@
 ## Global settings (shared by all sub-charts)
 ## ---------------------------------------------------------------------------
 global:
-  ## Target namespace for all resources
-  namespace: default
-
   ## Container image for Carbide core services (REQUIRED -- must be set by user)
   ## Services that share this image: carbide-api, carbide-dhcp, carbide-dns,
   ## carbide-dsx-exchange-consumer, carbide-hardware-health, carbide-pxe,
@@ -95,9 +92,10 @@ carbide-hardware-health:
 ## carbide-ntp — Chrony NTP server
 ## Provides time synchronization to bare metal hosts.
 ## NOTE: Uses its own image (dockurr/chrony), not global.image.
+## Disabled by default — most environments provide NTP externally.
 ## ---------------------------------------------------------------------------
 carbide-ntp:
-  enabled: true
+  enabled: false
 
 ## ---------------------------------------------------------------------------
 ## carbide-pxe — PXE boot server

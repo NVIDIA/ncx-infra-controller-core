@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: carbide-pxe
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-pxe.namespace" . }}
   labels:
     {{- include "carbide-pxe.labels" . | nindent 4 }}
   annotations:
@@ -60,18 +60,10 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
           volumeMounts:
-            - name: config
-              mountPath: /tmp/carbide
             - name: spiffe
               mountPath: /var/run/secrets/spiffe.io
               readOnly: true
       volumes:
-        - name: config
-          configMap:
-            name: carbide-pxe-config
-            items:
-              - key: Rocket.toml
-                path: Rocket.toml
         - name: spiffe
           secret:
             secretName: carbide-pxe-certificate

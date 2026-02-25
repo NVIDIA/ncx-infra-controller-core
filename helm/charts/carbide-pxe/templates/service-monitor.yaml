@@ -3,7 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: carbide-pxe-metrics
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-pxe.namespace" . }}
   labels:
     {{- include "carbide-pxe.labels" . | nindent 4 }}
     app: carbide-pxe

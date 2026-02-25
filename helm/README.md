@@ -40,8 +40,7 @@ For the full list of required secrets, ConfigMaps, and infrastructure setup step
 helm upgrade --install carbide ./helm \
   --namespace forge-system --create-namespace \
   --set global.image.repository=<your-registry>/carbide-core \
-  --set global.image.tag=<version> \
-  --set global.namespace=forge-system
+  --set global.image.tag=<version>
 ```
 
 To verify the deployment:
@@ -59,7 +58,6 @@ Top-level `global:` values are automatically passed to all subcharts.
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `global.namespace` | Target namespace for all resources | `default` |
 | `global.image.repository` | Container image repository (**REQUIRED**) | `""` |
 | `global.image.tag` | Container image tag (**REQUIRED**) | `""` |
 | `global.image.pullPolicy` | Image pull policy | `IfNotPresent` |
@@ -76,7 +74,7 @@ Top-level `global:` values are automatically passed to all subcharts.
 
 ### Subchart Enable/Disable Flags
 
-Each subchart can be independently enabled or disabled. All subcharts are enabled by default.
+Each subchart can be independently enabled or disabled. All subcharts are enabled by default except `carbide-ntp` (most environments provide NTP externally).
 
 ```yaml
 carbide-api:
@@ -90,7 +88,7 @@ carbide-dsx-exchange-consumer:
 carbide-hardware-health:
   enabled: true        # Hardware health monitoring
 carbide-ntp:
-  enabled: true        # NTP time server
+  enabled: false       # NTP time server (disabled by default)
 carbide-pxe:
   enabled: true        # PXE boot server
 carbide-ssh-console-rs:
@@ -112,19 +110,29 @@ The `global.image.repository` and `global.image.tag` values **must** be set -- t
 
 ### OAuth2 / SSO Setup
 
-To enable OAuth2 authentication (for example, Azure AD or Okta), configure the `carbide-api` environment variables:
+To enable OAuth2 authentication (for example, Azure AD or Okta), configure the `carbide-api.extraEnv` values:
 
 ```yaml
 carbide-api:
-  env:
-    CARBIDE_WEB_AUTH_TYPE: "oauth2"
-    CARBIDE_WEB_OAUTH2_AUTH_ENDPOINT: "https://your-idp/authorize"
-    CARBIDE_WEB_OAUTH2_TOKEN_ENDPOINT: "https://your-idp/token"
-    CARBIDE_WEB_OAUTH2_CLIENT_ID: "your-client-id"
-    CARBIDE_WEB_ALLOWED_ACCESS_GROUPS: "group1,group2"
+  extraEnv:
+    - name: CARBIDE_WEB_AUTH_TYPE
+      value: "oauth2"
+    - name: CARBIDE_WEB_OAUTH2_AUTH_ENDPOINT
+      value: "https://your-idp/authorize"
+    - name: CARBIDE_WEB_OAUTH2_TOKEN_ENDPOINT
+      value: "https://your-idp/token"
+    - name: CARBIDE_WEB_OAUTH2_CLIENT_ID
+      value: "your-client-id"
+    - name: CARBIDE_WEB_ALLOWED_ACCESS_GROUPS
+      value: "group1,group2"
+    - name: CARBIDE_WEB_OAUTH2_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: your-sso-secret
+          key: client_secret
 ```
 
-The OAuth2 client secret should be provided via a Kubernetes Secret referenced in `carbide-api.envFrom.azureSsoSecret.secretName`.
+The `extraEnv` array supports any Kubernetes `env` spec, including `valueFrom` references to Secrets and ConfigMaps.
 
 ### External LoadBalancer Services
 

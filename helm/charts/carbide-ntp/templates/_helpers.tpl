@@ -1,4 +1,11 @@
 {{/*
+Allow the release namespace to be overridden for multi-namespace deployments.
+*/}}
+{{- define "carbide-ntp.namespace" -}}
+{{- default .Release.Namespace .Values.namespaceOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
 Expand the name of the chart.
 */}}
 {{- define "carbide-ntp.name" -}}
@@ -36,7 +43,7 @@ Generate NTP_SERVERS value: external servers + peer FQDNs using global.namespace
 Replaces hardcoded forge-system in peer discovery.
 */}}
 {{- define "carbide-ntp.ntpServers" -}}
-{{- $ns := .Values.global.namespace -}}
+{{- $ns := include "carbide-ntp.namespace" . -}}
 {{- $external := splitList "," .Values.env.NTP_EXTERNAL_SERVERS -}}
 {{- $peers := list -}}
 {{- $replicas := int .Values.replicas -}}

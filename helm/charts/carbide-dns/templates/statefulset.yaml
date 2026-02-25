@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: carbide-dns
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-dns.namespace" . }}
   labels:
     {{- include "carbide-dns.labels" . | nindent 4 }}
   annotations:

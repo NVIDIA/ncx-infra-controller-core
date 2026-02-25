@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: carbide-ntp
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-ntp.namespace" . }}
   labels:
     {{- include "carbide-ntp.labels" . | nindent 4 }}
 spec:

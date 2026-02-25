@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: carbide-dsx-exchange-consumer
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-dsx-exchange-consumer.namespace" . }}
   labels:
     {{- include "carbide-dsx-exchange-consumer.labels" . | nindent 4 }}
 spec:

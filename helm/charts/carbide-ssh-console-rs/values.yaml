@@ -1,7 +1,6 @@
 ## carbide-ssh-console-rs — SSH console proxy for remote BMC/console access
 ## Global settings (overridden by umbrella chart)
 global:
-  namespace: default
   image:
     repository: ""
     tag: ""
@@ -23,6 +22,9 @@ global:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: site-controller
 
+## Override the release namespace (defaults to helm install -n <namespace>)
+namespaceOverride: ""
+
 replicas: 1
 annotations:
   configmap.reloader.stakater.com/reload: "ssh-console-rs-config-files"
@@ -36,7 +38,7 @@ metrics:
   port: 9009
 
 certificate:
-  ## serviceName is used to auto-generate dnsNames and SPIFFE URIs based on global.namespace
+  ## serviceName is used to auto-generate dnsNames and SPIFFE URIs based on the release namespace
   serviceName: carbide-ssh-console-rs
   extraDnsNames: []
   extraUris: []
@@ -56,7 +58,7 @@ lokiLogCollector:
     tag: ""
 
 serviceMonitor:
-  enabled: true
+  enabled: false
   interval: 30s
   scrapeTimeout: 25s
 

@@ -3,7 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: carbide-ssh-console-rs-metrics
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-ssh-console-rs.namespace" . }}
   labels:
     {{- include "carbide-ssh-console-rs.labels" . | nindent 4 }}
     app: carbide-ssh-console-rs

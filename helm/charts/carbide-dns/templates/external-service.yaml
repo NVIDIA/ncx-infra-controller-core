@@ -6,7 +6,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: carbide-dns-external-udp-{{ $i }}
-  namespace: {{ $.Values.global.namespace }}
+  namespace: {{ include "carbide-dns.namespace" $ }}
   labels:
     app.kubernetes.io/part-of: carbide-dns-instance-{{ $i }}
   annotations:
@@ -33,7 +33,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: carbide-dns-external-tcp-{{ $i }}
-  namespace: {{ $.Values.global.namespace }}
+  namespace: {{ include "carbide-dns.namespace" $ }}
   labels:
     app.kubernetes.io/part-of: carbide-dns-instance-{{ $i }}
   annotations:

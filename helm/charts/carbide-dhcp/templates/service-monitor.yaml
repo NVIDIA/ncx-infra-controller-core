@@ -3,7 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: carbide-dhcp-metrics
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-dhcp.namespace" . }}
   labels:
     {{- include "carbide-dhcp.labels" . | nindent 4 }}
     app: carbide-dhcp

@@ -4,12 +4,11 @@
 ## Comprehensive example showing all configurable values with documentation.
 ## Copy and modify this file for your environment.
 ## See PREREQUISITES.md for required Secrets, ConfigMaps, and operators.
+##
+## Install with: helm install carbide ./helm -n forge-system --create-namespace -f values-full.yaml
 ## =============================================================================
 
 global:
-  ## Target namespace for all resources
-  namespace: forge-system
-
   ## Container image for Carbide core services (REQUIRED)
   image:
     repository: "your-registry.example.com/carbide-core"
@@ -65,18 +64,29 @@ carbide-api:
         - name: firmware
           mountPath: /opt/carbide/firmware
 
-  ## OAuth2/SSO authentication
   env:
     VAULT_PKI_ROLE_NAME: "forge-cluster"
-    CARBIDE_WEB_AUTH_TYPE: "oauth2"
-    CARBIDE_WEB_OAUTH2_AUTH_ENDPOINT: "https://login.example.com/oauth2/v2.0/authorize"
-    CARBIDE_WEB_OAUTH2_TOKEN_ENDPOINT: "https://login.example.com/oauth2/v2.0/token"
-    CARBIDE_WEB_OAUTH2_CLIENT_ID: "your-oauth2-client-id"
-    CARBIDE_WEB_ALLOWED_ACCESS_GROUPS: "carbide-admins,carbide-operators"
-    CARBIDE_WEB_ALLOWED_ACCESS_GROUPS_ID_LIST: ""
-    BITNAMI_DEBUG: "false"
     RUST_BACKTRACE: "full"
     RUST_LIB_BACKTRACE: "0"
+
+  ## OAuth2/SSO authentication — configure via extraEnv
+  ## These are not built into the chart to keep it auth-provider agnostic.
+  extraEnv:
+    - name: CARBIDE_WEB_AUTH_TYPE
+      value: "oauth2"
+    - name: CARBIDE_WEB_OAUTH2_AUTH_ENDPOINT
+      value: "https://login.example.com/oauth2/v2.0/authorize"
+    - name: CARBIDE_WEB_OAUTH2_TOKEN_ENDPOINT
+      value: "https://login.example.com/oauth2/v2.0/token"
+    - name: CARBIDE_WEB_OAUTH2_CLIENT_ID
+      value: "your-oauth2-client-id"
+    - name: CARBIDE_WEB_OAUTH2_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: azure-sso-carbide-web-client-secret
+          key: client_secret
+    - name: CARBIDE_WEB_ALLOWED_ACCESS_GROUPS
+      value: "carbide-admins,carbide-operators"
 
   ## Carbide Web UI hostname
   hostname: "carbide.example.com"
@@ -89,16 +99,14 @@ carbide-api:
       route_servers=[]
 
   ## Create Vault and DB ConfigMaps from values (alternative to external ConfigMaps)
-  externalConfig:
-    enabled: true
-    vaultClusterInfo:
-      VAULT_SERVICE: "https://vault.example.com"
-      FORGE_VAULT_MOUNT: "secrets"
-      FORGE_VAULT_PKI_MOUNT: "forgeca"
-    databaseConfig:
-      DB_HOST: "postgresql.forge-system.svc.cluster.local"
-      DB_PORT: "5432"
-      DB_NAME: "carbide"
+  vaultClusterInfo:
+    VAULT_SERVICE: "https://vault.example.com"
+    FORGE_VAULT_MOUNT: "secrets"
+    FORGE_VAULT_PKI_MOUNT: "forgeca"
+  databaseConfig:
+    DB_HOST: "postgresql.forge-system.svc.cluster.local"
+    DB_PORT: "5432"
+    DB_NAME: "carbide"
 
   ## External LoadBalancer (for MetalLB or similar)
   externalService:
@@ -112,9 +120,6 @@ carbide-api:
     enabled: true
     interval: 30s
     scrapeTimeout: 25s
-
-  migration:
-    enabled: true
 
 ## ---------------------------------------------------------------------------
 ## carbide-dhcp — DHCP server
@@ -216,7 +221,8 @@ carbide-hardware-health:
     scrapeTimeout: 25s
 
 ## ---------------------------------------------------------------------------
-## carbide-ntp — Chrony NTP server
+## carbide-ntp — Chrony NTP server (disabled by default)
+## Enable if your environment does not provide external NTP.
 ## ---------------------------------------------------------------------------
 carbide-ntp:
   enabled: true

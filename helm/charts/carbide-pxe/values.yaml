@@ -1,7 +1,6 @@
 ## carbide-pxe — PXE boot server for OS provisioning workflows
 ## Global settings (overridden by umbrella chart)
 global:
-  namespace: default
   image:
     repository: ""
     tag: ""
@@ -23,41 +22,36 @@ global:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/part-of: site-controller
 
+## Override the release namespace (defaults to helm install -n <namespace>)
+namespaceOverride: ""
+
 replicas: 1
 
 ## Optional init containers (e.g. boot-artifacts)
 initContainers: []
 
 annotations:
-  configmap.reloader.stakater.com/reload: "carbide-pxe-config"
+  configmap.reloader.stakater.com/reload: "carbide-pxe-env-config"
 
 service:
   port: 8080
 
 certificate:
-  ## serviceName is used to auto-generate dnsNames and SPIFFE URIs based on global.namespace
+  ## serviceName is used to auto-generate dnsNames and SPIFFE URIs based on the release namespace
   serviceName: carbide-pxe
   extraDnsNames: []
   extraUris: []
 
 env:
-  ROCKET_CONFIG: "/tmp/carbide/Rocket.toml"
-  ROCKET_TEMPLATE_DIR: "/opt/carbide/pxe/templates"
-  ROCKET_ENV: "production"
   FORGE_ROOT_CAFILE_PATH: "/var/run/secrets/spiffe.io/ca.crt"
   FORGE_CLIENT_CERT_PATH: "/var/run/secrets/spiffe.io/tls.crt"
   FORGE_CLIENT_KEY_PATH: "/var/run/secrets/spiffe.io/tls.key"
   RUST_BACKTRACE: "full"
   RUST_LIB_BACKTRACE: "0"
 
-## ConfigMap created by this chart (config.enabled=true) or external (false)
+## ConfigMap settings for the env ConfigMap
 config:
-  enabled: true
-  rocketToml: |
-    [default]
-    address = "0.0.0.0"
-    port = 8069
-  ## CARBIDE_API_HOST, CARBIDE_API_PORT are auto-generated from global.namespace
+  ## CARBIDE_API_HOST, CARBIDE_API_PORT are auto-generated from the release namespace
   carbideApiPort: "1079"
   extraEnvData: {}  # additional keys to add to the env ConfigMap
 
@@ -75,7 +69,7 @@ livenessProbe:
   successThreshold: 1
 
 serviceMonitor:
-  enabled: true
+  enabled: false
   interval: 30s
   scrapeTimeout: 25s
 

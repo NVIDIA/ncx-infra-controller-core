@@ -1,4 +1,11 @@
 {{/*
+Allow the release namespace to be overridden for multi-namespace deployments.
+*/}}
+{{- define "carbide-dhcp.namespace" -}}
+{{- default .Release.Namespace .Values.namespaceOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
 Expand the name of the chart.
 */}}
 {{- define "carbide-dhcp.name" -}}
@@ -45,13 +52,13 @@ Certificate spec
 duration: {{ .global.certificate.duration }}
 renewBefore: {{ .global.certificate.renewBefore }}
 dnsNames:
-  - {{ printf "%s.%s.svc.cluster.local" .cert.serviceName .global.namespace }}
-  - {{ printf "%s.%s" .cert.serviceName .global.namespace }}
+  - {{ printf "%s.%s.svc.cluster.local" .cert.serviceName .namespace }}
+  - {{ printf "%s.%s" .cert.serviceName .namespace }}
 {{- range .cert.extraDnsNames | default list }}
   - {{ . }}
 {{- end }}
 uris:
-  - {{ printf "spiffe://%s/%s/sa/%s" .global.spiffe.trustDomain .global.namespace .cert.serviceName }}
+  - {{ printf "spiffe://%s/%s/sa/%s" .global.spiffe.trustDomain .namespace .cert.serviceName }}
 {{- range .cert.extraUris | default list }}
   - {{ . }}
 {{- end }}

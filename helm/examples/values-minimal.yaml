@@ -4,18 +4,18 @@
 ## This is the minimum configuration required to deploy Carbide.
 ## You MUST set global.image.repository and global.image.tag.
 ## See PREREQUISITES.md for required Secrets, ConfigMaps, and operators.
+##
+## Install with: helm install carbide ./helm -n forge-system --create-namespace -f values-minimal.yaml
 ## =============================================================================
 
 global:
-  namespace: forge-system
-
   ## REQUIRED: Set your container image repository and tag
   image:
     repository: ""   # e.g. your-registry.example.com/carbide-core
     tag: ""          # e.g. v2025.12.30
 
 ## ---------------------------------------------------------------------------
-## All services enabled by default — disable any you don't need
+## All services enabled by default (except carbide-ntp) — disable any you don't need
 ## ---------------------------------------------------------------------------
 
 ## carbide-api: Core API requires site config at minimum
@@ -45,9 +45,10 @@ carbide-dsx-exchange-consumer:
 carbide-hardware-health:
   enabled: true
 
-## carbide-ntp: Time sync for bare metal hosts
-carbide-ntp:
-  enabled: true
+## carbide-ntp: Time sync for bare metal hosts (disabled by default)
+## Enable if your environment does not provide external NTP.
+# carbide-ntp:
+#   enabled: true
 
 ## carbide-pxe: PXE boot server
 carbide-pxe:

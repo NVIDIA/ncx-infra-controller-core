@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: carbide-api
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-api.namespace" . }}
   labels:
     {{- include "carbide-api.labels" . | nindent 4 }}
   annotations:
@@ -39,9 +39,7 @@ spec:
               add:
                 - SYS_PTRACE
           command:
-            - /bin/sh
-            - -c
-            - /opt/carbide/carbide-api run --config-path /etc/forge/carbide-api/carbide-api-config.toml --site-config-path /etc/forge/carbide-api/site/carbide-api-site-config.toml
+            {{- toYaml .Values.command | nindent 12 }}
           env:
             - name: VAULT_ROLE_ID
               valueFrom:
@@ -111,34 +109,18 @@ spec:
               value: "postgres://$(DATASTORE_USER):$(DATASTORE_PASSWORD)@$(DATASTORE_HOST):$(DATASTORE_PORT)/$(DATASTORE_NAME)"
             - name: CARBIDE_WEB_PRIVATE_COOKIEJAR_KEY
               value: "$(DATASTORE_PASSWORD)"
-            - name: CARBIDE_WEB_OAUTH2_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  key: client_secret
-                  name: {{ .Values.envFrom.azureSsoSecret.secretName }}
             - name: CARBIDE_WEB_HOSTNAME
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.envFrom.carbideWebHostname.configMapName }}
                   key: hostname
-            - name: CARBIDE_WEB_AUTH_TYPE
-              value: {{ .Values.env.CARBIDE_WEB_AUTH_TYPE | quote }}
-            - name: CARBIDE_WEB_OAUTH2_AUTH_ENDPOINT
-              value: {{ .Values.env.CARBIDE_WEB_OAUTH2_AUTH_ENDPOINT | quote }}
-            - name: CARBIDE_WEB_OAUTH2_TOKEN_ENDPOINT
-              value: {{ .Values.env.CARBIDE_WEB_OAUTH2_TOKEN_ENDPOINT | quote }}
-            - name: CARBIDE_WEB_OAUTH2_CLIENT_ID
-              value: {{ .Values.env.CARBIDE_WEB_OAUTH2_CLIENT_ID | quote }}
-            - name: CARBIDE_WEB_ALLOWED_ACCESS_GROUPS
-              value: {{ .Values.env.CARBIDE_WEB_ALLOWED_ACCESS_GROUPS | quote }}
-            - name: CARBIDE_WEB_ALLOWED_ACCESS_GROUPS_ID_LIST
-              value: {{ .Values.env.CARBIDE_WEB_ALLOWED_ACCESS_GROUPS_ID_LIST | quote }}
-            - name: BITNAMI_DEBUG
-              value: {{ .Values.env.BITNAMI_DEBUG | quote }}
             - name: RUST_BACKTRACE
               value: {{ .Values.env.RUST_BACKTRACE | quote }}
             - name: RUST_LIB_BACKTRACE
               value: {{ .Values.env.RUST_LIB_BACKTRACE | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.service.grpc.port }}

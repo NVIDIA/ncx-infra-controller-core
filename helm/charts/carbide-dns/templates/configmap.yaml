@@ -1,16 +1,14 @@
-{{- if .Values.config.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Values.envFrom.carbideDnsConfig.configMapName }}
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-dns.namespace" . }}
   labels:
     {{- include "carbide-dns.labels" . | nindent 4 }}
 data:
-  CARBIDE_API: {{ printf "carbide-api.%s.svc.cluster.local:%s" .Values.global.namespace (.Values.config.carbideApiPort | default "1079") | quote }}
-  CARBIDE_API_HOST: {{ printf "carbide-api.%s.svc.cluster.local" .Values.global.namespace | quote }}
+  CARBIDE_API: {{ printf "carbide-api.%s.svc.cluster.local:%s" (include "carbide-dns.namespace" .) (.Values.config.carbideApiPort | default "1079") | quote }}
+  CARBIDE_API_HOST: {{ printf "carbide-api.%s.svc.cluster.local" (include "carbide-dns.namespace" .) | quote }}
   CARBIDE_API_PORT: {{ .Values.config.carbideApiPort | default "1079" | quote }}
   {{- range $key, $value := .Values.config.extraData }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
-{{- end }}

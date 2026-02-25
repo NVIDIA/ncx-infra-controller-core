@@ -1,5 +1,7 @@
-global:
-  namespace: default
+global: {}
+
+## Override the release namespace (defaults to helm install -n <namespace>)
+namespaceOverride: ""
 
 ## Unbound DNS image (not shared with global.image)
 image:
@@ -19,7 +21,7 @@ service:
   type: ClusterIP
 
 serviceMonitor:
-  enabled: true
+  enabled: false
   interval: 30s
   scrapeTimeout: 25s
 

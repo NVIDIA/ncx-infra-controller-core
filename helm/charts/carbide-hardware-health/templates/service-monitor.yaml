@@ -3,7 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: carbide-hardware-health-metrics
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-hardware-health.namespace" . }}
   labels:
     {{- include "carbide-hardware-health.labels" . | nindent 4 }}
     app: carbide-hardware-health

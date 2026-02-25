@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: carbide-ssh-console-rs
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-ssh-console-rs.namespace" . }}
   labels:
     {{- include "carbide-ssh-console-rs.labels" . | nindent 4 }}
   annotations:

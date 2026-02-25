@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: forge-unbound
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "unbound.namespace" . }}
   labels:
     {{- include "unbound.labels" . | nindent 4 }}
   annotations:

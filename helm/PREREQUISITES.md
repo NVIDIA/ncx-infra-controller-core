@@ -33,11 +33,12 @@ Required for PKI (certificate signing) and secret storage. Vault serves as the b
 
 Can be used to synchronize secrets from Vault into Kubernetes automatically. This is not required if you create all necessary secrets manually (see Section 3).
 
-### Prometheus Operator CRDs
+### Prometheus Operator (Optional)
 
-Required for `ServiceMonitor` and `PodMonitor` resources used by Carbide services for metrics collection.
+If you want Prometheus metrics collection, install the [Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator) (or [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)). This provides the `ServiceMonitor` and `PodMonitor` CRDs used by Carbide services.
 
-- If you are not running the Prometheus Operator, disable service monitors by setting `serviceMonitor.enabled: false` in each subchart's values.
+- Service monitors are **disabled by default**. To enable them, set `serviceMonitor.enabled: true` in each subchart's values (or in the umbrella chart).
+- Carbide functions normally without the Prometheus Operator installed.
 
 ---
 
@@ -161,7 +162,7 @@ kubectl create configmap vault-cluster-info \
   --from-literal=FORGE_VAULT_PKI_MOUNT='forgeca'
 ```
 
-**Note:** Alternatively, set `carbide-api.externalConfig.enabled=true` in your `values.yaml` to have the chart create this ConfigMap for you based on the values you provide.
+**Note:** Alternatively, populate `carbide-api.vaultClusterInfo` in your `values.yaml` to have the chart create this ConfigMap for you.
 
 ### `forge-system-carbide-database-config`
 
@@ -177,7 +178,7 @@ kubectl create configmap forge-system-carbide-database-config \
   --from-literal=DB_NAME='carbide'
 ```
 
-**Note:** Alternatively, set `carbide-api.externalConfig.enabled=true` in your `values.yaml` to have the chart manage this ConfigMap automatically.
+**Note:** Alternatively, populate `carbide-api.databaseConfig` in your `values.yaml` to have the chart manage this ConfigMap automatically.
 
 ---
 

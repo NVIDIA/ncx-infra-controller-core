@@ -1,19 +1,17 @@
-{{- if .Values.migration.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: carbide-api-migrate
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-api.namespace" . }}
   labels:
     {{- include "carbide-api.labels" . | nindent 4 }}
     app: carbide-api-migrate
   annotations:
-    # ArgoCD: runs before sync
     argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    # NOTE: Helm hooks removed — migration Job is a regular resource so that
-    # it deploys alongside the ConfigMaps it depends on (forge-system-carbide-database-config).
-    # The Job pod retries (restartPolicy: OnFailure) until ConfigMaps are available.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/hook-weight: "-5"
 spec:
   template:
     metadata:
@@ -61,4 +59,3 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.envFrom.databaseConfig.configMapName }}
                   key: DB_NAME
-{{- end }}

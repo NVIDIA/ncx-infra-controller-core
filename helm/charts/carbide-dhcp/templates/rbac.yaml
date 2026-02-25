@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: carbide-dhcp
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-dhcp.namespace" . }}
   labels:
     {{- include "carbide-dhcp.labels" . | nindent 4 }}
 automountServiceAccountToken: true
@@ -11,7 +11,7 @@ kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: carbide-dhcp
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-dhcp.namespace" . }}
   labels:
     {{- include "carbide-dhcp.labels" . | nindent 4 }}
 rules:
@@ -23,7 +23,7 @@ kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: carbide-dhcp
-  namespace: {{ .Values.global.namespace }}
+  namespace: {{ include "carbide-dhcp.namespace" . }}
   labels:
     {{- include "carbide-dhcp.labels" . | nindent 4 }}
 roleRef:
@@ -33,4 +33,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: carbide-dhcp
-    namespace: {{ .Values.global.namespace }}
+    namespace: {{ include "carbide-dhcp.namespace" . }}
