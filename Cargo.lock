@@ -1163,6 +1163,7 @@ dependencies = [
  "bmc-vendor",
  "carbide-health-report",
  "carbide-libmlx",
+ "carbide-macros",
  "carbide-measured-boot",
  "carbide-network",
  "carbide-rpc",
