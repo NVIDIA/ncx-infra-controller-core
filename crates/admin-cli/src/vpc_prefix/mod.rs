@@ -15,32 +15,36 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+pub mod common;
+mod create;
+mod delete;
+pub mod show;
 
 #[cfg(test)]
 mod tests;
 
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Cmd;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug)]
+pub enum Cmd {
+    #[clap(hide = true)]
+    Create(create::Args),
+    Show(show::Args),
+    #[clap(hide = true)]
+    Delete(delete::Args),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::Create(args) => cmds::create(args, ctx.config.format, &ctx.api_client).await,
-            Cmd::Show(args) => {
-                cmds::show(
-                    args,
-                    ctx.config.format,
-                    &ctx.api_client,
-                    ctx.config.page_size,
-                )
-                .await
-            }
-            Cmd::Delete(args) => cmds::delete(args, &ctx.api_client).await,
+            Cmd::Create(args) => args.run(&mut ctx).await,
+            Cmd::Show(args) => args.run(&mut ctx).await,
+            Cmd::Delete(args) => args.run(&mut ctx).await,
         }
     }
 }

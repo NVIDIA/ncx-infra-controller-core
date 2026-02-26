@@ -15,50 +15,42 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+mod clear_uefi_password;
+mod generate_host_uefi_password;
+mod reprovision;
+mod set_uefi_password;
 
 #[cfg(test)]
 mod tests;
 
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Cmd;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug, Clone)]
+#[clap(rename_all = "kebab_case")]
+pub enum Cmd {
+    #[clap(about = "Set Host UEFI password")]
+    SetUefiPassword(set_uefi_password::Args),
+    #[clap(about = "Clear Host UEFI password")]
+    ClearUefiPassword(clear_uefi_password::Args),
+    #[clap(about = "Generates a string that can be a site-default host UEFI password in Vault")]
+    /// - the generated string will meet the uefi password requirements of all vendors
+    GenerateHostUefiPassword(generate_host_uefi_password::Args),
+    #[clap(subcommand, about = "Host reprovisioning handling")]
+    Reprovision(reprovision::Args),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::SetUefiPassword(query) => cmds::set_uefi_password(query, &ctx.api_client).await,
-            Cmd::ClearUefiPassword(query) => {
-                cmds::clear_uefi_password(query, &ctx.api_client).await
-            }
-            Cmd::GenerateHostUefiPassword => cmds::generate_uefi_password(),
-            Cmd::Reprovision(reprovision) => match reprovision {
-                args::HostReprovision::Set(data) => {
-                    cmds::trigger_reprovisioning(
-                        data.id,
-                        ::rpc::forge::host_reprovisioning_request::Mode::Set,
-                        &ctx.api_client,
-                        data.update_message,
-                    )
-                    .await
-                }
-                args::HostReprovision::Clear(data) => {
-                    cmds::trigger_reprovisioning(
-                        data.id,
-                        ::rpc::forge::host_reprovisioning_request::Mode::Clear,
-                        &ctx.api_client,
-                        None,
-                    )
-                    .await
-                }
-                args::HostReprovision::List => cmds::list_hosts_pending(&ctx.api_client).await,
-                args::HostReprovision::MarkManualUpgradeComplete(data) => {
-                    cmds::mark_manual_firmware_upgrade_complete(data.id, &ctx.api_client).await
-                }
-            },
+            Cmd::SetUefiPassword(args) => args.run(&mut ctx).await,
+            Cmd::ClearUefiPassword(args) => args.run(&mut ctx).await,
+            Cmd::GenerateHostUefiPassword(args) => args.run(&mut ctx).await,
+            Cmd::Reprovision(args) => args.run(&mut ctx).await,
         }
     }
 }

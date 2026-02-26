@@ -15,32 +15,36 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+mod create;
+mod delete;
+mod show;
 
 #[cfg(test)]
 mod tests;
 
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Cmd;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug)]
+pub enum Cmd {
+    #[clap(about = "Display logical partition information")]
+    Show(show::Args),
+    #[clap(about = "Create logical partition")]
+    Create(create::Args),
+    #[clap(about = "Delete logical partition")]
+    Delete(delete::Args),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::Show(args) => {
-                cmds::handle_show(
-                    args,
-                    ctx.config.format,
-                    &ctx.api_client,
-                    ctx.config.page_size,
-                )
-                .await
-            }
-            Cmd::Create(args) => cmds::handle_create(args, &ctx.api_client).await,
-            Cmd::Delete(args) => cmds::handle_delete(args, &ctx.api_client).await,
+            Cmd::Show(args) => args.run(&mut ctx).await,
+            Cmd::Create(args) => args.run(&mut ctx).await,
+            Cmd::Delete(args) => args.run(&mut ctx).await,
         }
     }
 }

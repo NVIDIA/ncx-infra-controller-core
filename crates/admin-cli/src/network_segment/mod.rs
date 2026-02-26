@@ -15,44 +15,36 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+mod delete;
+mod show;
+
+// Cross-module re-exports for jump module
+pub use show::args::Args as ShowNetworkSegment;
+pub use show::cmd::handle_show;
 
 #[cfg(test)]
 mod tests;
 
-use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult};
-use ::rpc::forge::NetworkSegmentDeletionRequest;
-pub use args::Cmd;
+use ::rpc::admin_cli::CarbideCliResult;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug)]
+pub enum Cmd {
+    #[clap(about = "Display Network Segment information")]
+    Show(show::Args),
+    #[clap(about = "Delete Network Segment")]
+    Delete(delete::Args),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::Show(args) => {
-                cmds::handle_show(
-                    args,
-                    ctx.config.format,
-                    &ctx.api_client,
-                    ctx.config.page_size,
-                )
-                .await?
-            }
-            Cmd::Delete(args) => {
-                if !ctx.config.cloud_unsafe_op_enabled {
-                    return Err(CarbideCliError::GenericError(
-                        "Operation not allowed due to potential inconsistencies with cloud database."
-                            .to_owned(),
-                    ));
-                }
-                ctx.api_client
-                    .0
-                    .delete_network_segment(NetworkSegmentDeletionRequest { id: Some(args.id) })
-                    .await?;
-            }
+            Cmd::Show(args) => args.run(&mut ctx).await,
+            Cmd::Delete(args) => args.run(&mut ctx).await,
         }
-        Ok(())
     }
 }

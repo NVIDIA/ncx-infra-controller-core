@@ -15,24 +15,35 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+mod clear;
+pub mod common;
+mod get;
+mod set;
 
 #[cfg(test)]
 mod tests;
 
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Cmd;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug, Clone)]
+#[clap(rename_all = "kebab_case")]
+pub enum Cmd {
+    Get(get::Args),
+    Set(set::Args),
+    Clear(clear::Args),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::Get(args) => cmds::get(args, &ctx.api_client).await,
-            Cmd::Set(args) => cmds::set(args, &ctx.api_client).await,
-            Cmd::Clear(args) => cmds::clear(args, &ctx.api_client).await,
+            Cmd::Get(args) => args.run(&mut ctx).await,
+            Cmd::Set(args) => args.run(&mut ctx).await,
+            Cmd::Clear(args) => args.run(&mut ctx).await,
         }
     }
 }

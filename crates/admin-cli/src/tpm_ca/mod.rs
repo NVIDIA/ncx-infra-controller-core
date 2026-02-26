@@ -15,26 +15,44 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+mod add;
+mod add_bulk;
+mod delete;
+mod show;
+mod show_unmatched_ek;
 
 #[cfg(test)]
 mod tests;
 
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Cmd;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug)]
+pub enum Cmd {
+    #[clap(about = "Show all TPM CA certificates")]
+    Show(show::Args),
+    #[clap(about = "Delete TPM CA certificate with a given id")]
+    Delete(delete::Args),
+    #[clap(about = "Add TPM CA certificate encoded in DER/CER/PEM format in a given file")]
+    Add(add::Args),
+    #[clap(about = "Show TPM EK certificates for which there is no CA match")]
+    ShowUnmatchedEk(show_unmatched_ek::Args),
+    #[clap(about = "Add all certificates in a dir as CA certificates")]
+    AddBulk(add_bulk::Args),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::Show => cmds::show(&ctx.api_client).await,
-            Cmd::Delete(delete_opts) => cmds::delete(delete_opts.ca_id, &ctx.api_client).await,
-            Cmd::Add(add_opts) => cmds::add_filename(&add_opts.filename, &ctx.api_client).await,
-            Cmd::AddBulk(add_opts) => cmds::add_bulk(&add_opts.dirname, &ctx.api_client).await,
-            Cmd::ShowUnmatchedEk => cmds::show_unmatched_ek(&ctx.api_client).await,
+            Cmd::Show(args) => args.run(&mut ctx).await,
+            Cmd::Delete(args) => args.run(&mut ctx).await,
+            Cmd::Add(args) => args.run(&mut ctx).await,
+            Cmd::ShowUnmatchedEk(args) => args.run(&mut ctx).await,
+            Cmd::AddBulk(args) => args.run(&mut ctx).await,
         }
     }
 }

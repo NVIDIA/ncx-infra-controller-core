@@ -15,22 +15,28 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+mod measured_boot;
 
 #[cfg(test)]
 mod tests;
 
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Cmd;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug, Clone)]
+#[clap(rename_all = "kebab_case")]
+pub enum Cmd {
+    MeasuredBoot(measured_boot::Args),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::MeasuredBoot(args) => cmds::trim_measured_boot(args, &ctx.api_client).await,
+            Cmd::MeasuredBoot(args) => args.run(&mut ctx).await,
         }
     }
 }

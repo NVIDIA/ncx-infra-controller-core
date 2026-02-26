@@ -15,26 +15,28 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmds;
+mod config;
 
 #[cfg(test)]
 mod tests;
 
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Cmd;
+use clap::Parser;
 
 use crate::cfg::dispatch::Dispatch;
+use crate::cfg::run::Run;
 use crate::cfg::runtime::RuntimeContext;
 
+#[derive(Parser, Debug, Clone)]
+pub enum Cmd {
+    #[clap(about = "Config related handling", visible_alias = "c", subcommand)]
+    Config(config::Cmd),
+}
+
 impl Dispatch for Cmd {
-    async fn dispatch(self, ctx: RuntimeContext) -> CarbideCliResult<()> {
+    async fn dispatch(self, mut ctx: RuntimeContext) -> CarbideCliResult<()> {
         match self {
-            Cmd::Config(config) => match config {
-                args::DevEnvConfig::Apply(apply_config) => {
-                    cmds::apply_devenv_config(apply_config, &ctx.api_client).await
-                }
-            },
+            Cmd::Config(cmd) => cmd.run(&mut ctx).await,
         }
     }
 }
