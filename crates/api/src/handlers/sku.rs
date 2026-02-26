@@ -52,7 +52,7 @@ pub(crate) async fn delete(api: &Api, request: Request<SkuIdList>) -> Result<Res
     let mut txn = api.txn_begin().await?;
 
     let sku_id_list = request.into_inner().ids;
-    let mut skus = db::sku::find(&mut txn, &sku_id_list, false).await?;
+    let mut skus = db::sku::find(&mut txn, &sku_id_list, true).await?;
 
     let Some(sku) = skus.pop() else {
         return Err(CarbideError::InvalidArgument(format!(
@@ -68,8 +68,9 @@ pub(crate) async fn delete(api: &Api, request: Request<SkuIdList>) -> Result<Res
         return Err(CarbideError::NotImplemented.into());
     }
 
-    let machine_ids = db::machine::find_machine_ids_by_sku_id(&mut txn, &sku.id).await?;
-    if !machine_ids.is_empty() {
+    if let Some(machine_ids) = sku.associated_machine_ids
+        && !machine_ids.is_empty()
+    {
         return Err(CarbideError::InvalidArgument(format!(
             "The SKUs are in use by {} machines",
             machine_ids.len()
