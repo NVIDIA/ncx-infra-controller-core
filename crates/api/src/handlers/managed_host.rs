@@ -258,7 +258,7 @@ pub(crate) async fn set_maintenance(
                     r#override: Some(::rpc::forge::HealthReportOverride {
                         report: Some(health_report::HealthReport {
                             source: "maintenance".to_string(),
-                            triggered_by: triggered_by,
+                            triggered_by,
                             observed_at: Some(chrono::Utc::now()),
                             successes: Vec::new(),
                             alerts: vec![health_report::HealthProbeAlert {
