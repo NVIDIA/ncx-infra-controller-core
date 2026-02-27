@@ -51,9 +51,8 @@ impl RestClient {
         paths: NvueRestPaths,
     ) -> Result<Self, HealthError> {
         let base_url =
-            Url::parse(&format!("https://{host}")).map_err(|e| HealthError::HttpError {
-                protocol: "HTTPS",
-                message: format!("https://{host}: invalid base URL: {e}"),
+            Url::parse(&format!("https://{host}")).map_err(|e| {
+                HealthError::HttpError(format!("https://{host}: invalid base URL: {e}"))
             })?;
 
         let mut builder = Client::builder().timeout(request_timeout);
@@ -63,9 +62,8 @@ impl RestClient {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
-        let client = builder.build().map_err(|e| HealthError::HttpError {
-            protocol: "HTTPS",
-            message: format!("{base_url}: failed to create HTTP client: {e}"),
+        let client = builder.build().map_err(|e| {
+            HealthError::HttpError(format!("{base_url}: failed to create HTTP client: {e}"))
         })?;
 
         Ok(Self {
@@ -153,9 +151,11 @@ impl RestClient {
     fn join_path(&self, path: &str) -> Result<Url, HealthError> {
         self.base_url
             .join(path)
-            .map_err(|e| HealthError::HttpError {
-                protocol: "HTTPS",
-                message: format!("{}: failed to join path {path}: {e}", self.base_url),
+            .map_err(|e| {
+                HealthError::HttpError(format!(
+                    "{}: failed to join path {path}: {e}",
+                    self.base_url
+                ))
             })
     }
 
@@ -180,26 +180,27 @@ impl RestClient {
 
         request = request.header("Accept", "application/json");
 
-        let response = request.send().await.map_err(|e| HealthError::HttpError {
-            protocol: "HTTPS",
-            message: format!("{url}: request failed for switch {}: {e}", self.switch_id),
+        let response = request.send().await.map_err(|e| {
+            HealthError::HttpError(format!(
+                "{url}: request failed for switch {}: {e}",
+                self.switch_id
+            ))
         })?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(HealthError::HttpError {
-                protocol: "HTTPS",
-                message: format!("{url}: HTTP {status} for switch {}: {body}", self.switch_id),
-            });
+            return Err(HealthError::HttpError(format!(
+                "{url}: HTTP {status} for switch {}: {body}",
+                self.switch_id
+            )));
         }
 
-        response.json().await.map_err(|e| HealthError::HttpError {
-            protocol: "HTTPS",
-            message: format!(
+        response.json().await.map_err(|e| {
+            HealthError::HttpError(format!(
                 "{url}: failed to parse response for switch {}: {e}",
                 self.switch_id
-            ),
+            ))
         })
     }
 }
