@@ -281,7 +281,7 @@ pub(crate) async fn handle_bom_validation_requested(
     }
 
     // Case 2.2: Check if the assigned SKU got deleted from the database
-    if db::sku::find(txn.as_mut(), std::slice::from_ref(sku_id), false)
+    if db::sku::find(&mut txn, std::slice::from_ref(sku_id))
         .await?
         .is_empty()
     {
@@ -548,10 +548,9 @@ pub(crate) async fn handle_bom_validation_state(
 
                 let mut txn = ctx.services.db_pool.begin().await?;
 
-                let Some(expected_sku) =
-                    db::sku::find(txn.as_mut(), std::slice::from_ref(&sku_id), false)
-                        .await?
-                        .pop()
+                let Some(expected_sku) = db::sku::find(&mut txn, std::slice::from_ref(&sku_id))
+                    .await?
+                    .pop()
                 else {
                     return advance_to_sku_missing(txn, mh_snapshot).await;
                 };
@@ -669,7 +668,7 @@ pub(crate) async fn handle_bom_validation_state(
                 let mut txn = ctx.services.db_pool.begin().await?;
                 let mut outcome = if let Some(sku_id) = mh_snapshot.host_snapshot.hw_sku.clone() {
                     // SKU is still assigned, check if it now exists or can be auto-generated
-                    if db::sku::find(txn.as_mut(), std::slice::from_ref(&sku_id), false)
+                    if db::sku::find(&mut txn, std::slice::from_ref(&sku_id))
                         .await?
                         .pop()
                         .is_some()

@@ -1384,7 +1384,6 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
             tpm: None,
         },
         device_type: None, // This will result in "unknown" device type
-        associated_machine_ids: None,
     };
     db::sku::create(&mut txn, &test_sku).await?;
 
@@ -2390,7 +2389,6 @@ async fn test_machine_creation_with_sku(
             tpm: None,
         },
         device_type: None, // This will result in "unknown" device type
-        associated_machine_ids: None,
     };
     db::sku::create(&mut txn, &test_sku).await?;
 
@@ -2496,7 +2494,6 @@ async fn test_expected_machine_device_type_metrics(
             tpm: None,
         },
         device_type: Some("gpu".to_string()),
-        associated_machine_ids: None,
     };
 
     let test_sku_without_device_type = model::sku::Sku {
@@ -2518,7 +2515,6 @@ async fn test_expected_machine_device_type_metrics(
             tpm: None,
         },
         device_type: None,
-        associated_machine_ids: None,
     };
 
     db::sku::create(&mut txn, &test_sku_with_device_type).await?;
