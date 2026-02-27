@@ -56,9 +56,7 @@ impl RestClient {
                 message: format!("https://{host}: invalid base URL: {e}"),
             })?;
 
-        let mut builder = Client::builder()
-            .timeout(request_timeout)
-            .connect_timeout(Duration::from_secs(10));
+        let mut builder = Client::builder().timeout(request_timeout);
 
         if self_signed_tls {
             // ! dangerously accept the self-signed certificate.

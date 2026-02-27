@@ -110,12 +110,13 @@ fn parse_prometheus_line(line: &str) -> Option<NmxtMetricSample> {
 async fn scrape_switch_nmxt_metrics(
     http_client: &reqwest::Client,
     switch_ip: &str,
+    request_timeout: Duration,
 ) -> Result<Vec<NmxtMetricSample>, HealthError> {
     let url = format!("http://{}:{}{}", switch_ip, NMXT_PORT, NMXT_ENDPOINT);
 
     let response = http_client
         .get(&url)
-        .timeout(Duration::from_secs(30))
+        .timeout(request_timeout)
         .send()
         .await
         .map_err(|e| {
@@ -151,6 +152,7 @@ pub struct NmxtCollector {
     endpoint: Arc<BmcEndpoint>,
     http_client: reqwest::Client,
     switch_id: String,
+    request_timeout: Duration,
     event_context: EventContext,
     effective_ber_gauge: GaugeVec,
     symbol_error_gauge: GaugeVec,
@@ -171,9 +173,10 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
             _ => endpoint.addr.mac.to_string(),
         };
         let event_context = EventContext::from_endpoint(endpoint.as_ref(), "nmxt");
+        let request_timeout = config.nmxt_config.request_timeout;
 
         let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
+            .timeout(request_timeout)
             .build()
             .map_err(|e| {
                 HealthError::GenericError(format!("Failed to create HTTP client: {}", e))
@@ -213,6 +216,7 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
             endpoint,
             http_client,
             switch_id,
+            request_timeout,
             event_context,
             effective_ber_gauge,
             symbol_error_gauge,
@@ -244,7 +248,9 @@ impl NmxtCollector {
     async fn scrape_iteration(&self) -> Result<(), HealthError> {
         let switch_ip = self.endpoint.addr.ip.to_string();
 
-        let metrics = scrape_switch_nmxt_metrics(&self.http_client, &switch_ip).await?;
+        let metrics =
+            scrape_switch_nmxt_metrics(&self.http_client, &switch_ip, self.request_timeout)
+                .await?;
 
         for sample in metrics {
             let NmxtMetricSample {

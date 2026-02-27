@@ -88,6 +88,7 @@ logs_max_backups = 5
 
 [collectors.nmxt]
 scrape_interval = "1m"
+request_timeout = "30s"
 
 [collectors.nvue.rest]
 poll_interval = "1m"

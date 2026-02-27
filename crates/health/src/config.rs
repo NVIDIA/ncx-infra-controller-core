@@ -345,12 +345,17 @@ pub struct NmxtCollectorConfig {
     /// Interval between switch NMX-T metric scrapes.
     #[serde(with = "humantime_serde")]
     pub scrape_interval: Duration,
+
+    /// Timeout for individual NMX-T HTTP requests.
+    #[serde(with = "humantime_serde")]
+    pub request_timeout: Duration,
 }
 
 impl Default for NmxtCollectorConfig {
     fn default() -> Self {
         Self {
             scrape_interval: Duration::from_secs(60),
+            request_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -394,6 +399,11 @@ impl Default for NvueRestConfig {
     }
 }
 
+/// Supported NVUE REST API paths.
+/// - system_health_enabled: Poll `/nvue_v1/system/health`.
+/// - cluster_apps_enabled: Poll `/nvue_v1/cluster/apps`.
+/// - sdn_partitions_enabled: Poll `/nvue_v1/sdn/partition` (including per-partition details)
+/// - interfaces_enabled: Poll `/nvue_v1/interface`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NvueRestPaths {
