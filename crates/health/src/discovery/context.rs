@@ -61,7 +61,7 @@ impl CollectorKind {
             CollectorKind::Logs => "Stopping logs collector for removed BMC endpoint",
             CollectorKind::Firmware => "Stopping firmware collector for removed BMC endpoint",
             CollectorKind::Nmxt => "Stopping NMX-T collector for removed BMC endpoint",
-            CollectorKind::NvueRest => "Stopping NVUEREST collector for removed BMC endpoint",
+            CollectorKind::NvueRest => "Stopping NVUE REST collector for removed BMC endpoint",
         }
     }
 }

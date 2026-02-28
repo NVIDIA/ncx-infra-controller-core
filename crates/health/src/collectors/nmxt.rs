@@ -17,7 +17,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use nv_redfish::core::Bmc;
 
@@ -108,18 +107,12 @@ fn parse_prometheus_line(line: &str) -> Option<NmxtMetricSample> {
 async fn scrape_switch_nmxt_metrics(
     http_client: &reqwest::Client,
     switch_ip: &str,
-    request_timeout: Duration,
 ) -> Result<Vec<NmxtMetricSample>, HealthError> {
     let url = format!("http://{}:{}{}", switch_ip, NMXT_PORT, NMXT_ENDPOINT);
 
-    let response = http_client
-        .get(&url)
-        .timeout(request_timeout)
-        .send()
-        .await
-        .map_err(|e| {
-            HealthError::GenericError(format!("HTTP request failed for {}: {}", switch_ip, e))
-        })?;
+    let response = http_client.get(&url).send().await.map_err(|e| {
+        HealthError::GenericError(format!("HTTP request failed for {}: {}", switch_ip, e))
+    })?;
 
     if !response.status().is_success() {
         return Err(HealthError::GenericError(format!(
@@ -148,7 +141,6 @@ pub struct NmxtCollectorConfig {
 pub struct NmxtCollector {
     endpoint: Arc<BmcEndpoint>,
     http_client: reqwest::Client,
-    request_timeout: Duration,
     event_context: EventContext,
     data_sink: Option<Arc<dyn DataSink>>,
 }
@@ -174,7 +166,6 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
         Ok(Self {
             endpoint,
             http_client,
-            request_timeout,
             event_context,
             data_sink: config.data_sink,
         })
@@ -203,8 +194,7 @@ impl NmxtCollector {
     async fn scrape_iteration(&self) -> Result<(), HealthError> {
         let switch_ip = self.endpoint.addr.ip.to_string();
 
-        let metrics =
-            scrape_switch_nmxt_metrics(&self.http_client, &switch_ip, self.request_timeout).await?;
+        let metrics = scrape_switch_nmxt_metrics(&self.http_client, &switch_ip).await?;
 
         self.emit_event(CollectorEvent::MetricCollectionStart);
 
