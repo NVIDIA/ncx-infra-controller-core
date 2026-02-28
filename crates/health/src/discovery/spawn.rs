@@ -197,7 +197,6 @@ pub(super) async fn spawn_collectors_for_endpoint(
             nmxt_cfg.scrape_interval,
             NmxtCollectorConfig {
                 nmxt_config: nmxt_cfg.clone(),
-                collector_registry: collector_registry.clone(),
                 data_sink: data_sink.clone(),
             },
             collector_registry,
