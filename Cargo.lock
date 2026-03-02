@@ -1474,6 +1474,7 @@ dependencies = [
  "sqlx",
  "temp-dir",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -1555,6 +1556,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "uuid",
