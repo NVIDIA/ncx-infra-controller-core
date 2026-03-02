@@ -19,7 +19,8 @@ pub mod tests {
 
     use carbide_uuid::machine::MachineId;
     use db::sku::CURRENT_SKU_VERSION;
-    use db::{self, DatabaseError, ObjectFilter};
+    use db::{self, DatabaseError, ObjectFilter, WithTransaction};
+    use futures_util::FutureExt;
     use model::expected_machine::ExpectedMachineData;
     use model::machine::machine_search_config::MachineSearchConfig;
     use model::machine::{
@@ -1760,6 +1761,57 @@ pub mod tests {
 
         let diffs = model::sku::diff_skus(&sku1, &sku2);
         assert!(!diffs.is_empty());
+
+        Ok(())
+    }
+
+    #[crate::sqlx_test]
+    async fn test_find_machine_ids_by_sku_ids(pool: sqlx::PgPool) -> Result<(), eyre::Error> {
+        let env = create_test_env_for_bom_validation(pool.clone(), false, None, false).await;
+        let (machine_id, _dpu_id) = create_managed_host(&env).await.into();
+
+        let machine = db::machine::find(
+            &pool,
+            ObjectFilter::One(machine_id),
+            MachineSearchConfig::default(),
+        )
+        .await?
+        .pop()
+        .unwrap();
+        let assigned_sku_id = machine.hw_sku.unwrap();
+        // Make a new sku, using the assigned sku as a base and renaming it "unassigned-sku" (and
+        // bump its cpu count.)
+        let unassigned_sku = pool
+            .with_txn({
+                let assigned_sku_id = assigned_sku_id.clone();
+                |txn| {
+                    async move {
+                        let mut unassigned_sku =
+                            db::sku::find(txn, std::slice::from_ref(&assigned_sku_id))
+                                .await?
+                                .remove(0);
+                        unassigned_sku.id = "unassigned-sku".to_string();
+                        unassigned_sku.components.cpus[0].count += 1;
+                        db::sku::create(txn, &unassigned_sku).await?;
+                        Ok::<_, DatabaseError>(unassigned_sku)
+                    }
+                    .boxed()
+                }
+            })
+            .await??;
+
+        let sku_ids = vec![assigned_sku_id.clone(), unassigned_sku.id.clone()];
+        let machine_ids_by_sku_ids =
+            db::machine::find_machine_ids_by_sku_ids(&pool, &sku_ids).await?;
+
+        assert_eq!(machine_ids_by_sku_ids.len(), 2);
+
+        let assigned_sku_machine_ids = machine_ids_by_sku_ids.get(&assigned_sku_id).unwrap();
+        assert_eq!(assigned_sku_machine_ids.len(), 1);
+        assert!(assigned_sku_machine_ids.contains(&machine_id));
+
+        let unassigned_sku_machine_ids = machine_ids_by_sku_ids.get(&unassigned_sku.id).unwrap();
+        assert!(unassigned_sku_machine_ids.is_empty());
 
         Ok(())
     }

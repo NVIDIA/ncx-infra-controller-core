@@ -2155,19 +2155,46 @@ pub async fn update_sku_status_verify_request_time_for_sku(
     Ok(())
 }
 
-pub async fn find_machine_ids_by_sku_id(
-    txn: &mut PgConnection,
-    sku_id: &String,
-) -> Result<Vec<MachineId>, DatabaseError> {
-    let query = "SELECT id FROM machines WHERE hw_sku=$1";
+pub async fn find_machine_ids_by_sku_ids(
+    db_reader: impl DbReader<'_>,
+    sku_ids: &[String],
+) -> Result<HashMap<String, Vec<MachineId>>, DatabaseError> {
+    let query = r#"SELECT skus.id, COALESCE(m.machine_ids, '[]'::jsonb) as associated_machine_ids
+  FROM machine_skus AS skus
+  LEFT JOIN LATERAL (
+    SELECT jsonb_agg(m.id) AS machine_ids
+    FROM machines AS m
+    WHERE m.hw_sku = skus.id
+  ) AS m ON TRUE
+  WHERE skus.id=ANY($1)"#;
 
-    let ids: Vec<MachineId> = sqlx::query_as(query)
-        .bind(sku_id)
-        .fetch_all(txn)
+    #[derive(FromRow)]
+    struct Result {
+        id: String,
+        associated_machine_ids: sqlx::types::Json<Vec<String>>,
+    }
+
+    let ids: Vec<Result> = sqlx::query_as(query)
+        .bind(sku_ids)
+        .fetch_all(db_reader)
         .await
-        .map_err(|e| DatabaseError::new("get assigned sku count", e))?;
+        .map_err(|e| DatabaseError::query(query, e))?;
 
-    Ok(ids)
+    // Build a HashMap of Sku ID to Vec<MachineId>
+    Ok(ids
+        .into_iter()
+        .map(|result| {
+            (
+                result.id,
+                result
+                    .associated_machine_ids
+                    .0
+                    .into_iter()
+                    .filter_map(|machine_id_str| machine_id_str.parse().ok())
+                    .collect(),
+            )
+        })
+        .collect())
 }
 
 pub async fn get_network_config(
