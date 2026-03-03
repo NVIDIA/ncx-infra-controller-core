@@ -101,30 +101,37 @@ Each of these flows are discussed below.
 
 ## **3.1 Per-tenant Signing Key Provisioning**
 
+Per-org signing keys are created when an admin first configures machine identity for an org via `PUT identity/config` (PutIdentityConfiguration). Key generation is not tied to tenant creation.
+
 ```
-CreateTenantRequest (called by admin)
+PutIdentityConfiguration (PUT identity/config)
               │
               ▼
 ┌───────────────────────────────┐
-│ 1. Validate request metadata  │
+│ 1. Validate prerequisites     │
+│    (global enabled, config)   │
 └───────────────────────────────┘
               │
               ▼
 ┌───────────────────────────────┐
-│ 2. Create tenant in DB        │
-│    INSERT INTO tenants        │
+│ 2. Persist identity config    │
+│    (issuer, audiences, TTL)   │
 └───────────────────────────────┘
               │
               ▼
 ┌───────────────────────────────┐
-│ 3. Create SVID signing keypair│
-│    in DB and encrypt it       │
-│    with a master key[NEW STEP]│
+│ 3. If org has no key yet:     │
+│    Generate per-org keypair   │
+│    using global algorithm,    │
+│    encrypt with master key,   │
+│    store in tenant_identity_  │
+│    keys                       │
+│ If rotate_key=true: same      │
 └───────────────────────────────┘
               │
               ▼
 ┌───────────────────────────────┐
-│ 4. Return CreateTenantResponse│
+│ 4. Return IdentityConfigResp  │
 └───────────────────────────────┘
 ```
 *Figure-3 Per-tenant signing key provisioning flow* 
@@ -141,20 +148,20 @@ CreateTenantRequest (called by admin)
     │                   │                       │                   │                    
     │ GET /v2/{org-id}/ │                       │                   │
     │ {site-id}/.well-known/                    │                   │
-    │ openid-configuration│                     │                   │                    
+    │ openid-configuration│                     │                   │
     │──────────────────>│                       │                   │                    
     │                   │                       │                   │                    
     │                   │ gRPC: GetOpenIDConfiguration              │ 
-    │                   │ (site_id. org_id)     │                   │                    
+    │                   │ (org_id)              │                   │
     │                   │──────────────────────>│                   │                    
     │                   │                       │                   │                    
     │                   │                       │ SELECT tenant, pubkey                  
     │                   │                       │ WHERE org_id=?    │                    
     │                   │                       │──────────────────>│                    
     │                   │                       │                   │                    
-    │                   │                       │ Tenant record     │                    
-    │                   │                       │ (validates org    │                    
-    │                   │                       │  exists)          │                    
+    │                   │                       │ Key record        │
+    │                   │                       │ (org + pubkey)    │
+    │                   │                       │                   │                    
     │                   │                       │<──────────────────│                    
     │                   │                       │                   │                    
     │                   │                       │ ┌─────────────────────────────────┐    
@@ -182,24 +189,22 @@ CreateTenantRequest (called by admin)
 │        │       │   (REST)      │       │   (gRPC)    │       │(Postgres)│       
 └───┬────┘       └──────┬────────┘       └──────┬──────┘       └────┬─────┘       
     │                   │                       │                   │                    
-    │ GET /v2/{site}/   │                       │                   │                    
-    │ {org}/.well-known/│                       │                   │                    
-    │ jwks.json         │                       │                   │                    
+    │ GET /v2/{org-id}/ │                       │                   │
+    │ {site-id}/.well-known/                    │                   │
+    │ jwks.json         │                       │                   │
     │──────────────────►│                       │                   │                    
     │                   │                       │                   │                    
-    │                   │ GetJWKS(site_id,      │                   │                    
-    │                   │         org_id)       │                   │                    
+    │                   │ GetJWKS(org_id)       │                   │                    
     │                   │ (gRPC)                │                   │                    
-    │                   │──────────────────────►│                   │                    
-    │                   │                       │                   │                    
-    │                   │                       │ SELECT * FROM     │                    
-    │                   │                       │ tenants WHERE     │                    
-    │                   │                       │ org_id=? AND      │                    
-    │                   │                       │ site_id=?         │                    
+    │                   │──────────────────────►│                   │
+    │                   │                       │                   │
+    │                   │                       │ SELECT * FROM     │
+    │                   │                       │ tenants WHERE     │
+    │                   │                       │ org_id=?          │
     │                   │                       │──────────────────►│                    
-    │                   │                       │                   │                    
-    │                   │                       │ Tenant record     │                    
-    │                   │                       │◄──────────────────│                    
+    │                   │                       │                   │
+    │                   │                       │ Key record        │
+    │                   │                       │◄──────────────────│
     │                   │                       │                   │                    
     │                   │                       │                   │                    
     │                   │                       │ ┌─────────────────────────────────┐    
@@ -209,12 +214,12 @@ CreateTenantRequest (called by admin)
     │                   │                       │ └─────────────────────────────────┘    
     │                   │                       │                   │                    
     │                   │ gRPC JWKS Response    │                   │  
-    │                   │ {keys: [...]}         │                   │                    
-    │                   │◄──────────────────────│                   │                    
-    │                   │                       │                   │                    
-    │ 200 OK            │                       │                   │                    
-    │ Content-Type:     │                       │                   │                    
-    │ application/json  │                       │                   │                    
+    │                   │ {keys: [...]}         │                   │
+    │                   │◄──────────────────────│                   │
+    │                   │                       │                   │
+    │ 200 OK            │                       │                   │
+    │ Content-Type:     │                       │                   │
+    │ application/json  │                       │                   │
     │                   │                       │                   │                    
     │ {"keys":[{        │                       │                   │                    
     │  "kty":"EC",      │                       │                   │                    
@@ -287,7 +292,7 @@ A new table will be created to store tenant signing key pairs. The private key w
 | `VARCHAR(255)` | `key_id` | Key identifier (e.g. for JWKS kid) |
 | `VARCHAR(255)` | `algorithm` | Signing algorithm |
 | `VARCHAR(255)` | `master_key_id` | To identify master key used for encrypting signing key |
-| `BOOLEAN` | `is_active` |  |
+| `BOOLEAN` | `enabled` |  |
 
 ### **3.4.2 Configuration**
 
@@ -296,18 +301,39 @@ The JWT spec and vault related configs are passed to the Carbide API server duri
 ```bash
 # In site config file (e.g., site_config.toml)
 [machine-identity]
-spiffe_domain = "spiffe://carbide-domain" // prefix appear in jwt-svid 'sub'
-site_id = "carbide site UUID"
-iss = "https://carbide.nvidia.com" // issuer uri, appended by org_id and site_id in runtime
+enabled = true
 algorithm = "ES256"
-default_aud = "carbide"
-token_ttl_seconds = 300
-token_delegation_http_proxy = "https://carbide-ext.com" # mitigate SSRF
+token_ttl_min = 60 # min ttl permitted in seconds
+token_ttl_max = 86400 # max ttl permitted in seconds
+token_delegation_http_proxy = "https://carbide-ext.com" # optional, SSRF mitigation for token exchange
 ```
 
-### **3.4.3 JWT-SVID Token Format**
+**Global vs per-org:** Global config provides the master switch (`enabled`), site-wide signing algorithm (`algorithm`), optional token TTL bounds (`token_ttl_min`, `token_ttl_max`), and optional HTTP proxy for token exchange (`token_delegation_http_proxy`). All identity settings (`issuer`, `defaultAudience`, `allowedAudiences`, `tokenTtl`, `subjectDomainPrefix`) are **per-org only** and orgs supply them when calling PUT identity/config. There is no global fallback; orgs must provide these to generate keys and receive tokens. Per-org `enabled` can further disable an org when global is true (default `true` when unset). **PUT prerequisite:** Per-org config can only be created or updated when global `enabled` is `true`; otherwise PUT returns `503 Service Unavailable`.
 
-The subject format complies with the SPIFFE ID specification.
+### **3.4.3 Incomplete or Invalid Global Config**
+
+When the `[machine-identity]` section exists but is incomplete or invalid, the following behavior applies.
+
+**Required fields (when section exists and `enabled` is true):** `algorithm`. Optional: `token_delegation_http_proxy`.
+
+| Scenario | Behavior |
+| :------- | :------- |
+| Section missing | Feature disabled. Server starts. No machine identity operations available. |
+| Section exists, invalid or incomplete | Server fails to start. Prevents partial or broken state. |
+| Section exists, valid, `enabled` = false | Feature disabled. PUT identity/config returns `503`. |
+| Section exists, valid, `enabled` = true | Feature operational. |
+
+**Runtime behavior when global config is incomplete (e.g. config changed after startup):**
+
+| Operation | Behavior |
+| :-------- | :------- |
+| PUT identity/config | Reject with `503 Service Unavailable`. Same as when global is disabled. |
+| GET identity/config | Return `503` when global config is invalid or missing required fields. |
+| SignMachineIdentity | Return error (e.g. `UNAVAILABLE`). Do not issue tokens. |
+
+### **3.4.4 JWT-SVID Token Format**
+
+The subject format complies with the SPIFFE ID specification. The `iss` and `sub` values come from the org's identity config (`issuer`, `subjectDomainPrefix`).
 
 **Carbide JWT-SPIFFE (passed to Tenant Layer):**
 
@@ -321,7 +347,7 @@ The subject format complies with the SPIFFE ID specification.
   "exp": 1678886400,
   "iat": 1678882800,
   "nbf": 1678882800,
-  "request-meta-data" : {
+  "request_meta_data" : {
     "aud": [
       "openbao-service"
     ]
@@ -331,7 +357,7 @@ The subject format complies with the SPIFFE ID specification.
 
 The Carbide issues two types of JWT-SVIDs. Though they both are similar in structure and signed by the same key, the purpose and some fields are different. 
 
-1. If the token delegation callback is registered, Carbide issues a JWT-SVID node identity with `aud` set to `subject_token_audience`, validity/ttl limited to 120 seconds and pass additional request parameters using `request-meta-data`. This token (see example token above) is then passed to the `token_endpoint` URI. 
+1. If the token delegation callback is registered, Carbide issues a JWT-SVID node identity with `aud` set to `subject_token_audience`, validity/ttl limited to 120 seconds and passes additional request parameters using `request_meta_data`. This token (see example above) is then sent to the registered `token_endpoint` URI.
 2. If no callback is registered, Carbide issues a JWT-SVID directly to the tenant process in the Carbide managed node. Here the `aud` is set to what is passed as parameters in the IMDS call and ttl is set to 10 minutes (configurable).
 
 **SPIFFE JWT-SVID Issued by Token Exchange Server:**
@@ -346,7 +372,7 @@ This is a sample JWT-SVID issued by the tenant's token endpoint.
     "openbao-service"
   ],
   "exp": 1678886400,
-  "iat": 1678882800,
+  "iat": 1678882800
 }
 ```
 
@@ -398,28 +424,103 @@ Content-Length: ...
 eyJhbGciOiJSUzI1NiIs...
 ```
 
-#### **3.5.1.2 Carbide Token Exchange Server Registration APIs**
+#### **3.5.1.2 Carbide Identity APIs
 
-These APIs allow Carbide tenants to register their Token Exchange server endpoints. Delegation gives tenants control over token structure, lifecycle, and management—for example, when tenants have richer context than Carbide about the requesting workload (e.g., VM identity, application role) and need to issue tenant-specific JWT-SVIDs.
+##### **Org Identity Configuration APIs**
+
+These APIs manage per-org identity configuration that controls how Carbide issues JWT-SVIDs for machines in that org. Admins use them to enable or disable the feature per org, and to set the issuer URI, allowed audiences, token TTL, and SPIFFE subject prefix. The configuration applies to all JWT-SVID tokens issued for the org's machines (via IMDS or token exchange). GET retrieves the current config, PUT creates or replaces it, and DELETE removes it (org no longer has machine identity).
+
+**Per-org key generation on PUT:** When PUT creates identity config for an org for the first time, Carbide generates a new per-org signing key pair using the global `algorithm`, encrypts the private key with the Vault master key, and stores it in `tenant_identity_keys`. On subsequent PUTs (updates), the key is not regenerated unless `rotateKey` is `true`. On DELETE, the identity config and the org's signing key are removed (or soft-deleted).
+
+**PUT when global is disabled:** If the global `enabled` setting in site config is `false`, PUT returns `503 Service Unavailable` with a message indicating that machine identity must be enabled at the site level first. This enforces the deployment order: global config must be enabled before per-org config can be created or updated.
 
 ```bash
-PUT /token-delegation
-GET /token-delegation
-DELETE /token-delegation
+PUT identity/config
+GET identity/config
+DELETE identity/config
 ```
 
-Tenant Layer calls this Carbide API to register the token exchange callback API.
+```
+PUT https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/identity/config
+```
+
+```json
+{
+  "orgId": "org-id",
+  "enabled": true,
+  "issuer": "https://carbide-rest.example.com",
+  "defaultAudience": "carbide-tenant-xxx",
+  "allowedAudiences": ["carbide-tenant-xxx", "tenant-a", "tenant-b"],
+  "tokenTtl": 300,
+  "subjectDomainPrefix": "spiffe://trust-domain",
+  "rotateKey": false
+}
+```
+
+| Field | Type | Required | Description |
+| :---- | :--- | :------- | :---------- |
+| `orgId` | string | Yes | Org identifier |
+| `enabled` | boolean | No | Enable JWT-SVID for this org. Default `true` when unset. |
+| `issuer` | string | Yes | Issuer URI that appears in Carbide JWT-SVID. |
+| `defaultAudience` | string | Yes | Default audience. Must be in `allowedAudiences`. |
+| `allowedAudiences` | string[] | Yes | Whitelist of allowed audiences. |
+| `tokenTtl` | number | Yes | Token TTL in seconds (300–86400). |
+| `subjectDomainPrefix` | string | Yes | SPIFFE prefix for JWT-SVID `sub` field. |
+| `rotateKey` | boolean | No | If `true`, regenerate the per-org signing key. Default `false`. |
+
+Note: `defaultAudience` must be present in `allowedAudiences`.
+
+Response:
+
+```json
+{
+  "orgId": "org-id",
+  "enabled": true,
+  "issuer": "https://carbide-rest.example.com",
+  "defaultAudience": "carbide-tenant-xxx",
+  "allowedAudiences": ["carbide-tenant-xxx", "tenant-a", "tenant-b"],
+  "tokenTtl": 300,
+  "subjectDomainPrefix": "spiffe://trust-domain",
+  "keyId": "af6426a5-5f49-44b9-8721-b5294be20bb6",
+  "updatedAt": "2026-02-25T12:00:00Z"
+}
+```
+
+| Response field | Description |
+| :------------- | :---------- |
+| `keyId` | Key identifier for the org's signing key; matches the JWKS `kid` used for JWT verification. |
+
+#### **Carbide Token Exchange Server Registration APIs**
+
+These APIs let Carbide tenants register a token exchange callback endpoint (RFC 8693). When delegation is enabled, Carbide issues a short-lived JWT-SVID to the tenant's exchange service, which validates it and returns a tenant-specific JWT-SVID or access token. This gives tenants control over token structure, lifecycle, and claims, especially when they have more context than Carbide (e.g., VM identity, application role) and need to issue tenant-customized tokens for workloads.
+
+**Interaction with global and per-org settings:**
+
+| Setting | Scope | Effect on token delegation |
+| :------ | :---- | :------------------------- |
+| `enabled` | Global | Master switch. If false, PUT token-delegation is rejected (same as identity/config). |
+| `token_delegation_http_proxy` | Global | Outbound calls from Carbide to the tenant's token endpoint use this proxy (SSRF mitigation). |
+| Identity config (issuer, audiences, TTL) | Per-org (with global defaults) | The JWT-SVID sent to the exchange server is signed using the org's effective identity config. |
+| Token delegation config | Per-org | Each org registers its own `tokenEndpoint`, `authMethod`, `subjectTokenAudience`, etc. |
+
+**PUT token-delegation prerequisites:** Same as PUT identity/config, global `enabled` must be `true` and global config must be complete. If not, PUT returns `503 Service Unavailable`. Token delegation also requires org identity config to exist (the JWT sent to the exchange is built from it); if the org has no identity config, PUT token-delegation returns `404` or `503`.
+
+```bash
+PUT identity/token-delegation
+GET identity/token-delegation
+DELETE identity/token-delegation
+```
 
 Request:
 
 ```bash
-PUT https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/token-delegation
+PUT https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/identity/token-delegation
 {
-  "token_endpoint": "https://auth.acme.com/oauth2/token",
-  "auth_method": "client_secret_basic",
-  "client_id": "abc123",
-  "client_secret": "super-secret"
-  “subject_token_audience”: “value”, // to include in carbide-jwt-svid
+  "tokenEndpoint": "https://auth.acme.com/oauth2/token",
+  "authMethod": "client_secret_basic",
+  "clientId": "abc123",
+  "clientSecret": "super-secret",
+  "subjectTokenAudience": "value"
 }
 ```
 
@@ -427,16 +528,17 @@ Response:
 
 ```json
 {
-  "siteId": "uuid",
-  "token_endpoint": "https://tenant.example.com/oauth2/token",
-  "auth_method": "client_secret_basic",
-  "client_id": "abc123",
-  "client_secret": "super-secret",
-  "subject_token_audience": "value"
+  "orgId": "org-id",
+  "tokenEndpoint": "https://tenant.example.com/oauth2/token",
+  "authMethod": "client_secret_basic",
+  "clientId": "abc123",
+  "subjectTokenAudience": "tenant-layer-exchange-token-service-id"
 }
 ```
 
-Possible values for `auth_method`:
+Note: `clientSecret` is write-only and is not returned in responses.
+
+Possible values for `authMethod`:
 
 * `client_secret_basic` supported  
 * `none` supported. if set, the client_id and client_secret are ignored/not passed to exchange endpoint
@@ -446,7 +548,7 @@ Possible values for `auth_method`:
 
 #### **3.5.1.3 Token Exchange Request**
 
-Make a request to the `token_endpoint` passed in `/token/delegation` API.
+Make a request to the `token_endpoint` registered via the `identity/token-delegation` API.
 
 **Request**:
 
@@ -474,7 +576,7 @@ Content-Length: ...
  }
 ```
 
-The exchange service serves an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange endpoint for swapping SPIRE issued SVIDs with a tenant specific issuer SVID or access token.
+The exchange service serves an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange endpoint for swapping Carbide-issued JWT-SVIDs with a tenant-specific issuer SVID or access token.
 
 #### **3.5.1.4 SPIFFE JWKS Endpoint**
 
@@ -540,6 +642,7 @@ https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/.well-known/openid
 | Schema validation failure | 422 Unprocessable Entity |
 | Unauthorized | 401 Unauthorized |
 | Authenticated but no permission | 403 Forbidden |
+| Machine identity disabled at site level (PUT when global `enabled` is false) | 503 Service Unavailable |
 | Conflict (e.g. immutable field change) | 409 Conflict |
 
 ### **3.5.2 Internal gRPC APIs**
@@ -586,7 +689,7 @@ message TokenDelegation {
   google.protobuf.Timestamp updated_at = 9;
 }
 
-// Request for GET / DELETE (identifies org and site)
+// Request for GET / DELETE (identifies org)
 message GetTokenDelegationRequest {
   string org_id = 1;
 }
@@ -652,16 +755,53 @@ message OpenIDConfiguration {
   uint32 version = 6; // Optional config version
 }
 
+// Request for well-known JWKS
+message JWKSRequest {
+  string org_id = 1;
+}
+
 // Request message
-message GetOpenIDConfigRequest {
+message OpenIDConfigRequest {
   string org_id = 1;    // org-id
+}
+
+// Request for Get/Delete identity configuration (identifiers only)
+message GetIdentityConfigRequest {
+  string org_id = 1;
+}
+
+// Request to configure identity token settings (per org)
+message IdentityConfigRequest {
+  string org_id = 1;           // org-id, primary key
+  bool enabled = 2;            // Optional. enable JWT-SVID for this org. Default true when unset.
+  string issuer = 3;           // Required. issuer URI that appears in Carbide JWT-SVID
+  string default_audience = 4;  // Required. default audience; must be in allowed_audiences
+  repeated string allowed_audiences = 5;  // Required. whitelist of allowed audiences
+  uint32 token_ttl = 6;        // Required. token TTL in seconds (300–86400)
+  string subject_domain_prefix = 7;   // Required. SPIFFE prefix for JWT-SVID 'sub' field (e.g. spiffe://carbide.example.com)
+  bool rotate_key = 8;         // Optional. If true, regenerate per-org signing key. Default false.
+}
+
+// Response for Get/Put identity configuration (persisted config per org)
+message IdentityConfigResponse {
+  string org_id = 1;
+  bool enabled = 2;
+  string issuer = 3;
+  string default_audience = 4;
+  repeated string allowed_audiences = 5;
+  uint32 token_ttl = 6;
+  string subject_domain_prefix = 7;
+  google.protobuf.Timestamp updated_at = 8;  // When config was last updated
+  string key_id = 9;            // Key identifier for org's signing key; matches JWKS kid for JWT verification.
 }
 
 // gRPC service
 service Forge {
-  // OIDC .well-known Endpoints
-  rpc GetJWKS(GetJWKSRequest) returns (JWKS) {}
-  rpc GetOpenIDConfiguration(GetOpenIDConfigRequest) returns (OpenIDConfiguration) {}
+  rpc GetIdentityConfiguration(GetIdentityConfigRequest) returns (IdentityConfigResponse);
+  rpc PutIdentityConfiguration(IdentityConfigRequest) returns (IdentityConfigResponse);
+  rpc DeleteIdentityConfiguration(GetIdentityConfigRequest) returns (google.protobuf.Empty);
+  rpc GetJWKS(JWKSRequest) returns (JWKS);
+  rpc GetOpenIDConfiguration(OpenIDConfigRequest) returns (OpenIDConfiguration);
 }
 ```
 
@@ -671,9 +811,12 @@ service Forge {
 | ----- | ----- | ----- |
 | `GET /v2/org/{org-id}/carbide/site/{site-id}/.well-known/jwks.json` | `Forge.GetJWKS` | Fetch JSON Web Key Set |
 | `GET /v2/org/{org-id}/carbide/site/{site-id}/.well-known/openid-configuration` | `Forge.GetOpenIDConfiguration` | Fetch OpenID Connect config |
-| `GET /v2/org/{org-id}/carbide/site/{site-id}/token-delegation` | `Forge.GetTokenDelegation` | Retrieve token delegation config |
-| `PUT /v2/org/{org-id}/carbide/site/{site-id}/token-delegation` | `Forge.PutTokenDelegation` | Create or replace token delegation |
-| `DELETE /v2/org/{org-id}/carbide/site/{site-id}/token-delegation` | `Forge.DeleteTokenDelegation` | Delete token delegation |
+| `GET /v2/org/{org-id}/carbide/site/{site-id}/identity/config` | `Forge.GetIdentityConfiguration` | Retrieve identity configuration |
+| `PUT /v2/org/{org-id}/carbide/site/{site-id}/identity/config` | `Forge.PutIdentityConfiguration` | Create or replace identity configuration |
+| `DELETE /v2/org/{org-id}/carbide/site/{site-id}/identity/config` | `Forge.DeleteIdentityConfiguration` | Delete identity configuration |
+| `GET /v2/org/{org-id}/carbide/site/{site-id}/identity/token-delegation` | `Forge.GetTokenDelegation` | Retrieve token delegation config |
+| `PUT /v2/org/{org-id}/carbide/site/{site-id}/identity/token-delegation` | `Forge.PutTokenDelegation` | Create or replace token delegation |
+| `DELETE /v2/org/{org-id}/carbide/site/{site-id}/identity/token-delegation` | `Forge.DeleteTokenDelegation` | Delete token delegation |
 
 ### **3.5.2.2 Error Handling**
 
@@ -686,6 +829,7 @@ Use standard gRPC `Status` codes, aligned with REST:
 | 403 Forbidden | `PERMISSION_DENIED` | Not allowed |
 | 404 Not Found | `NOT_FOUND` | Resource missing |
 | 409 Conflict | `ALREADY_EXISTS` | Immutable field conflicts |
+| 503 Service Unavailable | `UNAVAILABLE` | e.g. PUT identity config when global `enabled` is false |
 | 500 Internal | `INTERNAL` | Unexpected server error |
 
 # **4\. Technical Considerations**
