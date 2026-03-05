@@ -18,11 +18,12 @@
 use std::collections::BTreeSet;
 
 use super::{EventContext, EventProcessor};
-use crate::sink::{CollectorEvent, HealthReport, HealthReportAlert, HealthReportSuccess};
+use crate::sink::{
+    Classification, CollectorEvent, HealthReport, HealthReportAlert, HealthReportSuccess, Probe,
+    ReportSource,
+};
 
-const LEAK_DETECTOR_MARKER: &str = "LeakDetector";
-const LEAK_DETECTION_SOURCE: &str = "hardware-tray-leak-detection";
-const LEAK_PROBE_ID: &str = "BmcLeakDetection";
+const LEAK_DETECTOR_MARKER: &str = Classification::LeakDetector.as_str();
 
 pub struct LeakEventProcessor {
     minimum_alerts_per_report: usize,
@@ -50,13 +51,7 @@ fn is_leak_detector_alert(alert: &HealthReportAlert) -> bool {
 fn leak_details(alerts: &[&HealthReportAlert]) -> String {
     let targets: BTreeSet<String> = alerts
         .iter()
-        .map(|alert| {
-            alert
-                .target
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| alert.probe_id.clone())
-        })
+        .filter_map(|alert| alert.target.as_ref().cloned())
         .collect();
 
     if targets.is_empty() {
@@ -86,7 +81,7 @@ impl EventProcessor for LeakEventProcessor {
             let details = leak_details(&leak_alerts);
 
             vec![HealthReportAlert {
-                probe_id: LEAK_PROBE_ID.to_string(),
+                probe_id: Probe::LeakDetection,
                 target: None,
                 message: format!(
                     "Leak detected: {} leak-detector alerts reached threshold {} (detectors: {})",
@@ -94,7 +89,7 @@ impl EventProcessor for LeakEventProcessor {
                     self.minimum_alerts_per_report,
                     details
                 ),
-                classifications: vec!["Leak".to_string()],
+                classifications: vec![Classification::Leak],
             }]
         } else {
             vec![]
@@ -104,13 +99,13 @@ impl EventProcessor for LeakEventProcessor {
             vec![]
         } else {
             vec![HealthReportSuccess {
-                probe_id: LEAK_PROBE_ID.to_string(),
+                probe_id: Probe::LeakDetection,
                 target: None,
             }]
         };
 
         let leak_report = HealthReport {
-            source: LEAK_DETECTION_SOURCE.to_string(),
+            source: ReportSource::TrayLeakDetection,
             observed_at: Some(chrono::Utc::now()),
             successes,
             alerts,
@@ -145,10 +140,10 @@ mod tests {
 
     fn leak_alert(target: &str) -> HealthReportAlert {
         HealthReportAlert {
-            probe_id: "BmcSensor".to_string(),
+            probe_id: Probe::Sensor,
             target: Some(target.to_string()),
             message: "LeakDetector found leak".to_string(),
-            classifications: vec!["LeakDetector".to_string()],
+            classifications: vec![Classification::LeakDetector],
         }
     }
 
@@ -156,7 +151,7 @@ mod tests {
     fn does_not_emit_alert_when_threshold_not_met() {
         let processor = LeakEventProcessor::new(2);
         let report = HealthReport {
-            source: "hardware-health".to_string(),
+            source: ReportSource::Health,
             observed_at: Some(chrono::Utc::now()),
             successes: Vec::new(),
             alerts: vec![leak_alert("LeakDetector_Probe")],
@@ -171,14 +166,14 @@ mod tests {
 
         assert_eq!(derived.alerts.len(), 0);
         assert_eq!(derived.successes.len(), 1);
-        assert_eq!(derived.successes[0].probe_id, LEAK_PROBE_ID);
+        assert_eq!(derived.successes[0].probe_id, Probe::LeakDetection);
     }
 
     #[test]
     fn emits_derived_leak_report_when_threshold_met() {
         let processor = LeakEventProcessor::new(1);
         let report = HealthReport {
-            source: "hardware-health".to_string(),
+            source: ReportSource::Health,
             observed_at: Some(chrono::Utc::now()),
             successes: Vec::new(),
             alerts: vec![leak_alert("LeakDetector_Probe")],
@@ -190,29 +185,32 @@ mod tests {
         let CollectorEvent::HealthReport(derived) = &emitted[0] else {
             panic!("expected derived health report");
         };
-        assert_eq!(derived.source, LEAK_DETECTION_SOURCE);
+        assert_eq!(derived.source, ReportSource::TrayLeakDetection);
         assert_eq!(derived.alerts.len(), 1);
-        assert_eq!(derived.alerts[0].probe_id, LEAK_PROBE_ID);
+        assert_eq!(derived.alerts[0].probe_id, Probe::LeakDetection);
         assert!(
             derived.alerts[0]
                 .classifications
                 .iter()
-                .any(|classification| classification == "Leak")
+                .any(|classification| classification == &Classification::Leak)
         );
     }
 
     #[test]
     fn ignores_non_health_report_events() {
         let processor = LeakEventProcessor::new(1);
-        let metric_event = CollectorEvent::Metric(crate::sink::SensorHealthData {
-            key: "k".to_string(),
-            name: "n".to_string(),
-            metric_type: "gauge".to_string(),
-            unit: "count".to_string(),
-            value: 1.0,
-            labels: Vec::new(),
-            context: None,
-        });
+        let metric_event = CollectorEvent::Metric(
+            crate::sink::SensorHealthData {
+                key: "k".to_string(),
+                name: "n".to_string(),
+                metric_type: "gauge".to_string(),
+                unit: "count".to_string(),
+                value: 1.0,
+                labels: Vec::new(),
+                context: None,
+            }
+            .into(),
+        );
         let emitted = processor.process_event(&context(), &metric_event);
         assert!(emitted.is_empty());
     }

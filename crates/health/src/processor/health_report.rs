@@ -20,10 +20,9 @@ use nv_redfish::resource::Health as BmcHealth;
 
 use super::{CollectorEvent, EventContext, EventProcessor};
 use crate::sink::{
-    HealthReport, HealthReportAlert, HealthReportSuccess, SensorHealthContext, SensorHealthData,
+    Classification, HealthReport, HealthReportAlert, HealthReportSuccess, Probe, ReportSource,
+    SensorHealthContext, SensorHealthData,
 };
-
-const HARDWARE_HEALTH_REPORT_SOURCE: &str = "hardware-health";
 
 #[derive(Debug, Clone, Copy)]
 enum SensorHealth {
@@ -34,12 +33,12 @@ enum SensorHealth {
 }
 
 impl SensorHealth {
-    fn to_classification(self) -> &'static str {
+    fn to_classification(self) -> Classification {
         match self {
-            Self::Ok => "SensorOk",
-            Self::Warning => "SensorWarning",
-            Self::Critical => "SensorCritical",
-            Self::SensorFailure => "SensorFailure",
+            Self::Ok => Classification::SensorOk,
+            Self::Warning => Classification::SensorWarning,
+            Self::Critical => Classification::SensorCritical,
+            Self::SensorFailure => Classification::SensorFailure,
         }
     }
 }
@@ -128,7 +127,7 @@ impl HealthReportProcessor {
 
         match classification {
             SensorHealth::Ok => SensorHealthResult::Success(HealthReportSuccess {
-                probe_id: "BmcSensor".to_string(),
+                probe_id: Probe::Sensor,
                 target: Some(health.sensor_id.clone()),
             }),
             state => {
@@ -146,7 +145,7 @@ impl HealthReportProcessor {
                         "Threshold check indicates issue but BMC reports sensor as OK - likely incorrect thresholds, reporting OK"
                     );
                     return SensorHealthResult::Success(HealthReportSuccess {
-                        probe_id: "BmcSensor".to_string(),
+                        probe_id: Probe::Sensor,
                         target: Some(health.sensor_id.clone()),
                     });
                 }
@@ -171,13 +170,11 @@ impl HealthReportProcessor {
                     Self::fmt_range(health.lower_critical, health.upper_critical),
                 );
 
-                let classifications = vec![state.to_classification().to_string()];
-
                 SensorHealthResult::Alert(HealthReportAlert {
-                    probe_id: "BmcSensor".to_string(),
+                    probe_id: Probe::Sensor,
                     target: Some(health.sensor_id.clone()),
                     message,
-                    classifications,
+                    classifications: vec![state.to_classification()],
                 })
             }
         }
@@ -206,7 +203,7 @@ impl EventProcessor for HealthReportProcessor {
                     return Vec::new();
                 };
                 let report = HealthReport {
-                    source: HARDWARE_HEALTH_REPORT_SOURCE.to_string(),
+                    source: ReportSource::Health,
                     observed_at: Some(chrono::Utc::now()),
                     successes: window.successes,
                     alerts: window.alerts,
@@ -267,25 +264,28 @@ mod tests {
         let _ = processor.process_event(&context, &CollectorEvent::MetricCollectionStart);
         let _ = processor.process_event(
             &context,
-            &CollectorEvent::Metric(SensorHealthData {
-                key: "sensor-1".to_string(),
-                name: "hw_sensor".to_string(),
-                metric_type: "temperature".to_string(),
-                unit: "celsius".to_string(),
-                value: 42.0,
-                labels: vec![],
-                context: Some(SensorHealthContext {
-                    entity_type: "sensor".to_string(),
-                    sensor_id: "Temp1".to_string(),
-                    upper_critical: Some(30.0),
-                    lower_critical: None,
-                    upper_caution: None,
-                    lower_caution: None,
-                    range_max: None,
-                    range_min: None,
-                    bmc_health: Some(BmcHealth::Warning),
-                }),
-            }),
+            &CollectorEvent::Metric(
+                SensorHealthData {
+                    key: "sensor-1".to_string(),
+                    name: "hw_sensor".to_string(),
+                    metric_type: "temperature".to_string(),
+                    unit: "celsius".to_string(),
+                    value: 42.0,
+                    labels: vec![],
+                    context: Some(SensorHealthContext {
+                        entity_type: "sensor".to_string(),
+                        sensor_id: "Temp1".to_string(),
+                        upper_critical: Some(30.0),
+                        lower_critical: None,
+                        upper_caution: None,
+                        lower_caution: None,
+                        range_max: None,
+                        range_min: None,
+                        bmc_health: Some(BmcHealth::Warning),
+                    }),
+                }
+                .into(),
+            ),
         );
         let emitted = processor.process_event(&context, &CollectorEvent::MetricCollectionEnd);
 
@@ -293,7 +293,7 @@ mod tests {
             panic!("expected health report event");
         };
 
-        assert_eq!(report.source, HARDWARE_HEALTH_REPORT_SOURCE);
+        assert_eq!(report.source, ReportSource::Health);
         assert!(report.successes.is_empty());
         assert_eq!(report.alerts.len(), 1);
     }

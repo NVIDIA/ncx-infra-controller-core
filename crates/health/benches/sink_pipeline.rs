@@ -23,8 +23,8 @@ use std::sync::Arc;
 use carbide_health::endpoint::{BmcAddr, EndpointMetadata, MachineData};
 use carbide_health::metrics::MetricsManager;
 use carbide_health::sink::{
-    CollectorEvent, CompositeDataSink, DataSink, EventContext, HealthOverrideSink, HealthReport,
-    PrometheusSink, SensorHealthData,
+    Classification, CollectorEvent, CompositeDataSink, DataSink, EventContext, HealthOverrideSink,
+    HealthReport, PrometheusSink, SensorHealthData,
 };
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mac_address::MacAddress;
@@ -64,15 +64,18 @@ fn metric_events(batch_size: usize, unique_keys: usize) -> Vec<CollectorEvent> {
             let sensor_idx = idx % unique_keys;
             let key = format!("sensor-{sensor_idx}");
 
-            CollectorEvent::Metric(SensorHealthData {
-                key: key.clone(),
-                name: "hw_sensor".to_string(),
-                metric_type: "temperature".to_string(),
-                unit: "celsius".to_string(),
-                value: (idx % 100) as f64,
-                labels: vec![(Cow::Borrowed("sensor"), key)],
-                context: None,
-            })
+            CollectorEvent::Metric(
+                SensorHealthData {
+                    key: key.clone(),
+                    name: "hw_sensor".to_string(),
+                    metric_type: "temperature".to_string(),
+                    unit: "celsius".to_string(),
+                    value: (idx % 100) as f64,
+                    labels: vec![(Cow::Borrowed("sensor"), key)],
+                    context: None,
+                }
+                .into(),
+            )
         })
         .collect()
 }
@@ -156,17 +159,17 @@ fn bench_composite_sink(c: &mut Criterion) {
 
 fn health_report_with_alerts(alert_count: usize) -> HealthReport {
     let mut report = HealthReport {
-        source: "bench-health-override".to_string(),
+        source: carbide_health::sink::ReportSource::Health,
         observed_at: Some(chrono::Utc::now()),
         successes: Vec::new(),
         alerts: Vec::new(),
     };
     for idx in 0..alert_count {
         report.alerts.push(carbide_health::sink::HealthReportAlert {
-            probe_id: "Heartbeat".to_string(),
+            probe_id: carbide_health::sink::Probe::Sensor,
             target: Some(format!("target-{idx}")),
             message: format!("alert message #{idx}"),
-            classifications: vec!["Connection".to_string()],
+            classifications: vec![Classification::SensorCritical],
         });
     }
     report

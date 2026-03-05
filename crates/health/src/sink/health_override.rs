@@ -27,7 +27,7 @@ use super::{CollectorEvent, DataSink, EventContext};
 use crate::HealthError;
 use crate::api_client::ApiClientWrapper;
 use crate::config::CarbideApiConnectionConfig;
-use crate::sink::{HealthReport, HealthReportAlert, HealthReportSuccess};
+use crate::sink::{Classification, HealthReport, HealthReportAlert, HealthReportSuccess};
 
 struct HealthOverrideJob {
     machine_id: carbide_uuid::machine::MachineId,
@@ -95,15 +95,17 @@ impl HealthOverrideSink {
         }
     }
 
-    fn parse_classifications(classifications: &[String]) -> Vec<HealthAlertClassification> {
+    fn parse_classifications(
+        classifications: &Vec<Classification>,
+    ) -> Vec<HealthAlertClassification> {
         let mut parsed = Vec::with_capacity(classifications.len().max(1));
         for classification in classifications {
-            match classification.parse::<HealthAlertClassification>() {
+            match classification.as_str().parse::<HealthAlertClassification>() {
                 Ok(classification) => parsed.push(classification),
                 Err(error) => {
                     tracing::warn!(
                         ?error,
-                        classification,
+                        classification = classification.as_str(),
                         "Failed to parse health alert classification"
                     );
                 }
@@ -116,7 +118,7 @@ impl HealthOverrideSink {
     }
 
     fn convert_success(success: &HealthReportSuccess) -> Option<HealthProbeSuccess> {
-        let id = Self::parse_probe_id(&success.probe_id)?;
+        let id = Self::parse_probe_id(success.probe_id.as_str())?;
         Some(HealthProbeSuccess {
             id,
             target: success.target.clone(),
@@ -124,7 +126,7 @@ impl HealthOverrideSink {
     }
 
     fn convert_alert(alert: &HealthReportAlert) -> Option<HealthProbeAlert> {
-        let id = Self::parse_probe_id(&alert.probe_id)?;
+        let id = Self::parse_probe_id(alert.probe_id.as_str())?;
         Some(HealthProbeAlert {
             id,
             target: alert.target.clone(),
@@ -148,7 +150,7 @@ impl HealthOverrideSink {
             .collect();
 
         health_report::HealthReport {
-            source: report.source.clone(),
+            source: report.source.as_str().into(),
             triggered_by: None,
             observed_at: report.observed_at,
             successes,

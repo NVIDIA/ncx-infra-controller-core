@@ -732,28 +732,31 @@ impl<B: Bmc + 'static> SensorCollector<B> {
 
         let derived_metrics = entity.entity_metrics(&attributes);
 
-        self.emit_event(CollectorEvent::Metric(SensorHealthData {
-            key: sensor.odata_id().to_string(),
-            name: "hw_sensor".to_string(),
-            metric_type,
-            unit,
-            value: reading,
-            labels: attributes,
-            context: Some(SensorHealthContext {
-                entity_type: entity.metric_prefix().replace("hw_", ""),
-                sensor_id: sensor.base.id.clone(),
-                upper_critical,
-                lower_critical,
-                upper_caution,
-                lower_caution,
-                range_max: sensor.reading_range_max.flatten(),
-                range_min: sensor.reading_range_min.flatten(),
-                bmc_health,
-            }),
-        }));
+        self.emit_event(CollectorEvent::Metric(
+            SensorHealthData {
+                key: sensor.odata_id().to_string(),
+                name: "hw_sensor".to_string(),
+                metric_type,
+                unit,
+                value: reading,
+                labels: attributes,
+                context: Some(SensorHealthContext {
+                    entity_type: entity.metric_prefix().replace("hw_", ""),
+                    sensor_id: sensor.base.id.clone(),
+                    upper_critical,
+                    lower_critical,
+                    upper_caution,
+                    lower_caution,
+                    range_max: sensor.reading_range_max.flatten(),
+                    range_min: sensor.reading_range_min.flatten(),
+                    bmc_health,
+                }),
+            }
+            .into(),
+        ));
 
         for metric in derived_metrics {
-            self.emit_event(CollectorEvent::Metric(metric));
+            self.emit_event(CollectorEvent::Metric(metric.into()));
         }
 
         1

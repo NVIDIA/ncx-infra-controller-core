@@ -129,7 +129,7 @@ fn metric_events(
                     bmc_health: Some(BmcHealth::Warning),
                 });
             }
-            CollectorEvent::Metric(metric)
+            CollectorEvent::Metric(metric.into())
         })
         .collect()
 }

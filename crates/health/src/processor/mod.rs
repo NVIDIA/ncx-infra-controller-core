@@ -166,15 +166,18 @@ mod tests {
             })],
         );
 
-        let event = CollectorEvent::Metric(crate::sink::SensorHealthData {
-            key: "k".to_string(),
-            name: "n".to_string(),
-            metric_type: "gauge".to_string(),
-            unit: "count".to_string(),
-            value: 1.0,
-            labels: Vec::new(),
-            context: None,
-        });
+        let event = CollectorEvent::Metric(
+            crate::sink::SensorHealthData {
+                key: "k".to_string(),
+                name: "n".to_string(),
+                metric_type: "gauge".to_string(),
+                unit: "count".to_string(),
+                value: 1.0,
+                labels: Vec::new(),
+                context: None,
+            }
+            .into(),
+        );
         pipeline.handle_event(&context(), &event);
 
         assert_eq!(processor_counter.load(Ordering::SeqCst), 1);

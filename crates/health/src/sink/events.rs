@@ -98,21 +98,21 @@ pub struct FirmwareInfo {
 
 #[derive(Clone, Debug)]
 pub struct HealthReportSuccess {
-    pub probe_id: String,
+    pub probe_id: Probe,
     pub target: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct HealthReportAlert {
-    pub probe_id: String,
+    pub probe_id: Probe,
     pub target: Option<String>,
     pub message: String,
-    pub classifications: Vec<String>,
+    pub classifications: Vec<Classification>,
 }
 
 #[derive(Clone, Debug)]
 pub struct HealthReport {
-    pub source: String,
+    pub source: ReportSource,
     pub observed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub successes: Vec<HealthReportSuccess>,
     pub alerts: Vec<HealthReportAlert>,
@@ -121,9 +121,62 @@ pub struct HealthReport {
 #[derive(Clone, Debug)]
 pub enum CollectorEvent {
     MetricCollectionStart,
-    Metric(SensorHealthData),
+    Metric(Box<SensorHealthData>),
     MetricCollectionEnd,
-    Log(LogRecord),
+    Log(Box<LogRecord>),
     Firmware(FirmwareInfo),
     HealthReport(HealthReport),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum ReportSource {
+    Health,
+    TrayLeakDetection,
+}
+
+impl ReportSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Health => "hardware-health",
+            Self::TrayLeakDetection => "hardware-tray-leak-detection",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum Probe {
+    Sensor,
+    LeakDetection,
+}
+
+impl Probe {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sensor => "BmcSensor",
+            Self::LeakDetection => "BmcLeakDetection",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum Classification {
+    SensorOk,
+    SensorWarning,
+    SensorCritical,
+    SensorFailure,
+    Leak,
+    LeakDetector,
+}
+
+impl Classification {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SensorOk => "SensorOk",
+            Self::SensorWarning => "SensorWarning",
+            Self::SensorCritical => "SensorCritical",
+            Self::SensorFailure => "SensorFailure",
+            Self::Leak => "Leak",
+            Self::LeakDetector => "LeakDetector",
+        }
+    }
 }

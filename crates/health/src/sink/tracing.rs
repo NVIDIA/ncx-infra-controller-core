@@ -74,7 +74,7 @@ impl DataSink for TracingSink {
                     success_count = report.successes.len(),
                     alert_count = report.alerts.len(),
                     alerts = ?report.alerts,
-                    report_source = report.source,
+                    report_source = report.source.as_str(),
                     "Health report event"
                 );
             }

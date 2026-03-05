@@ -293,15 +293,18 @@ impl NmxtCollector {
                 (Cow::Borrowed("port_num"), port_num),
             ];
 
-            self.emit_event(CollectorEvent::Metric(SensorHealthData {
-                key: metric_key,
-                name: "switch_nmxt".to_string(),
-                metric_type: metric_type.to_string(),
-                unit: "count".to_string(),
-                value,
-                labels,
-                context: None,
-            }));
+            self.emit_event(CollectorEvent::Metric(
+                SensorHealthData {
+                    key: metric_key,
+                    name: "switch_nmxt".to_string(),
+                    metric_type: metric_type.to_string(),
+                    unit: "count".to_string(),
+                    value,
+                    labels,
+                    context: None,
+                }
+                .into(),
+            ));
         }
 
         Ok(())
