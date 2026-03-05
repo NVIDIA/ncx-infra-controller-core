@@ -205,6 +205,7 @@ impl Bluefield3<'_> {
                     .build(),
                 ],
                 firmware_version: "BF-23.10-4",
+                oem: None,
             }],
         }
     }

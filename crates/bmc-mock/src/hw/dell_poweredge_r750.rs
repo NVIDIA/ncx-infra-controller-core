@@ -60,6 +60,7 @@ impl DellPowerEdgeR750<'_> {
                     .build(),
                 ],
                 firmware_version: "6.00.30.00",
+                oem: Some(redfish::manager::Oem::Dell),
             }],
         }
     }
