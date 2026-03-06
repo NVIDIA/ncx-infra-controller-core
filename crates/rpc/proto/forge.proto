@@ -133,11 +133,11 @@ service Forge {
   rpc InsertHealthReportOverride(InsertHealthReportOverrideRequest) returns (google.protobuf.Empty);
   // Removes a health report override
   rpc RemoveHealthReportOverride(RemoveHealthReportOverrideRequest) returns (google.protobuf.Empty);
-  // Lists all overrides that have been placed on a Rack health status (stub - implementation TBD)
+  // Lists all overrides that have been placed on a Rack health status
   rpc ListRackHealthReportOverrides(ListRackHealthReportOverridesRequest) returns (ListHealthReportOverrideResponse);
-  // Adds a new health report override for a Rack (stub - implementation TBD)
+  // Adds a new health report override for a Rack
   rpc InsertRackHealthReportOverride(InsertRackHealthReportOverrideRequest) returns (google.protobuf.Empty);
-  // Removes a health report override for a Rack (stub - implementation TBD)
+  // Removes a health report override for a Rack
   rpc RemoveRackHealthReportOverride(RemoveRackHealthReportOverrideRequest) returns (google.protobuf.Empty);
   rpc DpuAgentUpgradeCheck(DpuAgentUpgradeCheckRequest) returns (DpuAgentUpgradeCheckResponse);
   rpc DpuAgentUpgradePolicyAction(DpuAgentUpgradePolicyRequest) returns (DpuAgentUpgradePolicyResponse);
@@ -5713,6 +5713,8 @@ message Rack {
   google.protobuf.Timestamp created = 9;
   google.protobuf.Timestamp updated = 10;
   google.protobuf.Timestamp deleted = 11;
+  health.HealthReport health = 12;
+  repeated HealthOverrideOrigin health_overrides = 13;
 }
 
 message RackStateHistoryRecord {
