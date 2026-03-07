@@ -296,9 +296,9 @@ A new table will be created to store tenant signing key pairs and optional token
 | `TIMESTAMPTZ` | `updated_at` | When identity config or token delegation was last updated |
 | `VARCHAR(512)` | `token_endpoint` | Token exchange endpoint URL (optional; from PUT identity/token-delegation) |
 | `VARCHAR(64)` | `auth_method` | e.g. client_secret_basic, private_key_jwt (optional) |
-| `TEXT` | `encrypted_auth_method_config` | Encrypted blob of method-specific fields. For example: to store client_d and client_secret. (optional) |
-| `VARCHAR(255)` | `subject_token_audience` | Audience to include in Carbide JWT-SVID sent to exchange (optional) |
-| `TIMESTAMPTZ` | `token_delegation_created_at` | When token delegation was first configured (optional) |
+| `TEXT` | `encrypted_auth_method_config` | Encrypted blob of method-specific fields. For example: to store client_id and client_secret. (optional) |
+| `VARCHAR(255)` | `subject_token_audience` | Audience to include in Carbide JWT-SVID sent to exchange. (optional) |
+| `TIMESTAMPTZ` | `token_delegation_created_at` | When token delegation was first configured. (optional) |
 
 ### **3.4.2 Configuration**
 

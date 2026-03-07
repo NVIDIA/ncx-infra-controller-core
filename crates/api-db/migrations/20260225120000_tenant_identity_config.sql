@@ -3,7 +3,7 @@
 -- Private key is encrypted with a master key.
 -- Token delegation columns are nullable when an org does not use delegation.
 
---this is a temporary table to hold the data before the migration. will be removed before checking in.
+-- this line will be removed before checking in.
 --DROP TABLE IF EXISTS tenant_identity_config CASCADE;
 
 CREATE TABLE tenant_identity_config (

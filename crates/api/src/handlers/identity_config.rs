@@ -39,45 +39,21 @@ use crate::auth::AuthContext;
 
 // --- Token delegation: Struct/JSON conversion and secret hashing ---
 
-/// Secret keys -> API response hash key. Hash is computed on cleartext only.
-/// - client_secret: from API request (cleartext)
-/// - encrypted_client_secret: from DB (decrypt first when encryption is enabled)
-const SECRET_TO_HASH_KEY: &[(&str, &str)] = &[
-    ("client_secret", "client_secret_hash"),
-    ("encrypted_client_secret", "client_secret_hash"),
-];
+/// Secret keys to omit from response. Hash (client_secret_hash) is stored in blob at write time.
+const SECRET_KEYS_TO_OMIT: &[&str] = &["client_secret"];
 
-/// Secret keys to omit from response without adding a hash (key_id identifies private_key).
-const SECRET_KEYS_TO_OMIT: &[&str] = &["private_key", "encrypted_private_key"];
+/// Hex chars to show in get_token_delegation response (8 chars + ".." suffix).
+const HASH_DISPLAY_HEX_LEN: usize = 8;
 
-/// Number of hex chars to show (8 chars = 4 bytes of SHA256).
-const HASH_PREFIX_HEX_LEN: usize = 8;
+/// Computes full sha256:XXXXXXXXXXXXXXXX... (64 hex chars). Stored in blob at write time.
+fn compute_secret_hash(cleartext: &str) -> String {
+    let hash = Sha256::digest(cleartext.as_bytes());
+    format!("sha256:{}", hex::encode(hash))
+}
 
-/// API key -> DB key. encrypted_* are DB-only, never in API.
-const API_TO_DB_SECRET_KEY: &[(&str, &str)] = &[
-    ("client_secret", "encrypted_client_secret"),
-    ("private_key", "encrypted_private_key"),
-];
-
-/// Transforms API request keys to DB keys before persisting.
-fn api_config_to_db(config: &serde_json::Value) -> serde_json::Value {
-    let obj = match config {
-        serde_json::Value::Object(o) => o,
-        _ => return config.clone(),
-    };
-    let out: serde_json::Map<String, serde_json::Value> = obj
-        .iter()
-        .map(|(k, v)| {
-            let key_lower = k.to_lowercase();
-            let db_key = API_TO_DB_SECRET_KEY
-                .iter()
-                .find(|(api, _)| key_lower == *api)
-                .map(|(_, db)| db.to_string())
-                .unwrap_or_else(|| k.clone());
-            (db_key, api_config_to_db(v))
-        })
-        .collect();
-    serde_json::Value::Object(out)
+/// Truncates hash for display in get_token_delegation: algorithm-prefix:XXXXXXXX.. (algorithm-prefix is "sha256" or "sha512" etc.)
+fn truncate_hash_for_display(full_hash: &str) -> String {
+    full_hash.split_once(':').map(|(prefix, rest)| format!("{}:{}..", prefix, rest.chars().take(HASH_DISPLAY_HEX_LEN).collect::<String>())).unwrap_or_else(|| full_hash.to_string())
 }
 
 fn struct_to_json(pb: &Struct) -> serde_json::Value {
@@ -137,47 +113,33 @@ fn json_to_value(json: &serde_json::Value) -> Option<Value> {
     })
 }
 
-/// Builds response auth_method_config: omits secrets, adds *_hash fields with sha256: prefix.
-/// Hash is always computed on cleartext: SHA256(client_secret) on PUT, or SHA256(decrypt(encrypted_*)) on GET.
-/// TODO: when encryption is enabled, decrypt encrypted_* before hashing on the read path.
+/// Builds response auth_method_config: omits secrets, passes through *_hash fields (stored in blob).
+/// Truncates *_hash values to 8 hex chars + ".." for display in get_token_delegation.
 fn build_response_auth_config(config: &serde_json::Value) -> serde_json::Value {
     let obj = match config {
         serde_json::Value::Object(o) => o,
         _ => return config.clone(),
     };
     let mut out: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-    let mut hash_keys_added: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (k, v) in obj.iter() {
         let key_lower = k.to_lowercase();
-        let omit_only = SECRET_KEYS_TO_OMIT
+        let omit = SECRET_KEYS_TO_OMIT
             .iter()
-            .any(|secret| key_lower.contains(&secret.to_lowercase()));
-        if omit_only {
-            // omit the secret key (key_id identifies private_key)
+            .any(|secret| key_lower == *secret);
+        if omit {
             continue;
         }
-        let secret_entry = SECRET_TO_HASH_KEY
-            .iter()
-            .find(|(secret, _)| key_lower.contains(&secret.to_lowercase()));
-
-        if let Some((_, hash_key)) = secret_entry {
+        let value = if key_lower.ends_with("_hash") {
             if let Some(s) = v.as_str() {
-                if !hash_keys_added.contains(*hash_key) {
-                    let hash = Sha256::digest(s.as_bytes());
-                    let byte_len = (HASH_PREFIX_HEX_LEN / 2).min(hash.len());
-                    let prefix = hex::encode(&hash[..byte_len]);
-                    out.insert(
-                        hash_key.to_string(),
-                        serde_json::Value::String(format!("sha256:{prefix}")),
-                    );
-                    hash_keys_added.insert((*hash_key).to_string());
-                }
+                serde_json::Value::String(truncate_hash_for_display(s))
+            } else {
+                build_response_auth_config(v)
             }
-            // omit the secret key
         } else {
-            out.insert(k.clone(), build_response_auth_config(v));
-        }
+            build_response_auth_config(v)
+        };
+        out.insert(k.clone(), value);
     }
     serde_json::Value::Object(out)
 }
@@ -467,7 +429,24 @@ pub(crate) async fn set_token_delegation(
         .as_ref()
         .ok_or_else(|| Status::invalid_argument("auth_method_config is required"))?;
 
-    let config_json = api_config_to_db(&struct_to_json(auth_method_config));
+    let config = struct_to_json(auth_method_config);
+    let mut config_json = config.clone();
+
+    // Store client_secret_hash in blob at write time (computed from cleartext).
+    let client_secret = config
+        .as_object()
+        .and_then(|o| o.iter().find(|(k, _)| k.to_lowercase() == "client_secret"))
+        .and_then(|(_, v)| v.as_str());
+    if let Some(client_secret) = client_secret
+    {
+        if let Some(obj) = config_json.as_object_mut() {
+            obj.insert(
+                "client_secret_hash".to_string(),
+                serde_json::Value::String(compute_secret_hash(client_secret)),
+            );
+        }
+    }
+
     let config_str = serde_json::to_string(&config_json).unwrap_or_else(|_| "{}".to_string());
 
     let cfg = api
@@ -498,9 +477,8 @@ pub(crate) async fn set_token_delegation(
         })
         .await??;
 
-    // Use request config for hash: client_secret is cleartext before we store as encrypted_client_secret.
-    let config_for_response = struct_to_json(auth_method_config);
-    let redacted = build_response_auth_config(&config_for_response);
+    // Response uses stored config (has client_secret_hash in blob).
+    let redacted = build_response_auth_config(&config_json);
     let pb_struct = json_to_struct(&redacted).unwrap_or_default();
 
     let created_at = cfg
@@ -551,4 +529,128 @@ pub(crate) async fn delete_token_delegation(
         .await??;
 
     Ok(Response::new(()))
+}
+
+#[cfg(test)]
+mod tests {
+    use prost_types::value::Kind;
+    use prost_types::{Struct, Value};
+
+    use super::*;
+
+    #[test]
+    fn test_compute_secret_hash() {
+        let h = compute_secret_hash("");
+        assert!(h.starts_with("sha256:"));
+        assert_eq!(h.len(), 7 + 64); // "sha256:" + 64 hex chars
+        assert!(h[7..].chars().all(|c| c.is_ascii_hexdigit()));
+
+        let h2 = compute_secret_hash("secret");
+        assert!(h2.starts_with("sha256:"));
+        assert_ne!(h, h2);
+    }
+
+    #[test]
+    fn test_truncate_hash_for_display() {
+        assert_eq!(
+            truncate_hash_for_display("sha256:abcd1234567890abcdef"),
+            "sha256:abcd1234.."
+        );
+        assert_eq!(
+            truncate_hash_for_display("sha512:xyz"),
+            "sha512:xyz.."
+        );
+        assert_eq!(truncate_hash_for_display("no-colon"), "no-colon");
+    }
+
+    #[test]
+    fn test_struct_to_json_and_value_to_json() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "s".to_string(),
+            Value {
+                kind: Some(Kind::StringValue("hello".to_string())),
+            },
+        );
+        fields.insert(
+            "n".to_string(),
+            Value {
+                kind: Some(Kind::NumberValue(42.0)),
+            },
+        );
+        let pb = Struct { fields };
+
+        let json = struct_to_json(&pb);
+        let obj = json.as_object().unwrap();
+        assert_eq!(obj.get("s").unwrap().as_str().unwrap(), "hello");
+        assert_eq!(obj.get("n").unwrap().as_f64().unwrap(), 42.0);
+    }
+
+    #[test]
+    fn test_json_to_struct_roundtrip() {
+        let json = serde_json::json!({"a": "x", "b": 1.0});
+        let pb = json_to_struct(&json).unwrap();
+        let back = struct_to_json(&pb);
+        assert_eq!(json, back);
+    }
+
+    #[test]
+    fn test_json_to_struct_empty_object() {
+        let json = serde_json::json!({});
+        let pb = json_to_struct(&json).unwrap();
+        assert!(pb.fields.is_empty());
+    }
+
+    #[test]
+    fn test_json_to_struct_non_object_returns_none() {
+        assert!(json_to_struct(&serde_json::json!(null)).is_none());
+        assert!(json_to_struct(&serde_json::json!("x")).is_none());
+        assert!(json_to_struct(&serde_json::json!(1)).is_none());
+    }
+
+    #[test]
+    fn test_build_response_auth_config_omits_client_secret() {
+        let config = serde_json::json!({
+            "client_id": "my-client",
+            "client_secret": "secret123"
+        });
+        let out = build_response_auth_config(&config);
+        let obj = out.as_object().unwrap();
+        assert!(obj.get("client_secret").is_none());
+        assert_eq!(obj.get("client_id").unwrap().as_str().unwrap(), "my-client");
+    }
+
+    #[test]
+    fn test_build_response_auth_config_truncates_hash() {
+        let config = serde_json::json!({
+            "client_id": "my-client",
+            "client_secret_hash": "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        });
+        let out = build_response_auth_config(&config);
+        let obj = out.as_object().unwrap();
+        assert!(obj.get("client_secret").is_none());
+        assert_eq!(
+            obj.get("client_secret_hash").unwrap().as_str().unwrap(),
+            "sha256:abcdef12.."
+        );
+    }
+
+    #[test]
+    fn test_build_response_auth_config_passes_through_non_secret() {
+        let config = serde_json::json!({
+            "client_id": "cid",
+            "extra_field": "value"
+        });
+        let out = build_response_auth_config(&config);
+        let obj = out.as_object().unwrap();
+        assert_eq!(obj.get("client_id").unwrap().as_str().unwrap(), "cid");
+        assert_eq!(obj.get("extra_field").unwrap().as_str().unwrap(), "value");
+    }
+
+    #[test]
+    fn test_build_response_auth_config_non_object_returns_clone() {
+        let config = serde_json::json!("string");
+        let out = build_response_auth_config(&config);
+        assert_eq!(out, config);
+    }
 }
