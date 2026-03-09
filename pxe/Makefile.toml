@@ -102,6 +102,16 @@ script = '''
   cp ${REPO_ROOT}/pxe/common_files/check-scout-updates.timer ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
 '''
 
+[tasks.stage-scout-module-loader]
+description = "Copies the scout module loader to build-output"
+script = '''
+  mkdir -p ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
+  cp ${REPO_ROOT}/pxe/common_files/load_modules.sh ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
+
+  mkdir -p ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
+  cp ${REPO_ROOT}/pxe/common_files/load_modules.sh ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
+'''
+
 [tasks.build-boot-artifacts-x86-host]
 dependencies = [
   "mkdir-static",
@@ -201,6 +211,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-x86_64",
   "mkosi-build-scout-loader-x86_64",
   "mkosi-build-qcow-imager",
@@ -223,6 +234,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-x86_64",
   "mkosi-build-scout-loader-x86_64",
   "mkosi-build-qcow-imager",
@@ -244,6 +256,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-aarch64",
   "mkosi-build-scout-loader-aarch64",
   "mkosi-build-qcow-imager-aarch64",
@@ -266,6 +279,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-aarch64",
   "mkosi-build-scout-loader-aarch64",
   "mkosi-build-qcow-imager-aarch64",
