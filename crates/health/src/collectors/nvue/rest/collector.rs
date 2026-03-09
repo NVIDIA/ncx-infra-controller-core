@@ -25,7 +25,7 @@ use crate::HealthError;
 use crate::collectors::{IterationResult, PeriodicCollector};
 use crate::config::NvueRestConfig;
 use crate::endpoint::{BmcEndpoint, EndpointMetadata};
-use crate::sink::{CollectorEvent, DataSink, EventContext, MetricSample};
+use crate::sink::{CollectorEvent, DataSink, EventContext, SensorHealthData};
 
 const COLLECTOR_NAME: &str = "nvue_rest";
 
@@ -256,14 +256,18 @@ impl NvueRestCollector {
             None => metric_type.to_string(),
         };
 
-        self.emit_event(CollectorEvent::Metric(MetricSample {
-            key,
-            name: COLLECTOR_NAME.to_string(),
-            metric_type: metric_type.to_string(),
-            unit: unit.to_string(),
-            value,
-            labels,
-        }));
+        self.emit_event(CollectorEvent::Metric(
+            SensorHealthData {
+                key,
+                name: COLLECTOR_NAME.to_string(),
+                metric_type: metric_type.to_string(),
+                unit: unit.to_string(),
+                value,
+                labels,
+                context: None,
+            }
+            .into(),
+        ));
     }
 }
 

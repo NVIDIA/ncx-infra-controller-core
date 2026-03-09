@@ -23,7 +23,7 @@ use nv_redfish::core::Bmc;
 use crate::HealthError;
 use crate::collectors::{IterationResult, PeriodicCollector};
 use crate::config::NmxtCollectorConfig as NmxtCollectorOptions;
-use crate::endpoint::BmcEndpoint;
+use crate::endpoint::{BmcEndpoint, EndpointMetadata};
 use crate::sink::{CollectorEvent, DataSink, EventContext, SensorHealthData};
 
 /// default NMX-T port
@@ -140,6 +140,7 @@ pub struct NmxtCollectorConfig {
 /// NMX-T collector for a single switch/endpoint
 pub struct NmxtCollector {
     endpoint: Arc<BmcEndpoint>,
+    switch_id: String,
     http_client: reqwest::Client,
     event_context: EventContext,
     data_sink: Option<Arc<dyn DataSink>>,
@@ -153,6 +154,10 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
         endpoint: Arc<BmcEndpoint>,
         config: Self::Config,
     ) -> Result<Self, HealthError> {
+        let switch_id = match &endpoint.metadata {
+            Some(EndpointMetadata::Switch(s)) => s.serial.clone(),
+            _ => endpoint.addr.mac.to_string(),
+        };
         let event_context = EventContext::from_endpoint(endpoint.as_ref(), "nmxt");
         let request_timeout = config.nmxt_config.request_timeout;
 
@@ -165,6 +170,7 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
 
         Ok(Self {
             endpoint,
+            switch_id,
             http_client,
             event_context,
             data_sink: config.data_sink,
@@ -219,7 +225,9 @@ impl NmxtCollector {
             metric_key.push(':');
             metric_key.push_str(&port_num);
 
-            let event_labels = vec![
+            let labels = vec![
+                (Cow::Borrowed("switch_id"), self.switch_id.clone()),
+                (Cow::Borrowed("switch_ip"), switch_ip.clone()),
                 (Cow::Borrowed("node_guid"), node_guid),
                 (Cow::Borrowed("port_num"), port_num),
             ];
@@ -231,7 +239,7 @@ impl NmxtCollector {
                     metric_type: metric_type.to_string(),
                     unit: "count".to_string(),
                     value,
-                    labels: event_labels,
+                    labels,
                     context: None,
                 }
                 .into(),
