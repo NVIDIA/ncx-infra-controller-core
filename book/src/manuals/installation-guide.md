@@ -35,7 +35,7 @@ those are NVIDIA-internal paths not accessible externally. Replace them with you
 registry paths after building from source.
 ```
 
-### BMM Core
+### NICo Core
 
 Follow the [Building NICo Containers](building_nico_containers.md) guide for build steps,
 then [Tagging and Pushing Containers](pushing_containers.md) to push images to your
@@ -43,7 +43,7 @@ private registry. It covers
 prerequisites, build steps for x86_64 and aarch64, tagging, pushing to a private
 registry, and a summary table of all images produced.
 
-### BMM REST
+### NICo REST
 
 Clone [bare-metal-manager-rest](https://github.com/NVIDIA/bare-metal-manager-rest)
 and build with:
@@ -319,7 +319,7 @@ curl -k https://localhost:1079/healthz
 
 ## 7. Install admin-cli
 
-Build from source in the `bare-metal-manager-core` repository:
+Build from source in the `ncx-infra-controller-core` repository:
 
 ```bash
 cargo make build-cli
@@ -390,7 +390,7 @@ For each managed host, you need the **BMC MAC address**, **chassis serial number
 **factory BMC username/password** (from your asset management system or server vendor).
 
 ```bash
-# Set desired credentials BMM will apply to all hosts
+# Set desired credentials NICo will apply to all hosts
 admin-cli -c <api-url> credential add-bmc --kind=site-wide-root --password='<PASSWORD>'
 admin-cli -c <api-url> credential add-uefi --kind=host --password='<PASSWORD>'
 
@@ -401,7 +401,7 @@ admin-cli -c <api-url> credential em replace-all --filename expected_machines.js
 admin-cli -c <api-url> mb site trusted-machine approve \* persist --pcr-registers="0,3,5,6"
 ```
 
-BMM then automatically: assigns IPs via DHCP, discovers BMCs via Redfish, rotates
+NICo then automatically: assigns IPs via DHCP, discovers BMCs via Redfish, rotates
 credentials, provisions DPUs, PXE-boots hosts into Scout for hardware discovery, and
 moves machines to the `Available` pool.
 

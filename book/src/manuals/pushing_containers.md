@@ -29,7 +29,7 @@ docker push $REGISTRY/boot-artifacts-aarch64:$TAG
 docker push $REGISTRY/machine-validation-config:$TAG
 ```
 
-## Tag and Push BMM REST Images
+## Tag and Push REST Images
 
 ```sh
 for image in carbide-rest-api carbide-rest-workflow carbide-rest-site-manager \
