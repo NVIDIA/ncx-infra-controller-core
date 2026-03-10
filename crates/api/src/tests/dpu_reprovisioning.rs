@@ -404,9 +404,9 @@ async fn test_instance_reprov_with_firmware_upgrade(pool: sqlx::PgPool) {
     env.run_machine_state_controller_iteration().await;
     mh.network_configured(&env).await;
     env.run_machine_state_controller_iteration().await;
+    env.run_machine_state_controller_iteration().await;
+    env.run_machine_state_controller_iteration().await;
     mh.network_configured(&env).await;
-    env.run_machine_state_controller_iteration().await;
-    env.run_machine_state_controller_iteration().await;
     env.run_machine_state_controller_iteration().await;
     env.run_machine_state_controller_iteration().await;
 
@@ -711,9 +711,9 @@ async fn test_instance_reprov_without_firmware_upgrade(pool: sqlx::PgPool) {
     env.run_machine_state_controller_iteration().await;
     mh.network_configured(&env).await;
     env.run_machine_state_controller_iteration().await;
+    env.run_machine_state_controller_iteration().await;
+    env.run_machine_state_controller_iteration().await;
     mh.network_configured(&env).await;
-    env.run_machine_state_controller_iteration().await;
-    env.run_machine_state_controller_iteration().await;
     env.run_machine_state_controller_iteration().await;
     env.run_machine_state_controller_iteration().await;
 
@@ -1607,9 +1607,9 @@ async fn test_instance_reprov_restart_failed(pool: sqlx::PgPool) {
     env.run_machine_state_controller_iteration().await;
     mh.network_configured(&env).await;
     env.run_machine_state_controller_iteration().await;
+    env.run_machine_state_controller_iteration().await;
+    env.run_machine_state_controller_iteration().await;
     mh.network_configured(&env).await;
-    env.run_machine_state_controller_iteration().await;
-    env.run_machine_state_controller_iteration().await;
     env.run_machine_state_controller_iteration().await;
     env.run_machine_state_controller_iteration().await;
 
