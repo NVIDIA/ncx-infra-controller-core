@@ -83,9 +83,7 @@ impl From<Rack> for rpc::forge::Rack {
     }
 }
 
-fn derive_rack_aggregate_health(
-    overrides: &HealthReportOverrides,
-) -> health_report::HealthReport {
+fn derive_rack_aggregate_health(overrides: &HealthReportOverrides) -> health_report::HealthReport {
     if let Some(replace) = &overrides.replace {
         return replace.clone();
     }
