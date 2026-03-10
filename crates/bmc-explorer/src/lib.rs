@@ -490,21 +490,28 @@ fn lockdown_status<B: Bmc>(
             let message = format!(
                 "SysLockdownEnabled={is_syslockdown}, kcs_privilege={kcs_privilege:#?}, host_interface_enabled={hi_enabled}"
             );
-            // Grace-Grace SMCs (ARS-121L-DNR):
-            // 1. Need host_interface enabled even with lockdown
-            // 2. Doesn't provide KCSInterface
-            let model = system.hardware_id().model.map(|v| v.into_inner());
 
-            match (hi_enabled, model, kcs_privilege, is_syslockdown) {
-                (true, Some("ARS-121L-DNR"), None, true)
-                | (false, _, Some(SupermicroPrivilege::Callback), true) => {
-                    Ok(InternalLockdownStatus::Enabled)
+            let model = system.hardware_id().model.map(|v| v.into_inner());
+            if model == Some("ARS-121L-DNR") {
+                // Grace-Grace SMCs (ARS-121L-DNR):
+                // 1. Need host_interface enabled even with lockdown
+                // 2. Doesn't provide KCSInterface
+                match (hi_enabled, is_syslockdown) {
+                    (true, true) => Ok(InternalLockdownStatus::Enabled),
+                    (true, false) => Ok(InternalLockdownStatus::Disabled),
+                    _ => Ok(InternalLockdownStatus::Partial),
                 }
-                (true, _, None, false)
-                | (true, _, Some(SupermicroPrivilege::Administrator), false) => {
-                    Ok(InternalLockdownStatus::Disabled)
+            } else {
+                match (hi_enabled, kcs_privilege, is_syslockdown) {
+                    (false, Some(SupermicroPrivilege::Callback), true) => {
+                        Ok(InternalLockdownStatus::Enabled)
+                    }
+                    (true, Some(SupermicroPrivilege::Administrator), false) => {
+                        Ok(InternalLockdownStatus::Disabled)
+                    }
+                    (true, None, false) => Ok(InternalLockdownStatus::Disabled),
+                    _ => Ok(InternalLockdownStatus::Partial),
                 }
-                _ => Ok(InternalLockdownStatus::Partial),
             }
             .map(|status| Some(LockdownStatus { status, message }))
         }
