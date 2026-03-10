@@ -430,6 +430,7 @@ impl RedfishClient {
                 boot_interface_mac,
                 &HashMap::default(),
                 libredfish::BiosProfileType::Performance,
+                &HashMap::default(),
             )
             .await
             .map_err(map_redfish_error)?;

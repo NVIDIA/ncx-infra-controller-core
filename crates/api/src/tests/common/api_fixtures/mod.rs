@@ -37,8 +37,9 @@ use db::network_security_group::create as create_network_security_group;
 use db::work_lock_manager;
 use dpu::DpuConfig;
 use forge_secrets::credentials::{
-    CredentialKey, CredentialProvider, CredentialType, Credentials, TestCredentialProvider,
+    CompositeCredentialManager, CredentialManager, CredentialReader, TestCredentialManager,
 };
+use forge_secrets::{ChainedCredentialReader, CredentialSnapshot, UsernamePassword};
 use futures::FutureExt as _;
 use health_report::{HealthReport, OverrideMode};
 use ipnetwork::IpNetwork;
@@ -81,10 +82,11 @@ use tracing_subscriber::EnvFilter;
 use crate::api::Api;
 use crate::api::metrics::ApiMetricsEmitter;
 use crate::cfg::file::{
-    BomValidationConfig, CarbideConfig, DpaConfig, DpaInterfaceStateControllerConfig,
-    DpuConfig as InitialDpuConfig, FirmwareGlobal, FnnConfig, IBFabricConfig, IbFabricDefinition,
-    IbPartitionStateControllerConfig, ListenMode, MachineStateControllerConfig, MachineUpdater,
-    MachineValidationConfig, MeasuredBootMetricsCollectorConfig, NetworkSecurityGroupConfig,
+    BomValidationConfig, CarbideConfig, ComputeAllocationEnforcement, DpaConfig,
+    DpaInterfaceStateControllerConfig, DpuConfig as InitialDpuConfig, FirmwareGlobal, FnnConfig,
+    IBFabricConfig, IbFabricDefinition, IbPartitionStateControllerConfig, ListenMode,
+    MachineStateControllerConfig, MachineUpdater, MachineValidationConfig,
+    MeasuredBootMetricsCollectorConfig, MqttAuthConfig, NetworkSecurityGroupConfig,
     NetworkSegmentStateControllerConfig, NvLinkConfig, PowerManagerOptions,
     PowerShelfStateControllerConfig, RackStateControllerConfig, SiteExplorerConfig, SpdmConfig,
     SpdmStateControllerConfig, StateControllerConfig, SwitchStateControllerConfig, VmaasConfig,
@@ -260,8 +262,10 @@ pub struct TestEnvOverrides {
     pub dpf_config: Option<DpfConfig>,
     pub fnn_config: Option<FnnConfig>,
     pub nmxm_default_partition: Option<bool>,
+    pub nmxm_unknown_partition: Option<bool>,
     // After n create_requests succeed, they will start failing.
     pub nmxm_fail_after_n_creates: Option<usize>,
+    pub compute_allocation_enforcement: Option<ComputeAllocationEnforcement>,
 }
 
 impl TestEnvOverrides {
@@ -307,6 +311,14 @@ impl TestEnvOverrides {
         self
     }
 
+    pub fn with_compute_allocation_enforcement(
+        mut self,
+        enforcement: ComputeAllocationEnforcement,
+    ) -> Self {
+        self.compute_allocation_enforcement = Some(enforcement);
+        self
+    }
+
     pub fn no_network_segments() -> Self {
         Self {
             create_network_segments: Some(false),
@@ -346,7 +358,7 @@ pub struct TestEnv {
     pub underlay_segment: Option<NetworkSegmentId>,
     pub domain: uuid::Uuid,
     pub nvl_partition_monitor: Arc<Mutex<NvlPartitionMonitor>>,
-    pub test_credential_provider: Arc<TestCredentialProvider>,
+    pub test_credential_manager: Arc<TestCredentialManager>,
     pub rms_sim: Arc<RmsSim>,
     pub drop_guard: DropGuard,
 }
@@ -1006,6 +1018,7 @@ pub fn get_config() -> CarbideConfig {
         alt_metric_prefix: None,
         database_url: "pgsql:://localhost".to_string(),
         max_database_connections: 1000,
+        compute_allocation_enforcement: Default::default(),
         asn: 0,
         datacenter_asn: 0,
         dhcp_servers: vec![],
@@ -1131,6 +1144,7 @@ pub fn get_config() -> CarbideConfig {
             hb_interval: Duration::minutes(2),
             subnet_ip: Ipv4Addr::UNSPECIFIED,
             subnet_mask: 0_i32,
+            auth: MqttAuthConfig::default(),
         }),
         power_manager_options: PowerManagerOptions {
             enabled: false,
@@ -1263,8 +1277,17 @@ pub async fn create_test_env_with_overrides(
     .await
     .expect("work_lock_manager failed to start: no availble connections?");
     let test_meter = TestMeter::default();
-    let credential_provider = Arc::new(TestCredentialProvider::default());
-    populate_default_credentials(credential_provider.as_ref()).await;
+    let credential_manager = Arc::new(TestCredentialManager::default());
+
+    let chained_reader = ChainedCredentialReader::from(vec![
+        Box::new(test_static_credential_snapshot()) as Box<dyn CredentialReader>,
+        Box::new(credential_manager.clone()),
+    ]);
+    let composite_manager: Arc<dyn CredentialManager> = Arc::new(CompositeCredentialManager::new(
+        chained_reader,
+        credential_manager.clone(),
+    ));
+
     let certificate_provider = Arc::new(TestCertificateProvider::new());
     let redfish_sim = Arc::new(RedfishSim::default());
     let nmxm_sim: Arc<dyn NmxmClientPool> =
@@ -1272,6 +1295,8 @@ pub async fn create_test_env_with_overrides(
             NmxmSimClient::with_fail_after_n_creates(n)
         } else if overrides.nmxm_default_partition == Some(true) {
             NmxmSimClient::with_default_partition()
+        } else if overrides.nmxm_unknown_partition == Some(true) {
+            NmxmSimClient::with_unknown_partition()
         } else {
             NmxmSimClient::default()
         });
@@ -1292,11 +1317,14 @@ pub async fn create_test_env_with_overrides(
         Default::default()
     };
 
+    config.compute_allocation_enforcement =
+        overrides.compute_allocation_enforcement.unwrap_or_default();
+
     let config = Arc::new(config);
 
     let ib_config = config.ib_config.clone().unwrap_or_default();
     let ib_fabric_manager_impl = ib::create_ib_fabric_manager(
-        credential_provider.clone(),
+        composite_manager.clone(),
         ib::IBFabricManagerConfig {
             allow_insecure_fabric_configuration: ib_config.allow_insecure,
             endpoints: if ib_config.enabled {
@@ -1390,7 +1418,7 @@ pub async fn create_test_env_with_overrides(
     let bmc_explorer = Arc::new(BmcEndpointExplorer::new(
         redfish_sim.clone(),
         ipmi_tool.clone(),
-        credential_provider.clone(),
+        composite_manager.clone(),
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
     ));
 
@@ -1406,7 +1434,7 @@ pub async fn create_test_env_with_overrides(
     let api = Arc::new(Api {
         kube_client_provider: Arc::new(TestDpfKubeClient {}),
         runtime_config: config.clone(),
-        credential_provider: credential_provider.clone(),
+        credential_manager: composite_manager,
         certificate_provider: certificate_provider.clone(),
         database_connection: db_pool.clone(),
         redfish_pool: redfish_sim.clone(),
@@ -1679,7 +1707,7 @@ pub async fn create_test_env_with_overrides(
         underlay_segment,
         domain: domain.into(),
         nvl_partition_monitor: Arc::new(Mutex::new(nvl_partition_monitor)),
-        test_credential_provider: credential_provider.clone(),
+        test_credential_manager: credential_manager.clone(),
         rms_sim,
         drop_guard: cancel_token.drop_guard(),
     }
@@ -1701,6 +1729,8 @@ pub async fn get_instance_type_fixture_id(env: &TestEnv) -> String {
         .find_instance_types_by_ids(tonic::Request::new(
             rpc::forge::FindInstanceTypesByIdsRequest {
                 instance_type_ids: existing_instance_type_ids,
+                include_allocation_stats: false,
+                tenant_organization_id: None,
             },
         ))
         .await
@@ -1822,43 +1852,22 @@ pub async fn populate_network_security_groups(api: Arc<Api>) {
     txn.commit().await.unwrap();
 }
 
-async fn populate_default_credentials(credential_provider: &dyn CredentialProvider) {
-    credential_provider
-        .set_credentials(
-            &CredentialKey::DpuRedfish {
-                credential_type: CredentialType::DpuHardwareDefault,
-            },
-            &Credentials::UsernamePassword {
-                username: "root".to_string(),
-                password: "dpuredfish_dpuhardwaredefault".to_string(),
-            },
-        )
-        .await
-        .unwrap();
-    credential_provider
-        .set_credentials(
-            &CredentialKey::DpuRedfish {
-                credential_type: CredentialType::SiteDefault,
-            },
-            &Credentials::UsernamePassword {
-                username: "root".to_string(),
-                password: "dpuredfish_sitedefault".to_string(),
-            },
-        )
-        .await
-        .unwrap();
-    credential_provider
-        .set_credentials(
-            &CredentialKey::HostRedfish {
-                credential_type: CredentialType::SiteDefault,
-            },
-            &Credentials::UsernamePassword {
-                username: "root".to_string(),
-                password: "hostredfish_sitedefault".to_string(),
-            },
-        )
-        .await
-        .unwrap();
+fn test_static_credential_snapshot() -> CredentialSnapshot {
+    CredentialSnapshot {
+        dpu_redfish_factory_default: Some(UsernamePassword {
+            username: "root".to_string(),
+            password: "dpuredfish_dpuhardwaredefault".to_string(),
+        }),
+        dpu_redfish_site_default: Some(UsernamePassword {
+            username: "root".to_string(),
+            password: "dpuredfish_sitedefault".to_string(),
+        }),
+        host_redfish_site_default: Some(UsernamePassword {
+            username: "root".to_string(),
+            password: "hostredfish_sitedefault".to_string(),
+        }),
+        ..Default::default()
+    }
 }
 
 fn pool_defs(fabric_len: u8) -> HashMap<String, resource_pool::ResourcePoolDef> {

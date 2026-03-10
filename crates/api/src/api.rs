@@ -37,7 +37,7 @@ use db::db_read::PgPoolReader;
 use db::work_lock_manager::WorkLockManagerHandle;
 use db::{DatabaseError, DatabaseResult, WithTransaction};
 use forge_secrets::certificates::CertificateProvider;
-use forge_secrets::credentials::CredentialProvider;
+use forge_secrets::credentials::CredentialManager;
 use librms::RmsApi;
 use model::machine::Machine;
 use model::machine::machine_search_config::MachineSearchConfig;
@@ -63,7 +63,7 @@ use crate::{CarbideError, CarbideResult};
 
 pub struct Api {
     pub(crate) database_connection: sqlx::PgPool,
-    pub(crate) credential_provider: Arc<dyn CredentialProvider>,
+    pub(crate) credential_manager: Arc<dyn CredentialManager>,
     pub(crate) certificate_provider: Arc<dyn CertificateProvider>,
     pub(crate) redfish_pool: Arc<dyn RedfishClientPool>,
     pub(crate) eth_data: EthVirtData,
@@ -2231,7 +2231,36 @@ impl Forge for Api {
     ) -> Result<Response<rpc::GetNetworkSecurityGroupAttachmentsResponse>, Status> {
         crate::handlers::network_security_group::get_attachments(self, request).await
     }
-
+    async fn create_compute_allocation(
+        &self,
+        request: tonic::Request<rpc::CreateComputeAllocationRequest>,
+    ) -> Result<tonic::Response<rpc::CreateComputeAllocationResponse>, Status> {
+        crate::handlers::compute_allocation::create(self, request).await
+    }
+    async fn find_compute_allocation_ids(
+        &self,
+        request: tonic::Request<rpc::FindComputeAllocationIdsRequest>,
+    ) -> Result<tonic::Response<rpc::FindComputeAllocationIdsResponse>, Status> {
+        crate::handlers::compute_allocation::find_ids(self, request).await
+    }
+    async fn find_compute_allocations_by_ids(
+        &self,
+        request: tonic::Request<rpc::FindComputeAllocationsByIdsRequest>,
+    ) -> Result<tonic::Response<rpc::FindComputeAllocationsByIdsResponse>, Status> {
+        crate::handlers::compute_allocation::find_by_ids(self, request).await
+    }
+    async fn delete_compute_allocation(
+        &self,
+        request: tonic::Request<rpc::DeleteComputeAllocationRequest>,
+    ) -> Result<tonic::Response<rpc::DeleteComputeAllocationResponse>, Status> {
+        crate::handlers::compute_allocation::delete(self, request).await
+    }
+    async fn update_compute_allocation(
+        &self,
+        request: tonic::Request<rpc::UpdateComputeAllocationRequest>,
+    ) -> Result<tonic::Response<rpc::UpdateComputeAllocationResponse>, Status> {
+        crate::handlers::compute_allocation::update(self, request).await
+    }
     async fn get_desired_firmware_versions(
         &self,
         request: Request<rpc::GetDesiredFirmwareVersionsRequest>,
