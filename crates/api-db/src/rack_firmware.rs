@@ -25,6 +25,95 @@ use sqlx::{FromRow, PgConnection, Row};
 use crate::db_read::DbReader;
 use crate::{DatabaseError, DatabaseResult};
 
+// -- RackFirmwareApplyHistory --
+
+#[derive(Debug, Clone)]
+pub struct RackFirmwareApplyHistory {
+    pub id: i64,
+    pub firmware_id: String,
+    pub rack_id: String,
+    pub firmware_type: String,
+    pub applied_at: DateTime<Utc>,
+}
+
+impl<'r> FromRow<'r, PgRow> for RackFirmwareApplyHistory {
+    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        Ok(RackFirmwareApplyHistory {
+            id: row.try_get("id")?,
+            firmware_id: row.try_get("firmware_id")?,
+            rack_id: row.try_get("rack_id")?,
+            firmware_type: row.try_get("firmware_type")?,
+            applied_at: row.try_get("applied_at")?,
+        })
+    }
+}
+
+impl RackFirmwareApplyHistory {
+    /// Record a firmware apply event
+    pub async fn record(
+        txn: &mut PgConnection,
+        firmware_id: &str,
+        rack_id: &str,
+        firmware_type: &str,
+    ) -> DatabaseResult<Self> {
+        let query = "INSERT INTO rack_firmware_apply_history \
+            (firmware_id, rack_id, firmware_type) \
+            VALUES ($1, $2, $3) RETURNING *";
+
+        sqlx::query_as(query)
+            .bind(firmware_id)
+            .bind(rack_id)
+            .bind(firmware_type)
+            .fetch_one(txn)
+            .await
+            .map_err(|e| DatabaseError::new(query, e))
+    }
+
+    /// List apply history, optionally filtered by firmware_id.
+    /// Joins against rack_firmware to report whether each firmware_id is still available.
+    pub async fn list(
+        txn: &mut PgConnection,
+        firmware_id: Option<&str>,
+    ) -> DatabaseResult<Vec<(Self, bool)>> {
+        let base = "SELECT h.*, COALESCE(rf.available, false) AS firmware_available \
+            FROM rack_firmware_apply_history h \
+            LEFT JOIN rack_firmware rf ON rf.id = h.firmware_id";
+
+        if let Some(fid) = firmware_id {
+            let query =
+                &format!("{base} WHERE h.firmware_id = $1 ORDER BY h.applied_at DESC");
+            let rows: Vec<RackFirmwareApplyHistoryWithAvailability> = sqlx::query_as(query)
+                .bind(fid)
+                .fetch_all(txn)
+                .await
+                .map_err(|e| DatabaseError::query(query, e))?;
+            Ok(rows.into_iter().map(|r| (r.history, r.firmware_available)).collect())
+        } else {
+            let query = &format!("{base} ORDER BY h.applied_at DESC");
+            let rows: Vec<RackFirmwareApplyHistoryWithAvailability> = sqlx::query_as(query)
+                .fetch_all(txn)
+                .await
+                .map_err(|e| DatabaseError::query(query, e))?;
+            Ok(rows.into_iter().map(|r| (r.history, r.firmware_available)).collect())
+        }
+    }
+}
+
+/// Internal helper for the joined query result
+struct RackFirmwareApplyHistoryWithAvailability {
+    history: RackFirmwareApplyHistory,
+    firmware_available: bool,
+}
+
+impl<'r> FromRow<'r, PgRow> for RackFirmwareApplyHistoryWithAvailability {
+    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        Ok(RackFirmwareApplyHistoryWithAvailability {
+            history: RackFirmwareApplyHistory::from_row(row)?,
+            firmware_available: row.try_get("firmware_available")?,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RackFirmware {
     pub id: String,

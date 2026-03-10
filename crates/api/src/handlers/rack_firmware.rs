@@ -19,12 +19,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use db::DatabaseError;
-use db::rack_firmware::RackFirmware as DbRackFirmware;
+use db::rack_firmware::{RackFirmware as DbRackFirmware, RackFirmwareApplyHistory};
 use forge_secrets::credentials::{CredentialKey, CredentialReader, Credentials};
 use rpc::forge::{
     DeviceUpdateResult, NodeJobInfo, RackFirmware, RackFirmwareApplyRequest,
     RackFirmwareApplyResponse, RackFirmwareCreateRequest, RackFirmwareDeleteRequest,
-    RackFirmwareGetRequest, RackFirmwareJobStatusRequest, RackFirmwareJobStatusResponse,
+    RackFirmwareGetRequest, RackFirmwareHistoryEntry, RackFirmwareHistoryRequest,
+    RackFirmwareHistoryResponse, RackFirmwareJobStatusRequest, RackFirmwareJobStatusResponse,
     RackFirmwareList, RackFirmwareListRequest,
 };
 use serde::{Deserialize, Serialize};
@@ -1190,6 +1191,22 @@ pub async fn apply(
         "Firmware apply operation completed"
     );
 
+    // Record apply event in history
+    let rack_id_str = rack_id.to_string();
+    let mut conn = api
+        .database_connection
+        .acquire()
+        .await
+        .map_err(|e| CarbideError::from(DatabaseError::new("acquire for apply history", e)))?;
+    RackFirmwareApplyHistory::record(
+        &mut conn,
+        &req.firmware_id,
+        &rack_id_str,
+        &req.firmware_type,
+    )
+    .await
+    .map_err(CarbideError::from)?;
+
     Ok(Response::new(RackFirmwareApplyResponse {
         total_updates: device_results.len() as i32,
         successful_updates,
@@ -1332,4 +1349,41 @@ pub async fn get_job_status(
         error_message: rms_response.error_message,
         result_json: rms_response.result_json,
     }))
+}
+
+/// Get the history of rack firmware apply operations
+pub async fn get_history(
+    api: &Api,
+    request: Request<RackFirmwareHistoryRequest>,
+) -> Result<Response<RackFirmwareHistoryResponse>, Status> {
+    let req = request.into_inner();
+
+    let firmware_id_filter = if req.firmware_id.is_empty() {
+        None
+    } else {
+        Some(req.firmware_id.as_str())
+    };
+
+    let mut conn = api
+        .database_connection
+        .acquire()
+        .await
+        .map_err(|e| CarbideError::from(DatabaseError::new("acquire for history", e)))?;
+
+    let history = RackFirmwareApplyHistory::list(&mut conn, firmware_id_filter)
+        .await
+        .map_err(CarbideError::from)?;
+
+    let entries = history
+        .into_iter()
+        .map(|(entry, firmware_available)| RackFirmwareHistoryEntry {
+            firmware_id: entry.firmware_id,
+            rack_id: entry.rack_id,
+            firmware_type: entry.firmware_type,
+            applied_at: entry.applied_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            firmware_available,
+        })
+        .collect();
+
+    Ok(Response::new(RackFirmwareHistoryResponse { entries }))
 }

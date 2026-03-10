@@ -1425,6 +1425,13 @@ impl Forge for Api {
         crate::handlers::rack_firmware::get_job_status(self, request).await
     }
 
+    async fn get_rack_firmware_history(
+        &self,
+        request: tonic::Request<rpc::RackFirmwareHistoryRequest>,
+    ) -> Result<Response<rpc::RackFirmwareHistoryResponse>, tonic::Status> {
+        crate::handlers::rack_firmware::get_history(self, request).await
+    }
+
     async fn get_expected_power_shelf(
         &self,
         request: Request<rpc::ExpectedPowerShelfRequest>,
