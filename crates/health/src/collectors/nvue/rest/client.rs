@@ -51,8 +51,9 @@ impl RestClient {
         self_signed_tls: bool,
         paths: NvueRestPaths,
     ) -> Result<Self, HealthError> {
-        let base_url = Url::parse(&format!("https://{host}")).map_err(|e| {
-            HealthError::HttpError(format!("https://{host}: invalid base URL: {e}"))
+        let raw_url = format!("https://{host}");
+        let base_url = Url::parse(&raw_url).map_err(|e| {
+            HealthError::HttpError(format!("{raw_url}: invalid base URL: {e}"))
         })?;
 
         let mut builder = Client::builder().timeout(request_timeout);
