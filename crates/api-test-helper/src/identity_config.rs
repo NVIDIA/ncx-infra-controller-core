@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use super::grpcurl::grpcurl;
 
 /// Set identity configuration for an org. Tenant must exist first.
+#[allow(clippy::too_many_arguments)]
 pub async fn set_identity_configuration(
     carbide_api_addrs: &[SocketAddr],
     org_id: &str,
