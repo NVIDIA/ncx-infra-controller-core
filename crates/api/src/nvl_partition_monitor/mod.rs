@@ -554,10 +554,13 @@ impl PartitionProcessingContext {
                         .chain(std::iter::once(ctx.gpu_nmx_m_id.clone()))
                         .collect();
                 }
-                _ => {
+                libnmxm::nmxm_model::PartitionMembers::InnerStructs(_) => {
                     return Err(CarbideError::internal(
-                        "Expected IDs partition members".to_string(),
+                        "Partition members are location-based, expected GPU-ID-based".to_string(),
                     ));
+                }
+                libnmxm::nmxm_model::PartitionMembers::Empty(_) => {
+                    gpu_ids = vec![ctx.gpu_nmx_m_id.clone()];
                 }
             }
         } else {
@@ -1171,12 +1174,28 @@ impl NvlPartitionMonitor {
                                     .cloned()
                                 {
                                     // Add to existing partition in the same domain
-                                    partition_ctx.handle_gpu_addition_existing_partition(
-                                        &gpu_ctx, &partition,
-                                    )?;
+                                    if let Err(e) = partition_ctx
+                                        .handle_gpu_addition_existing_partition(
+                                            &gpu_ctx, &partition,
+                                        )
+                                    {
+                                        tracing::error!(
+                                            gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                            machine_id = %instance.machine_id,
+                                            "Failed to handle GPU addition to existing partition: {e}"
+                                        );
+                                    }
                                 } else {
                                     // Create new partition in a different domain
-                                    partition_ctx.handle_gpu_addition_new_partition(&gpu_ctx)?;
+                                    if let Err(e) =
+                                        partition_ctx.handle_gpu_addition_new_partition(&gpu_ctx)
+                                    {
+                                        tracing::error!(
+                                            gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                            machine_id = %instance.machine_id,
+                                            "Failed to handle GPU addition to new partition: {e}"
+                                        );
+                                    }
                                 }
                             }
                             GpuAction::RemoveFromPartition => {
@@ -1192,7 +1211,15 @@ impl NvlPartitionMonitor {
                                     continue;
                                 };
 
-                                partition_ctx.handle_gpu_removal(&gpu_ctx, gpus_to_keep)?;
+                                if let Err(e) =
+                                    partition_ctx.handle_gpu_removal(&gpu_ctx, gpus_to_keep)
+                                {
+                                    tracing::error!(
+                                        gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                        machine_id = %instance.machine_id,
+                                        "Failed to handle GPU removal from partition: {e}"
+                                    );
+                                }
                             }
                             GpuAction::RemoveFromUnknownPartition => {
                                 if let Some(gpus_to_keep) = partition_ctx
@@ -1203,13 +1230,23 @@ impl NvlPartitionMonitor {
                                         device_instance,
                                     )
                                 {
-                                    partition_ctx.handle_gpu_removal_from_unknown_partition(
-                                        &gpu_ctx.partition_nmx_m_id,
-                                        &gpu_ctx.gpu_nmx_m_id,
-                                        gpus_to_keep,
-                                    )?;
+                                    if let Err(e) = partition_ctx
+                                        .handle_gpu_removal_from_unknown_partition(
+                                            &gpu_ctx.partition_nmx_m_id,
+                                            &gpu_ctx.gpu_nmx_m_id,
+                                            gpus_to_keep,
+                                        )
+                                    {
+                                        tracing::error!(
+                                            gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                            machine_id = %instance.machine_id,
+                                            "Failed to handle GPU removal from unknown partition: {e}"
+                                        );
+                                    }
                                 } else {
                                     tracing::error!(
+                                        gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                        machine_id = %instance.machine_id,
                                         "No default partition found with nmx_m_id = {}",
                                         gpu_ctx.gpu_nmx_m_id
                                     );
