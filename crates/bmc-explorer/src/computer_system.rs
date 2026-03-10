@@ -132,10 +132,14 @@ impl<B: Bmc> ExploredComputerSystem<B> {
             }
 
             if let Some(oem_bf) = &self.oem_nvidia_bluefield {
-                // TODO: Apparently this is a bug that it has
-                // additional quotes inside String but it is not
-                // obvious what will be broken if it will be fixed.
-                base_mac = oem_bf.base_mac().map(|v| format!("\"{}\"", v.inner()));
+                base_mac = oem_bf.base_mac().and_then(|v| {
+                    v.inner()
+                        .parse()
+                        .inspect_err(|err| {
+                            tracing::warn!("Failed to parse BaseMAC: {err} (mac: {v})");
+                        })
+                        .ok()
+                });
                 nic_mode = Self::dpu_mode(&self.system, self.bios.as_ref(), oem_bf);
             }
         }

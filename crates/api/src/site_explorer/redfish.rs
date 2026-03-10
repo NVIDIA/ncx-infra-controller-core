@@ -697,7 +697,13 @@ async fn fetch_system(client: &dyn Redfish) -> Result<ComputerSystem, EndpointEx
         }
 
         base_mac = match client.get_base_mac_address().await {
-            Ok(base_mac) => base_mac,
+            Ok(base_mac) => base_mac.and_then(|v| {
+                v.parse()
+                    .inspect_err(|err| {
+                        tracing::warn!("Failed to parse BaseMAC: {err} (mac: {v})");
+                    })
+                    .ok()
+            }),
             Err(error) => {
                 tracing::info!(
                     "Could not use new method to retreive base mac address for DPU (serial number {:#?}): {error}",

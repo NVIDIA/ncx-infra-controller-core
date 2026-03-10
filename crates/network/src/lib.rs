@@ -21,6 +21,7 @@ use mac_address::{MacAddress, MacParseError};
 use serde::Deserialize;
 use serde::de::Deserializer;
 
+pub mod base_mac;
 pub mod ip;
 
 /// virtualization is a module specific to shared code around
@@ -28,6 +29,9 @@ pub mod ip;
 /// different components, where components currently means
 /// Carbide API and the [DPU] agent.
 pub mod virtualization;
+
+#[doc(inline)]
+pub use base_mac::BaseMac;
 
 const STRIPPED_MAC_LENGTH: usize = 12;
 
