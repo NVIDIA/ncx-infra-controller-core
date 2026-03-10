@@ -38,6 +38,13 @@ port = 443
 mac = "aa:bb:cc:dd:ee:ff"
 username = "admin"
 password = "secret"
+
+[[endpoint_sources.static_bmc_endpoints]]
+ip = "10.0.1.1"
+port = 443
+mac = "11:22:33:44:55:66"
+username = "admin"
+password = "secret"
 switch_serial = "SN-SWITCH-001"
 
 # ==============================================================================

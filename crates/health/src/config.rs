@@ -965,9 +965,14 @@ switch_serial = "SN-SW-001"
             .extract()
             .expect("could not parse config toml file");
 
-        assert_eq!(config.endpoint_sources.static_bmc_endpoints.len(), 1);
-        assert_eq!(
+        assert_eq!(config.endpoint_sources.static_bmc_endpoints.len(), 2);
+        assert!(
             config.endpoint_sources.static_bmc_endpoints[0]
+                .switch_serial
+                .is_none()
+        );
+        assert_eq!(
+            config.endpoint_sources.static_bmc_endpoints[1]
                 .switch_serial
                 .as_deref(),
             Some("SN-SWITCH-001")
