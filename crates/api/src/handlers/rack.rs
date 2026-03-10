@@ -37,12 +37,12 @@ pub async fn get_rack(
             .map_err(|e| Status::invalid_argument(format!("Invalid rack ID: {}", e)))?;
         let r = db_rack::get(&api.database_connection, rack_id)
             .await
-            .map_err(|e| Status::internal(format!("Getting rack {}", e)))?;
+            .map_err(CarbideError::from)?;
         vec![r.into()]
     } else {
         db_rack::list(&api.database_connection)
             .await
-            .map_err(|e| Status::internal(format!("Listing racks {}", e)))?
+            .map_err(CarbideError::from)?
             .into_iter()
             .map(|x| x.into())
             .collect()

@@ -64,9 +64,13 @@ pub async fn get(txn: impl DbReader<'_>, rack_id: RackId) -> DatabaseResult<Rack
     let query = "SELECT * from racks l WHERE l.id=$1".to_string();
     sqlx::query_as(&query)
         .bind(rack_id)
-        .fetch_one(txn)
+        .fetch_optional(txn)
         .await
-        .map_err(|e| DatabaseError::new("racks get", e))
+        .map_err(|e| DatabaseError::new("racks get", e))?
+        .ok_or_else(|| DatabaseError::NotFoundError {
+            kind: "rack",
+            id: rack_id.to_string(),
+        })
 }
 
 pub async fn create(
