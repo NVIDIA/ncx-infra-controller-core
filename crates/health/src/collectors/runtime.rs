@@ -16,15 +16,19 @@
  */
 
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::stream::BoxStream;
+use futures::StreamExt;
 use http::header::InvalidHeaderValue;
 use http::{HeaderMap, header};
 use nv_redfish::bmc_http::reqwest::Client as ReqwestClient;
 use nv_redfish::bmc_http::{CacheSettings, HttpBmc};
 use nv_redfish::core::Bmc;
 use prometheus::{Counter, Gauge, Histogram, HistogramOpts, Opts};
+use rand::Rng;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -34,6 +38,7 @@ use crate::discovery::BmcClient;
 use crate::endpoint::BmcEndpoint;
 use crate::limiter::RateLimiter;
 use crate::metrics::{CollectorRegistry, operation_duration_buckets_seconds};
+use crate::sink::{CollectorEvent, DataSink, EventContext};
 
 /// Result of a collector iteration
 #[derive(Debug, Clone)]
@@ -61,6 +66,131 @@ pub trait PeriodicCollector<B: Bmc>: Send + 'static {
 
     /// Returns the type identifier for this collector
     fn collector_type(&self) -> &'static str;
+}
+
+pub type EventStream<'a> = BoxStream<'a, Result<CollectorEvent, HealthError>>;
+
+type ConnectFuture<'a> = Pin<Box<dyn std::future::Future<Output = Result<EventStream<'a>, HealthError>> + Send + 'a>>;
+
+pub trait StreamingCollector: Send + 'static {
+    type Config: Send + 'static;
+
+    fn new(
+        endpoint: Arc<BmcEndpoint>,
+        config: Self::Config,
+    ) -> Result<Self, HealthError>
+    where
+        Self: Sized;
+
+    /// open or reopen a connection, returning a stream of collector events.
+    fn connect(&mut self) -> ConnectFuture<'_>;
+
+    fn collector_type(&self) -> &'static str;
+}
+
+pub struct BackoffConfig {
+    pub initial: Duration,
+    pub max: Duration,
+}
+
+impl Default for BackoffConfig {
+    fn default() -> Self {
+        Self {
+            initial: Duration::from_secs(1),
+            max: Duration::from_secs(30),
+        }
+    }
+}
+
+pub struct ExponentialBackoff {
+    initial: Duration,
+    max: Duration,
+    current: Duration,
+}
+
+impl ExponentialBackoff {
+    pub fn new(config: &BackoffConfig) -> Self {
+        Self {
+            initial: config.initial,
+            max: config.max,
+            current: config.initial,
+        }
+    }
+
+    pub fn next_delay(&mut self) -> Duration {
+        let base = self.current;
+        self.current = (self.current * 2).min(self.max);
+        let jitter_ms = rand::rng().random_range(0..base.as_millis().max(1) as u64);
+        base + Duration::from_millis(jitter_ms)
+    }
+
+    pub fn reset(&mut self) {
+        self.current = self.initial;
+    }
+}
+
+// SSE EventSource readyState values for the connection_state gauge
+// ref: https://html.spec.whatwg.org/multipage/server-sent-events.html#dom-eventsource-readystate
+const STREAM_STATE_CONNECTING: f64 = 0.0;
+const STREAM_STATE_OPEN: f64 = 1.0;
+const STREAM_STATE_CLOSED: f64 = 2.0;
+
+pub struct StreamMetrics {
+    connection_state: Gauge,
+    reconnections_total: Counter,
+    items_processed_total: Counter,
+    stream_errors_total: Counter,
+}
+
+impl StreamMetrics {
+    fn new(
+        registry: &prometheus::Registry,
+        prefix: &str,
+        const_labels: HashMap<String, String>,
+    ) -> Result<Self, HealthError> {
+        let connection_state = Gauge::with_opts(
+            Opts::new(
+                format!("{prefix}_stream_connection_state"),
+                "Stream connection state per SSE readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED",
+            )
+            .const_labels(const_labels.clone()),
+        )?;
+        registry.register(Box::new(connection_state.clone()))?;
+
+        let reconnections_total = Counter::with_opts(
+            Opts::new(
+                format!("{prefix}_stream_reconnections_total"),
+                "Total reconnection attempts",
+            )
+            .const_labels(const_labels.clone()),
+        )?;
+        registry.register(Box::new(reconnections_total.clone()))?;
+
+        let items_processed_total = Counter::with_opts(
+            Opts::new(
+                format!("{prefix}_stream_items_processed_total"),
+                "Total stream items processed",
+            )
+            .const_labels(const_labels.clone()),
+        )?;
+        registry.register(Box::new(items_processed_total.clone()))?;
+
+        let stream_errors_total = Counter::with_opts(
+            Opts::new(
+                format!("{prefix}_stream_errors_total"),
+                "Total stream errors",
+            )
+            .const_labels(const_labels),
+        )?;
+        registry.register(Box::new(stream_errors_total.clone()))?;
+
+        Ok(Self {
+            connection_state,
+            reconnections_total,
+            items_processed_total,
+            stream_errors_total,
+        })
+    }
 }
 
 pub struct Collector {
@@ -202,6 +332,142 @@ impl Collector {
                     } => {
                         // Iteration completed
                     }
+                }
+            }
+        });
+
+        Ok(Self {
+            handle,
+            cancel_token,
+        })
+    }
+
+    pub fn start_streaming<S: StreamingCollector>(
+        endpoint: Arc<BmcEndpoint>,
+        config: S::Config,
+        data_sink: Arc<dyn DataSink>,
+        backoff_config: BackoffConfig,
+        collector_registry: Arc<CollectorRegistry>,
+    ) -> Result<Self, HealthError> {
+        let cancel_token = CancellationToken::new();
+        let cancel_clone = cancel_token.clone();
+
+        let mut collector = S::new(endpoint.clone(), config)?;
+        let event_context = EventContext::from_endpoint(&endpoint, collector.collector_type());
+
+        let endpoint_key = endpoint.addr.hash_key().to_string();
+        let const_labels = HashMap::from([
+            (
+                "collector_type".to_string(),
+                collector.collector_type().to_string(),
+            ),
+            ("endpoint_key".to_string(), endpoint_key),
+        ]);
+
+        let registry = collector_registry.registry();
+        let metrics = StreamMetrics::new(registry, collector_registry.prefix(), const_labels)?;
+
+        let handle = tokio::spawn(async move {
+            let collector_type = collector.collector_type();
+            let _collector_registry = collector_registry;
+            let mut backoff = ExponentialBackoff::new(&backoff_config);
+
+            loop {
+                metrics.connection_state.set(STREAM_STATE_CONNECTING);
+                tracing::info!(
+                    collector_type,
+                    endpoint = ?endpoint.addr,
+                    "streaming collector connecting"
+                );
+
+                let stream = tokio::select! {
+                    _ = cancel_clone.cancelled() => {
+                        metrics.connection_state.set(STREAM_STATE_CLOSED);
+                        return;
+                    }
+                    result = collector.connect() => result,
+                };
+
+                let mut stream = match stream {
+                    Ok(s) => {
+                        metrics.connection_state.set(STREAM_STATE_OPEN);
+                        backoff.reset();
+                        tracing::info!(
+                            collector_type,
+                            endpoint = ?endpoint.addr,
+                            "streaming collector connected"
+                        );
+                        s
+                    }
+                    Err(e) => {
+                        metrics.reconnections_total.inc();
+                        tracing::error!(
+                            error = ?e,
+                            collector_type,
+                            endpoint = ?endpoint.addr,
+                            "streaming collector connection failed"
+                        );
+                        let delay = backoff.next_delay();
+                        tokio::select! {
+                            _ = cancel_clone.cancelled() => {
+                                metrics.connection_state.set(STREAM_STATE_CLOSED);
+                                return;
+                            }
+                            _ = tokio::time::sleep(delay) => continue,
+                        }
+                    }
+                };
+
+                loop {
+                    let item = tokio::select! {
+                        _ = cancel_clone.cancelled() => {
+                            metrics.connection_state.set(STREAM_STATE_CLOSED);
+                            tracing::info!(
+                                collector_type,
+                                endpoint = ?endpoint.addr,
+                                "streaming collector shutting down"
+                            );
+                            return;
+                        }
+                        item = stream.next() => item,
+                    };
+
+                    match item {
+                        Some(Ok(event)) => {
+                            metrics.items_processed_total.inc();
+                            data_sink.handle_event(&event_context, &event);
+                        }
+                        Some(Err(e)) => {
+                            metrics.stream_errors_total.inc();
+                            metrics.reconnections_total.inc();
+                            tracing::error!(
+                                error = ?e,
+                                collector_type,
+                                endpoint = ?endpoint.addr,
+                                "streaming collector stream error, reconnecting"
+                            );
+                            break;
+                        }
+                        None => {
+                            tracing::info!(
+                                collector_type,
+                                endpoint = ?endpoint.addr,
+                                "streaming collector stream ended, reconnecting"
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                // stream ended or errored -- transition to CONNECTING and retry
+                metrics.connection_state.set(STREAM_STATE_CONNECTING);
+                let delay = backoff.next_delay();
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => {
+                        metrics.connection_state.set(STREAM_STATE_CLOSED);
+                        return;
+                    }
+                    _ = tokio::time::sleep(delay) => {}
                 }
             }
         });
