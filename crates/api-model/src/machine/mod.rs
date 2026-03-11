@@ -366,24 +366,24 @@ impl ManagedHostStateSnapshot {
             }
 
             for (source, over) in snapshot.health_report_overrides.merges.iter() {
-                has_hardware_health = has_hardware_health
-                    || Self::merge_override_report_with_hw_health(
-                        &mut output,
-                        source,
-                        over,
-                        host_health_config.hardware_health_reports,
-                    );
-            }
-        }
-
-        for (source, over) in self.host_snapshot.health_report_overrides.merges.iter() {
-            has_hardware_health = has_hardware_health
-                || Self::merge_override_report_with_hw_health(
+                let merged_hardware = Self::merge_override_report_with_hw_health(
                     &mut output,
                     source,
                     over,
                     host_health_config.hardware_health_reports,
                 );
+                has_hardware_health |= merged_hardware;
+            }
+        }
+
+        for (source, over) in self.host_snapshot.health_report_overrides.merges.iter() {
+            let merged_hardware = Self::merge_override_report_with_hw_health(
+                &mut output,
+                source,
+                over,
+                host_health_config.hardware_health_reports,
+            );
+            has_hardware_health |= merged_hardware;
         }
 
         if host_health_config.hardware_health_reports == HardwareHealthReportsConfig::Enabled
