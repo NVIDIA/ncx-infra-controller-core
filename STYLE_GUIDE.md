@@ -13,7 +13,119 @@ warrant writing them down, but otherwise this document not aim to be a "how to w
 - Abstractions should justify their existence: Do not add abstractions "just in case". Wait until there is a real
   requirement for them.
 
-## Coding standards
+## Reviewability
+
+PR descriptions should be written as if the audience has no context for the change: Explain why it's happening.
+Don't assume people are already aware of your feature roadmap.
+
+Prefer to not land unused code if nobody's using it yet, unless not doing so would make for too large of a change to
+review. For example, a PR that lands protobuf changes but without any code using it yet, makes for a lot of
+guesswork during review: If we can't see how the code will be used, we are just guessing at what the best API
+contract will be. Landing both changes together means we can look at it all holistically.
+
+## Lints and Warnings
+
+We enable all clippy lints by default, and treat all warnings as errors. If a warning or clippy lint is firing for
+your code, strongly consider fixing it. Avoid using `#[allow(...)]` unless you have a strong reason to do so. New
+code should generally not have to `#[allow]` any lints or warnings.
+
+### A note on dead code
+
+Dead code detection is important to catch mistakes and to avoid unused code building up and hurting
+maintainability. Strongly avoid using `#[allow(dead_code)]`.
+
+An exception is when a part of the codebase is not finished: If a new feature is too large to land all in one PR,
+and is being written in phases, code may be merged with nothing calling it yet, and `#[allow(dead_code)]` is
+necessary for it to be merged early.
+
+Other common places where we've seen `#[allow(dead_code)]` that are not necessary:
+
+- If a field or function is only used in tests: Use `#[cfg(test)]` to include it only in test builds.
+- If a field is written to but never read, but needs to be held so its `Drop` impl does not run: Name it with an
+  underscore to hint that it's not supposed to be read
+- If a field is only used if certain crate features are enabled, prefer `#[cfg(feature = "feature")]` to only
+  include it when that feature is being used.
+- If a field isn't currently yet, but you want to leave it around as documentation on what fields could exist (like an
+  unused database column, or unused JSON field), comment it out.
+- Otherwise, strongly consider deleting the code.
+
+## Metrics
+
+When designing metrics, be careful with cardinality. Do not attach highly unique labels that explode time-series
+count, like per-machine or per-instance attributes.
+
+## Logging
+
+When writing log messages, prefer placing common fields as attributes passed to tracing function, instead of using
+string interpolation. For example:
+
+```rust
+fn avoid(machine_id: MachineId) {
+    if let Err(e) = process_machine(machine_id) {
+        tracing::error!("process_machine failed for {machine_id}: {e}");
+    }
+}
+fn prefer(machine_id: MachineId) {
+    if let Err(e) = process_machine(machine_id) {
+        tracing::error!(%machine_id, error=%e, "process_machine failed");
+    }
+}
+
+```
+
+This helps in log parsing, especially when we want to find logs corresponding to a given machine_id. `error` and
+`machine_id` are probably the two most important examples, but try to express other relevant data as fields instead of
+using interpolation if it makes sense.
+
+## Create Features
+
+Avoid using crate features unless there is a good reason. Our CI runners only build with the default features you get
+from `cargo build --release`, meaning that if certain code breaks under certain combinations of crate features, it
+might not get caught by CI. If we wanted to support numerous crate features, we would need CI runners to produce
+checks for each meaningful combination of feature flags we support, which scales exponentially to the feature count.
+
+Cases where features *are* warranted:
+
+- For shared crates when only a subset of dependents need certain code: For example, the `carbide_uuid` is used by
+  several dependents, but only the `carbide_api` crate needs the sqlx conversions. We don't want e.g.
+  `carbide_admin_cli` to take a dependency on `sqlx`, so the sqlx conversions are behind a `sqlx` crate feature. But
+  this is covered by CI tests, since CI builds both the admin-cli and the api crate, both sets of features are
+  exercised.
+
+- For supporting non-linux builds: The `carbide_api` crate needs to use types from the `tss-esapi` crate to support
+  validating secure-boot keys, but `tss-esapi` only builds on Linux. To support developers running `carbide_api` on
+  their Mac for testing, the parts which require `tss-esapi` are carefully carved out into a `linux-build` feature
+  (which is enabled by default). We do not run CI tests with this feature disabled, so supporting a build without
+  `linux-build` enabled is best-effort.
+
+## Async code
+
+Due to the "virality" of async code, prefer synchronous versions of abstractions if both are available. For instance,
+prefer a `std::sync::Mutex` to a `tokio::sync::Mutex` if either will work for you, so that you don't need to make
+your interface `async` just so you can use the tokio Mutex. That way callers can call you without needing to be
+async themselves. Async work should generally be traceable to some I/O or timer that needs to be used, otherwise
+code should typically be synchronous.
+
+## Database transactions
+
+Transactions should be used to group write operations together such that they can be rolled back on failure. But do
+not hold a transaction open while doing long-running work. Doing so can exhaust the connection pool if the thing
+you're awaiting is blocked or slow. We have a custom lint, `txn_held_across_await` which will catch cases where you're
+`await`ing a future while holding a transaction, which mitigates this. If it happens, your
+code needs to be fixed, do not `#[allow(txn_held_across_await)]`.
+
+## Database wrappers
+
+- Type definitions: The code in `crates/api-db` is intended to wrap database calls, whereas `crates/api-model` should
+  contain the actual model definitions. In the api-db crate, prefer bare functions that take a model as an argument, to
+  OO-style methods on db-specific types. This allows the model types to live a separate model crate, eliminating the
+  temptation for an OO-style database type to become a quasi-model unto itself.
+
+- Read vs Write: Prefer accepting a `impl DbReader` as a connection if your database function is read-only. This allows
+  callers to pass a `PgPool` and avoid needing boilerplate to begin a transaction and commit it just to call a
+  read-only function.
+
+## General Rust Coding Standards
 
 ### Mutability
 
@@ -323,114 +435,3 @@ fn prefer(user: Option<&User>) -> Cow<'_, User> {
 }
 ```
 
-### Database transactions
-
-Transactions should be used to group write operations together such that they can be rolled back on failure. But do
-not hold a transaction open while doing long-running work. Doing so can exhaust the connection pool if the thing
-you're awaiting is blocked or slow. We have a custom lint, `txn_held_across_await` which will catch cases where you're
-`await`ing a future while holding a transaction, which mitigates this. If it happens, your
-code needs to be fixed, do not `#[allow(txn_held_across_await)]`.
-
-### Async code
-
-Due to the "virality" of async code, prefer synchronous versions of abstractions if both are available. For instance,
-prefer a `std::sync::Mutex` to a `tokio::sync::Mutex` if either will work for you, so that you don't need to make
-your interface `async` just so you can use the tokio Mutex. That way callers can call you without needing to be
-async themselves. Async work should generally be traceable to some I/O or timer that needs to be used, otherwise
-code should typically be synchronous.
-
-### Database wrappers
-
-- Type definitions: The code in `crates/api-db` is intended to wrap database calls, whereas `crates/api-model` should
-  contain the actual model definitions. In the api-db crate, prefer bare functions that take a model as an argument, to
-  OO-style methods on db-specific types. This allows the model types to live a separate model crate, eliminating the
-  temptation for an OO-style database type to become a quasi-model unto itself.
-
-- Read vs Write: Prefer accepting a `impl DbReader` as a connection if your database function is read-only. This allows
-  callers to pass a `PgPool` and avoid needing boilerplate to begin a transaction and commit it just to call a
-  read-only function.
-
-### Metrics
-
-When designing metrics, be careful with cardinality. Do not attach highly unique labels that explode time-series
-count, like per-machine or per-instance attributes.
-
-### Logging
-
-When writing log messages, prefer placing common fields as attributes passed to tracing function, instead of using
-string interpolation. For example:
-
-```rust
-fn avoid(machine_id: MachineId) {
-    if let Err(e) = process_machine(machine_id) {
-        tracing::error!("process_machine failed for {machine_id}: {e}");
-    }
-}
-fn prefer(machine_id: MachineId) {
-    if let Err(e) = process_machine(machine_id) {
-        tracing::error!(%machine_id, error=%e, "process_machine failed");
-    }
-}
-
-```
-
-This helps in log parsing, especially when we want to find logs corresponding to a given machine_id. `error` and
-`machine_id` are probably the two most important examples, but try to express other relevant data as fields instead of
-using interpolation if it makes sense.
-
-### Reviewability
-
-PR descriptions should be written as if the audience has no context for the change: Explain why it's happening.
-Don't assume people are already aware of your feature roadmap.
-
-Prefer to not land unused code if nobody's using it yet, unless not doing so would make for too large of a change to
-review. For example, a PR that lands protobuf changes but without any code using it yet, makes for a lot of
-guesswork during review: If we can't see how the code will be used, we are just guessing at what the best API
-contract will be. Landing both changes together means we can look at it all holistically.
-
-### Lints and Warnings
-
-We enable all clippy lints by default, and treat all warnings as errors. If a warning or clippy lint is firing for
-your code, strongly consider fixing it. Avoid using `#[allow(...)]` unless you have a strong reason to do so. New
-code should generally not have to `#[allow]` any lints or warnings.
-
-#### A note on dead code
-
-Dead code detection is important to catch mistakes and to avoid unused code building up and hurting
-maintainability. Strongly avoid using `#[allow(dead_code)]`.
-
-An exception is when a part of the codebase is not finished: If a new feature is too large to land all in one PR,
-and is being written in phases, code may be merged with nothing calling it yet, and `#[allow(dead_code)]` is
-necessary for it to be merged early.
-
-Other common places where we've seen `#[allow(dead_code)]` that are not necessary:
-
-- If a field or function is only used in tests: Use `#[cfg(test)]` to include it only in test builds.
-- If a field is written to but never read, but needs to be held so its `Drop` impl does not run: Name it with an
-  underscore to hint that it's not supposed to be read
-- If a field is only used if certain crate features are enabled, prefer `#[cfg(feature = "feature")]` to only
-  include it when that feature is being used.
-- If a field isn't currently yet, but you want to leave it around as documentation on what fields could exist (like an
-  unused database column, or unused JSON field), comment it out.
-- Otherwise, strongly consider deleting the code.
-
-### Create Features
-
-Avoid using crate features unless there is a good reason. Our CI runners only build with the default features you get
-from `cargo build --release`, meaning that if certain code breaks under certain combinations of crate features, it
-might not get caught by CI. If we wanted to support numerous crate features, we would need CI runners to produce
-checks for each meaningful combination of feature flags we support, which scales exponentially to the feature count.
-
-Cases where features *are* warranted:
-
-- For shared crates when only a subset of dependents need certain code: For example, the `carbide_uuid` is used by
-  several dependents, but only the `carbide_api` crate needs the sqlx conversions. We don't want e.g.
-  `carbide_admin_cli` to take a dependency on `sqlx`, so the sqlx conversions are behind a `sqlx` crate feature. But
-  this is covered by CI tests, since CI builds both the admin-cli and the api crate, both sets of features are
-  exercised.
-
-- For supporting non-linux builds: The `carbide_api` crate needs to use types from the `tss-esapi` crate to support
-  validating secure-boot keys, but `tss-esapi` only builds on Linux. To support developers running `carbide_api` on
-  their Mac for testing, the parts which require `tss-esapi` are carefully carved out into a `linux-build` feature
-  (which is enabled by default). We do not run CI tests with this feature disabled, so supporting a build without
-  `linux-build` enabled is best-effort.
