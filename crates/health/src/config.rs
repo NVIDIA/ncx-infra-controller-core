@@ -667,7 +667,10 @@ mod tests {
 
         if let Configurable::Enabled(ref logs) = config.collectors.logs {
             assert_eq!(logs.mode, LogCollectionMode::Sse);
-            assert!(logs.periodic.is_none(), "SSE mode should not have periodic config");
+            assert!(
+                logs.periodic.is_none(),
+                "SSE mode should not have periodic config"
+            );
             assert!(logs.validate().is_ok());
         } else {
             panic!("logs empty")

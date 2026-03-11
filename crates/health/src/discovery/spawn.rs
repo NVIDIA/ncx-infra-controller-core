@@ -83,15 +83,16 @@ pub(super) async fn spawn_collectors_for_endpoint(
 
     if let Configurable::Enabled(logs_cfg) = &ctx.logs_config
         && !ctx.collectors.contains(CollectorKind::Logs, &key)
+        && let Some(pcfg) = &logs_cfg.periodic
     {
         let endpoint_id = endpoint.log_identity().into_owned();
-        let state_file_path = logs_state_file_path(&logs_cfg.logs_state_file, &endpoint_id);
+        let state_file_path = logs_state_file_path(&pcfg.logs_state_file, &endpoint_id);
 
         let log_writer = match create_log_file_writer(
-            PathBuf::from(&logs_cfg.logs_output_dir),
+            PathBuf::from(&pcfg.logs_output_dir),
             endpoint_id.clone(),
-            logs_cfg.logs_max_file_size,
-            logs_cfg.logs_max_backups,
+            pcfg.logs_max_file_size,
+            pcfg.logs_max_backups,
         )
         .await
         {
@@ -115,10 +116,10 @@ pub(super) async fn spawn_collectors_for_endpoint(
             match Collector::start::<LogsCollector<BmcClient>>(
                 endpoint_arc.clone(),
                 ctx.limiter.clone(),
-                logs_cfg.logs_collection_interval,
+                pcfg.logs_collection_interval,
                 LogsCollectorConfig {
                     state_file_path,
-                    service_refresh_interval: logs_cfg.state_refresh_interval,
+                    service_refresh_interval: pcfg.state_refresh_interval,
                     log_writer,
                     data_sink: data_sink.clone(),
                 },
@@ -132,7 +133,7 @@ pub(super) async fn spawn_collectors_for_endpoint(
                     tracing::info!(
                         endpoint_key = %key,
                         total_collectors = ctx.collectors.len(CollectorKind::Logs),
-                        "Started logs collection for BMC endpoint"
+                        "Started periodic logs collection for BMC endpoint"
                     );
                 }
                 Err(error) => {

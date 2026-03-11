@@ -20,8 +20,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures::stream::BoxStream;
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use http::header::InvalidHeaderValue;
 use http::{HeaderMap, header};
 use nv_redfish::bmc_http::reqwest::Client as ReqwestClient;
@@ -70,19 +70,25 @@ pub trait PeriodicCollector<B: Bmc>: Send + 'static {
 
 pub type EventStream<'a> = BoxStream<'a, Result<CollectorEvent, HealthError>>;
 
-type ConnectFuture<'a> = Pin<Box<dyn std::future::Future<Output = Result<EventStream<'a>, HealthError>> + Send + 'a>>;
+type ConnectFuture<'a> =
+    Pin<Box<dyn std::future::Future<Output = Result<EventStream<'a>, HealthError>> + Send + 'a>>;
 
-pub trait StreamingCollector: Send + 'static {
+/// trait for collectors that maintain a long-lived stream (SSE, gRPC, etc.)
+/// the runtime creates the BMC client and injects it. the collector opens the stream
+/// and maps protocol-specific payloads to CollectorEvent(s)
+pub trait StreamingCollector<B: Bmc>: Send + 'static {
     type Config: Send + 'static;
 
-    fn new(
+    fn new_runner(
+        bmc: Arc<B>,
         endpoint: Arc<BmcEndpoint>,
         config: Self::Config,
     ) -> Result<Self, HealthError>
     where
         Self: Sized;
 
-    /// open or reopen a connection, returning a stream of collector events.
+    /// open or reopen the connection using the injected BMC.
+    /// called on init and after disconnect
     fn connect(&mut self) -> ConnectFuture<'_>;
 
     fn collector_type(&self) -> &'static str;
@@ -342,17 +348,48 @@ impl Collector {
         })
     }
 
-    pub fn start_streaming<S: StreamingCollector>(
+    pub fn start_streaming<S: StreamingCollector<BmcClient>>(
         endpoint: Arc<BmcEndpoint>,
         config: S::Config,
         data_sink: Arc<dyn DataSink>,
         backoff_config: BackoffConfig,
         collector_registry: Arc<CollectorRegistry>,
+        client: ReqwestClient,
+        health_options: &AppConfig,
     ) -> Result<Self, HealthError> {
         let cancel_token = CancellationToken::new();
         let cancel_clone = cancel_token.clone();
 
-        let mut collector = S::new(endpoint.clone(), config)?;
+        let bmc_url = match &health_options.bmc_proxy_url {
+            Some(url) => url.clone(),
+            None => endpoint
+                .addr
+                .to_url()
+                .map_err(|e| HealthError::GenericError(e.to_string()))?,
+        };
+
+        let headers = if health_options.bmc_proxy_url.is_some() {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::FORWARDED,
+                format!("host={}", endpoint.addr.ip)
+                    .parse()
+                    .map_err(|e: InvalidHeaderValue| HealthError::GenericError(e.to_string()))?,
+            );
+            headers
+        } else {
+            HeaderMap::new()
+        };
+
+        let bmc = Arc::new(HttpBmc::with_custom_headers(
+            client,
+            bmc_url,
+            endpoint.credentials.clone().into(),
+            CacheSettings::with_capacity(health_options.cache_size),
+            headers,
+        ));
+
+        let mut collector = S::new_runner(bmc, endpoint.clone(), config)?;
         let event_context = EventContext::from_endpoint(&endpoint, collector.collector_type());
 
         let endpoint_key = endpoint.addr.hash_key().to_string();
