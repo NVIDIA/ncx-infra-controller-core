@@ -1135,9 +1135,6 @@ impl From<Machine> for rpc::forge::Machine {
             health_overrides: machine
                 .health_report_overrides
                 .into_iter()
-                .filter(|(hr, _)| {
-                    !HealthReportOverrides::is_hardware_health_override_source(&hr.source)
-                })
                 .map(|(hr, m)| HealthOverrideOrigin {
                     mode: m as i32,
                     source: hr.source,
