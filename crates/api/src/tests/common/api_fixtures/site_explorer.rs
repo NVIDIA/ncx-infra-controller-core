@@ -30,6 +30,7 @@ use futures_util::FutureExt;
 use health_report::HealthReport;
 use mac_address::MacAddress;
 use model::hardware_info::HardwareInfo;
+use model::machine::health_override::HARDWARE_HEALTH_OVERRIDE_PREFIX;
 use model::machine::{
     BomValidating, BomValidatingContext, DpfState, DpuInitState, FailureCause, FailureDetails,
     FailureSource, LockdownInfo, LockdownMode, LockdownState, MachineState, MachineValidatingState,
@@ -42,7 +43,7 @@ use model::site_explorer::EndpointExplorationReport;
 use model::switch::switch_id::from_hardware_info as switch_from_hardware_info;
 use model::switch::{NewSwitch, SwitchConfig};
 use rpc::forge::forge_server::Forge;
-use rpc::forge::{self, HardwareHealthReport};
+use rpc::forge::{self, HealthReportOverride, InsertHealthReportOverrideRequest};
 use rpc::forge_agent_control_response::Action;
 use rpc::machine_discovery::AttestKeyInfo;
 use rpc::{DiscoveryData, DiscoveryInfo};
@@ -705,9 +706,15 @@ impl<'a> MockExploredHost<'a> {
 
         self.test_env
             .api
-            .record_hardware_health_report(Request::new(HardwareHealthReport {
+            .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
+                r#override: Some(HealthReportOverride {
+                    report: Some(
+                        HealthReport::empty(format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health"))
+                            .into(),
+                    ),
+                    ..Default::default()
+                }),
                 machine_id: Some(host_machine_id),
-                report: Some(HealthReport::empty("hardware-health".to_string()).into()),
             }))
             .await
             .expect("Failed to add hardware health report to newly created machine");
@@ -922,9 +929,15 @@ impl<'a> MockExploredHost<'a> {
 
         self.test_env
             .api
-            .record_hardware_health_report(Request::new(HardwareHealthReport {
+            .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
+                r#override: Some(HealthReportOverride {
+                    report: Some(
+                        HealthReport::empty(format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health"))
+                            .into(),
+                    ),
+                    ..Default::default()
+                }),
                 machine_id: Some(host_machine_id),
-                report: Some(HealthReport::empty("hardware-health".to_string()).into()),
             }))
             .await
             .expect("Failed to add hardware health report to newly created machine");

@@ -1083,6 +1083,7 @@ pub fn get_config() -> CarbideConfig {
             dpu_up_threshold: Duration::weeks(52),
             controller: StateControllerConfig::default(),
             scout_reporting_timeout: Duration::weeks(52),
+            uefi_boot_wait: Duration::seconds(0),
         },
         network_segment_state_controller: NetworkSegmentStateControllerConfig {
             network_segment_drain_time: Duration::seconds(2),
@@ -1431,6 +1432,7 @@ pub async fn create_test_env_with_overrides(
         power_down_wait: Duration::seconds(0),
         failure_retry_time: Duration::seconds(0),
         scout_reporting_timeout: config.machine_state_controller.scout_reporting_timeout,
+        uefi_boot_wait: Duration::seconds(0),
     };
 
     let rms_sim = Arc::new(RmsSim::default());
@@ -2171,14 +2173,18 @@ pub async fn simulate_hardware_health_report(
     host_machine_id: &MachineId,
     health_report: health_report::HealthReport,
 ) {
-    use rpc::forge::HardwareHealthReport;
     use rpc::forge::forge_server::Forge;
+    use rpc::forge::{HealthReportOverride, InsertHealthReportOverrideRequest};
     use tonic::Request;
+
     let _ = env
         .api
-        .record_hardware_health_report(Request::new(HardwareHealthReport {
+        .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
             machine_id: Some(*host_machine_id),
-            report: Some(health_report.into()),
+            r#override: Some(HealthReportOverride {
+                report: Some(health_report.into()),
+                ..Default::default()
+            }),
         }))
         .await
         .unwrap();
