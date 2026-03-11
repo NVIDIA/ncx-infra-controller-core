@@ -860,11 +860,11 @@ impl NvlPartitionMonitor {
         HashMap<MachineId, Option<MachineNvLinkInfo>>,
         Vec<db::nvl_partition::NvlPartition>,
     )> {
-        // Only run validation once per hour.
+        // Only run once every 15 minutes.
         {
             let last_validation = self.last_nvlink_info_validation.lock().unwrap();
             if let Some(last_time) = *last_validation
-                && last_time.elapsed() < std::time::Duration::from_secs(3600)
+                && last_time.elapsed() < std::time::Duration::from_secs(900)
             {
                 return Ok((machine_nvlink_info, db_nvl_partitions));
             }
