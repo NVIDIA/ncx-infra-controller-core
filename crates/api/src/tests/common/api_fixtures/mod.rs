@@ -2187,7 +2187,6 @@ pub async fn simulate_hardware_health_report(
                 report: Some(hw_report.into()),
                 ..Default::default()
             }),
-            ..Default::default()
         }))
         .await
         .unwrap();
