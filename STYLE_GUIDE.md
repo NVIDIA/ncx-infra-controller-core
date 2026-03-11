@@ -1,0 +1,415 @@
+# How to write Rust in bare-metal-manager-core
+
+The goal of this document is to help keep our codebase consistent and maintainable by outlining best-practices we've
+learned through experience. It is currently a mix of best practices for _this codebase_ (ie. how we expect code to
+be organized), and best practices for *Rust in general*. The latter is mostly motivated by issues we seen enough to
+warrant writing them down, but otherwise this document not aim to be a "how to write Rust" guide.
+
+## Core Principles
+
+- Prefer simple, explicit code over clever or heavily abstracted code. Optimize for readability and maintainability
+  first.
+- Prefer designs that are hard to misuse. The more the compiler can catch bugs, the better.
+- Abstractions should justify their existence: Do not add abstractions "just in case". Wait until there is a real
+  requirement for them.
+
+## Coding standards
+
+### Mutability
+
+Prefer immutable data when possible. Mutable data can be hard to reason about if it's being reused multiple times,
+and it's not clear when mutations are supposed to "stop". For example:
+
+```rust
+fn example(machines: Vec<Machine>) {
+    let mut index: HashMap<MachineId, &Machine> = HashMap::new();
+    for machine in &machines {
+        index[machine.id] = machine;
+        do_something_else_with(machine);
+    }
+
+    process_machines(&index);
+
+    // Someone comes in later and adds:
+    let another_machine = lookup_machine();
+    index[another_machine.id] = another_machine;
+    // Hmm, do I need to call `process_machines` again? Or will that process the same machines twice?
+    process_machines(&index);
+}
+```
+
+If data is left mutable (like `index` above), it's not clear at a given line of code if the data is "done" being
+built, or still has more writes to go. It's also not clear whether it's safe to use the partially-written `index`. And
+interleaving the construction of `index` with other side-effects (like `do_something_else_with(machine)`) makes it
+unclear what the role of certain code is.
+
+When building a Vec or a HashMap, prefer using iterators to building them from a for-loop:
+
+```rust
+fn example(machines: Vec<Machine>) {
+    // index is immutable
+    let index: HashMap<MachineId, &Machine> = machines.iter().map(|machine| {
+        (machine.id, machine)
+    }).collect();
+
+    for machine in &machines {
+        do_something_else_with(machine); // it's clear this is unrelated to constructing the index
+    }
+
+    // it's clear the index is now fully-built
+    process_machines(&index);
+
+    // This will now fail to compile, making it clear you have to move this to the beginning and use
+    // `machines.iter().chain(Some(another_machine))` to include it in the original index.
+    let another_machine = lookup_machine();
+    index[another_machine.id] = another_machine;
+}
+```
+
+### Initialization
+
+Prefer struct literals for "plain old data", and only add a `new()` function if your type has fields which need to be
+non-public. Prefer a Builder pattern only if your `new()` function is too large or difficult to call.
+
+Reasoning: Struct literals include named fields which aid in readability, versus a `new()` function which does not have
+labels for parameters. Builders can be more readable than a large `new()` function, but sacrifice compile-time
+checks if any of the fields are required.
+
+Compare:
+
+```rust
+fn example() {
+    let u = User {
+        id: "john",
+        full_name: "John Smith",
+    };
+}
+```
+
+to:
+
+```rust
+fn example() {
+    let u = User::new("john", "John Smith");
+}
+```
+
+In the former it is clear what each argument is, whereas the latter you have to memorize which positional argument
+corresponds to what field.
+
+For types that are not simple plain-old-data, for example "services" (like a redfish client), or any other case
+where you don't want the caller to initialize certain fields, a `new()` function may be required:
+
+```rust
+struct RedfishClient {
+    // Callers pass this
+    url: Url,
+    // Callers don't pass this
+    inner: HttpClient,
+}
+
+impl RedfishClient {
+    fn new(url: Url) {
+        Self { url, inner: make_http_client(url) }
+    }
+}
+```
+
+If your type has fields that can all be default values in the common case (like a Config object), prefer implementing
+`Default` for the type and let calleres call `T::default()`, instead of a parameterless `new()`.
+
+If, in addition to not wanting callers to initialize certain fields, you also have a large number of fields that can
+to be passed, consider adding a Builder type.
+
+```rust
+struct BigService {
+    name: String,
+    // ... lots of fields
+}
+
+struct BigServiceBuilder {
+    name: Option<String>, // careful!
+    // .. lots of Option<T> fields
+}
+
+impl BigServiceBuilder {
+    fn name(mut self, name: String) -> Self {
+        self.name = Some(name);
+        self
+    }
+
+    fn build(self) -> BigService {
+        BigService {
+            name: self.name.expect("caller didn't provide name"), // oops!
+            // ...
+        }
+    }
+}
+```
+
+But be aware that this can sacrifice compile-time safety if any of the builder fields are required to construct the
+object. You can work around this by requiring callers to pass any required fields in order to construct a builder:
+
+```rust
+impl BigService {
+    fn builder(name: String) -> BigServiceBuilder {
+        BigServiceBuilder {
+            name,
+            // ...
+        }
+    }
+}
+```
+
+But as the number of required fields grows, a builder becomes less and less helpful in the first place. Builders
+are most helpful when all fields are optional or have defaults, and are less helpful if there are a complex mix of
+required and non-required fields. If you have a large struct with lots of required fields and lots of non-required
+fields, consider splitting it into two types, one for the required fields, and a `Config` or `Params` type for the
+non-required (defaultable) ones.
+
+### Type Conversions
+
+Prefer implementing `From` or `TryFrom` for types, rather than writing bespoke `.to_foo()` methods on objects. This
+makes your conversion logic more idiomatic and discoverable (e.g. you can write `src.into()`) than custom methods.
+
+Exception: Avoid implementing `From` for a borrowed reference to your type, e.g. `From<&Type>`. This is more awkward
+for callers to trigger (e.g. `(&foo).into()`) and isn't really what the From/Into are supposed to be used for.
+
+If you need to convert from a string representation, prefer `FromStr` to `From<String>` or `From<&str>`. This lets
+callers call `.parse()`, which can be given a `&str` slice, which can avoid needless clones.
+
+### Fields and getters
+
+Avoid writing getters like `.some_field()` for a type, and prefer just making that field public.
+
+The reason for this is specific to Rust and its ownership model: Public fields allow _partial moves_ of an object to
+take ownership of its fields, whereas getters have to pick an ownership model that might not match what the caller
+needs.
+
+For example, if a type `User` has a field `pub name: String`, callers that own a User have several options for
+reading the name field:
+
+```rust
+fn example(u: User) {
+    foo(&u.name); // borrow `name`
+    bar(u.name.clone()); // clone `name`
+    baz(u.name); // partial move of `name` out of `u`
+}
+```
+
+Whereas if `name()` were a getter, you have to pick an ownership model:
+
+```rust
+impl User {
+    // By borrow: But callers have to clone if they need an owned string
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    // By cloned value: If callers only need to borrow, this clone is wasteful
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    // By transferring ownership: Now callers have to move `self` to get the name, and can no longer access other fields
+    fn name(self) -> String {}
+}
+```
+
+In cases where you don't want a field to be public for other reasons (like not allowing callers to write to it), and
+you must write a getter, consider making two versions, a borrowed getter and an `into_` getter:
+
+```rust
+impl User {
+    // Borrowed version
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    // Owned/destructured version
+    fn into_name(self) -> String {
+        self.name
+    }
+}
+```
+
+or an `into_parts` function, if you want to return multiple fields at once. But again, `pub` fields are
+simplest and can avoid all of this, if you are able to use them.
+
+### Avoid needless clones
+
+Seeing `.clone()` all over is a sign that the ownership model may need some rethinking. Can you borrow the data
+instead? Can you take ownership of the value you're cloning?
+
+Common usages of clone that have easy fixes:
+
+- Borrowing: Sometimes a clone happens because you have a borrow and need an owned value:
+
+```rust
+fn takes_string(s: String) {
+    println!("{s}");
+}
+
+fn example(s: &str) {
+    takes_string(s.clone()); // takes_string requires ownership so we have to clone
+}
+```
+
+But the `takes_string` function doesn't truly need an owned string, it can be changed to take a `&str` as well.
+
+Or conversely, `example` could be changed to take an owned String.
+
+- Iterators: You can use `.into_iter()` instead of `.iter()` to an an owned version of each value, which you can then
+  move without cloning:
+
+```rust
+fn takes_string(s: String) {}
+
+fn avoid(v: Vec<String>) {
+    v.iter().for_each(|i| takes_string(i.clone())); // avoid: needless clone
+}
+
+fn prefer(v: Vec<String>) {
+    v.into_iter().for_each(|i| takes_string(i)); // prefer: moves out of v
+}
+```
+
+- Struct initialization ordering: Sometimes just moving the order of parameters to a struct literal can avoid a clone:
+
+```rust
+struct Outer {
+    inner: Inner,
+    id: uint
+}
+
+struct Inner {
+    name: String,
+    id: uint
+}
+
+fn avoid(inner: I) -> Outer {
+    Outer {
+        inner: inner.clone(), // can't move inner yet, still need inner.id?
+        id: inner.id,
+    }
+}
+
+fn prefer(inner: I) -> Outer {
+    Outer {
+        id: inner.id, // Better: just swap the parameters and we can move inner last
+        inner,
+    }
+}
+```
+
+- Making use of `Cow<T>`: If you might use a borrowed value or might produce your own, consider using `Cow` to avoid
+  the clone in the borrowed case.
+
+```rust
+fn avoid(user: Option<&User>) -> User {
+    if let Some(u) = user {
+        u.clone()
+    } else {
+        User::default()
+    }
+}
+
+fn prefer(user: Option<&User>) -> Cow<'_, User> {
+    if let Some(u) = user {
+        Cow::Borrowed(u)
+    } else {
+        Cow::Owned(User::default())
+    }
+}
+```
+
+### Database transactions
+
+Transactions should be used to group write operations together such that they can be rolled back on failure. But do
+not hold a transaction open while doing long-running work. Doing so can exhaust the connection pool if the thing
+you're awaiting is blocked or slow. We have a custom lint, `txn_held_across_await` which will catch cases where you're
+`await`ing a future while holding a transaction, which mitigates this. If it happens, your
+code needs to be fixed, do not `#[allow(txn_held_across_await)]`.
+
+### Async code
+
+Due to the "virality" of async code, prefer synchronous versions of abstractions if both are available. For instance,
+prefer a `std::sync::Mutex` to a `tokio::sync::Mutex` if either will work for you, so that you don't need to make
+your interface `async` just so you can use the tokio Mutex. That way callers can call you without needing to be
+async themselves. Async work should generally be traceable to some I/O or timer that needs to be used, otherwise
+code should typically be synchronous.
+
+### Database wrappers
+
+- Type definitions: The code in `crates/api-db` is intended to wrap database calls, whereas `crates/api-model` should
+  contain the actual model definitions. In the api-db crate, prefer bare functions that take a model as an argument, to
+  OO-style methods on db-specific types. This allows the model types to live a separate model crate, eliminating the
+  temptation for an OO-style database type to become a quasi-model unto itself.
+
+- Read vs Write: Prefer accepting a `impl DbReader` as a connection if your database function is read-only. This allows
+  callers to pass a `PgPool` and avoid needing boilerplate to begin a transaction and commit it just to call a
+  read-only function.
+
+### Metrics
+
+When designing metrics, be careful with cardinality. Do not attach highly unique labels that explode time-series
+count, like per-machine or per-instance attributes.
+
+### Logging
+
+When writing log messages, prefer placing common fields as attributes passed to tracing function, instead of using
+string interpolation. For example:
+
+```rust
+fn avoid(machine_id: MachineId) {
+    if let Err(e) = process_machine(machine_id) {
+        tracing::error!("process_machine failed for {machine_id}: {e}");
+    }
+}
+fn prefer(machine_id: MachineId) {
+    if let Err(e) = process_machine(machine_id) {
+        tracing::error!(%machine_id, error=%e, "process_machine failed");
+    }
+}
+
+```
+
+This helps in log parsing, especially when we want to find logs corresponding to a given machine_id. `error` and
+`machine_id` are probably the two most important examples, but try to express other relevant data as fields instead of
+using interpolation if it makes sense.
+
+### Reviewability
+
+PR descriptions should be written as if the audience has no context for the change: Explain why it's happening.
+Don't assume people are already aware of your feature roadmap.
+
+Prefer to not land unused code if nobody's using it yet, unless not doing so would make for too large of a change to
+review. For example, a PR that lands protobuf changes but without any code using it yet, makes for a lot of
+guesswork during review: If we can't see how the code will be used, we are just guessing at what the best API
+contract will be. Landing both changes together means we can look at it all holistically.
+
+### Lints and Warnings
+
+We enable all clippy lints by default, and treat all warnings as errors. If a warning or clippy lint is firing for
+your code, strongly consider fixing it. Avoid using `#[allow(...)]` unless you have a strong reason to do so. New
+code should generally not have to `#[allow]` any lints or warnings.
+
+#### A note on dead code
+
+Dead code detection is important to catch mistakes and to avoid unused code building up and hurting
+maintainability. Strongly avoid using `#[allow(dead_code)]`.
+
+An exception is when a part of the codebase is not finished: If a new feature is too large to land all in one PR,
+and is being written in phases, code may be merged with nothing calling it yet, and `#[allow(dead_code)]` is
+necessary for it to be merged early.
+
+Other common places where we've seen `#[allow(dead_code)]` that are not necessary:
+
+- If a field or function is only used in tests: Use `#[cfg(test)]` to include it only in test builds.
+- If a field is written to but never read, but needs to be held so its `Drop` impl does not run: Name it with an
+  underscore to hint that it's not supposed to be read
+- If a field is only used if certain crate features are enabled, prefer `#[cfg(feature = "feature")]` to only
+  include it when that feature is being used.
+- If a field isn't currently yet, but you want to leave it around as documentation on what fields could exist (like an
+  unused database column, or unused JSON field), comment it out.
+- Otherwise, strongly consider deleting the code.
