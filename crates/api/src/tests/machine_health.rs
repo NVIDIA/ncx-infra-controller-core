@@ -128,7 +128,13 @@ async fn test_machine_health_reporting(
     );
 
     let m = find_machine(&env, &host_machine_id).await;
-    assert_eq!(m.health_overrides, vec![]);
+    assert_eq!(
+        m.health_overrides,
+        vec![HealthOverrideOrigin {
+            mode: OverrideMode::Merge as i32,
+            source: format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health")
+        }]
+    );
     let aggregate_health = aggregate(m).unwrap();
     assert_eq!(aggregate_health.source, "aggregate-host-health");
     check_time(&aggregate_health);
@@ -196,7 +202,7 @@ async fn test_hardware_health_reporting(
         health_report::HealthReport::empty("".to_string()),
     );
 
-    let report_name: String = format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}sensor");
+    let report_name: String = format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health");
     let report = hr(
         &report_name,
         vec![("Fan", Some("TestFan"))],
@@ -288,7 +294,7 @@ async fn test_machine_health_aggregation(
         hr(
             "",
             vec![("Fan", Some("TestFan")), ("Success1", None)],
-            vec![("Failure1", None, "HardwareReason\nReason1")],
+            vec![("Failure1", None, "Reason1\nHardwareReason")],
         ),
     );
 
@@ -309,7 +315,7 @@ async fn test_machine_health_aggregation(
     assert_eq!(
         override_metrics,
         vec![
-            "{fresh=\"true\",in_use=\"false\",override_type=\"merge\"} 1".to_string(),
+            "{fresh=\"true\",in_use=\"false\",override_type=\"merge\"} 2".to_string(),
             "{fresh=\"true\",in_use=\"false\",override_type=\"replace\"} 0".to_string(),
             "{fresh=\"true\",in_use=\"true\",override_type=\"merge\"} 0".to_string(),
             "{fresh=\"true\",in_use=\"true\",override_type=\"replace\"} 0".to_string()
@@ -319,17 +325,23 @@ async fn test_machine_health_aggregation(
     let m = find_machine(&env, &host_machine_id).await;
     assert_eq!(
         m.health_overrides,
-        vec![HealthOverrideOrigin {
-            mode: OverrideMode::Merge as i32,
-            source: "add-host-failure".to_string()
-        }]
+        vec![
+            HealthOverrideOrigin {
+                mode: OverrideMode::Merge as i32,
+                source: "add-host-failure".to_string()
+            },
+            HealthOverrideOrigin {
+                mode: OverrideMode::Merge as i32,
+                source: "hardware-health.health".to_string()
+            }
+        ]
     );
     let aggregate_health = aggregate(m).unwrap();
     let merged_hr = hr(
         "",
         vec![("Success1", None)],
         vec![
-            ("Failure1", None, "HardwareReason\nReason1"),
+            ("Failure1", None, "Reason1\nHardwareReason"),
             ("Fan", Some("TestFan"), "Reason"),
         ],
     );
@@ -359,7 +371,7 @@ async fn test_machine_health_aggregation(
     assert_eq!(
         override_metrics,
         vec![
-            "{fresh=\"true\",in_use=\"false\",override_type=\"merge\"} 1".to_string(),
+            "{fresh=\"true\",in_use=\"false\",override_type=\"merge\"} 2".to_string(),
             "{fresh=\"true\",in_use=\"false\",override_type=\"replace\"} 1".to_string(),
             "{fresh=\"true\",in_use=\"true\",override_type=\"merge\"} 0".to_string(),
             "{fresh=\"true\",in_use=\"true\",override_type=\"replace\"} 0".to_string()
@@ -373,6 +385,10 @@ async fn test_machine_health_aggregation(
             HealthOverrideOrigin {
                 mode: OverrideMode::Merge as i32,
                 source: "add-host-failure".to_string()
+            },
+            HealthOverrideOrigin {
+                mode: OverrideMode::Merge as i32,
+                source: "hardware-health.health".to_string()
             },
             HealthOverrideOrigin {
                 mode: OverrideMode::Replace as i32,
@@ -580,10 +596,16 @@ async fn test_double_insert(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error
     let m = find_machine(&env, &host_machine_id).await;
     assert_eq!(
         m.health_overrides,
-        vec![HealthOverrideOrigin {
-            mode: OverrideMode::Merge as i32,
-            source: "over".to_string()
-        }]
+        vec![
+            HealthOverrideOrigin {
+                mode: OverrideMode::Merge as i32,
+                source: "hardware-health.health".to_string()
+            },
+            HealthOverrideOrigin {
+                mode: OverrideMode::Merge as i32,
+                source: "over".to_string()
+            }
+        ]
     );
     let aggregate_health = aggregate(m).unwrap();
 
@@ -913,9 +935,9 @@ async fn test_tenant_reported_issue_health_override_template(
     let machine = find_machine(&env, &host_machine_id).await;
 
     // Check that the override was stored
-    assert_eq!(machine.health_overrides.len(), 1);
-    assert_eq!(machine.health_overrides[0].mode, OverrideMode::Merge as i32);
-    assert_eq!(machine.health_overrides[0].source, "tenant-reported-issue");
+    assert_eq!(machine.health_overrides.len(), 2);
+    assert_eq!(machine.health_overrides[1].mode, OverrideMode::Merge as i32);
+    assert_eq!(machine.health_overrides[1].source, "tenant-reported-issue");
 
     // Verify aggregate health includes the override
     let aggregate_health = aggregate(machine).unwrap();
@@ -988,9 +1010,9 @@ async fn test_request_repair_health_override_template(
     let machine = find_machine(&env, &host_machine_id).await;
 
     // Check that the override was stored
-    assert_eq!(machine.health_overrides.len(), 1);
-    assert_eq!(machine.health_overrides[0].mode, OverrideMode::Merge as i32);
-    assert_eq!(machine.health_overrides[0].source, "repair-request");
+    assert_eq!(machine.health_overrides.len(), 2);
+    assert_eq!(machine.health_overrides[1].mode, OverrideMode::Merge as i32);
+    assert_eq!(machine.health_overrides[1].source, "repair-request");
 
     // Verify aggregate health includes the override
     let aggregate_health = aggregate(machine).unwrap();
@@ -1087,7 +1109,7 @@ async fn test_tenant_reported_issue_and_request_repair_combined(
     let aggregate_health = aggregate(machine.clone()).unwrap();
 
     // Check that both overrides were stored
-    assert_eq!(machine.health_overrides.len(), 2);
+    assert_eq!(machine.health_overrides.len(), 3);
     let sources: Vec<String> = machine
         .health_overrides
         .iter()
