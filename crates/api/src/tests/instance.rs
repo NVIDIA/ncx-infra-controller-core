@@ -4421,7 +4421,7 @@ async fn test_instance_release_backward_compatibility(_: PgPoolOptions, options:
     // When using old API format (no issue, no is_repair_tenant), NO health overrides should be applied
     assert_eq!(
         host_machine.health_report_overrides.merges.len(),
-        0,
+        1, // Single HealthOverride for HardwareHealth
         "Backward compatibility test: NO health overrides should be applied when using old API format"
     );
 
@@ -4827,7 +4827,7 @@ async fn test_instance_release_repair_tenant_successful_completion(
 
     assert_eq!(
         host_machine.health_report_overrides.merges.len(),
-        2,
+        3,
         "Should have both TenantReportedIssue and RequestRepair after regular tenant release"
     );
 

@@ -182,7 +182,8 @@ async fn test_hardware_health_reporting(
     let (host_machine_id, _) = create_managed_host(&env).await.into();
 
     // Hardware health should start empty.
-    assert!(
+    check_reports_equal(
+        &format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health"),
         load_snapshot(&env, &host_machine_id)
             .await?
             .host_snapshot
@@ -190,7 +191,9 @@ async fn test_hardware_health_reporting(
             .merges
             .values()
             .next()
-            .is_none(),
+            .unwrap()
+            .clone(),
+        health_report::HealthReport::empty("".to_string()),
     );
 
     let report_name: String = format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}sensor");
