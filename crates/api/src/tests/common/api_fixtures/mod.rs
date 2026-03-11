@@ -2171,10 +2171,10 @@ pub async fn simulate_hardware_health_report(
     host_machine_id: &MachineId,
     health_report: health_report::HealthReport,
 ) {
-    use rpc::forge::{HealthReportOverride, InsertHealthReportOverrideRequest};
-    use rpc::forge::forge_server::Forge;
-    use tonic::Request;
     use model::machine::health_override::HARDWARE_HEALTH_OVERRIDE_PREFIX;
+    use rpc::forge::forge_server::Forge;
+    use rpc::forge::{HealthReportOverride, InsertHealthReportOverrideRequest};
+    use tonic::Request;
 
     let source = format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}.{}", health_report.source);
     let mut hw_report = health_report;

@@ -42,9 +42,7 @@ use model::site_explorer::EndpointExplorationReport;
 use model::switch::switch_id::from_hardware_info as switch_from_hardware_info;
 use model::switch::{NewSwitch, SwitchConfig};
 use rpc::forge::forge_server::Forge;
-use rpc::forge::{
-    self, HealthReportOverride, InsertHealthReportOverrideRequest,
-};
+use rpc::forge::{self, HealthReportOverride, InsertHealthReportOverrideRequest};
 use rpc::forge_agent_control_response::Action;
 use rpc::machine_discovery::AttestKeyInfo;
 use rpc::{DiscoveryData, DiscoveryInfo};

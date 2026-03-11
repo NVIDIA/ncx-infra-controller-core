@@ -234,11 +234,9 @@ impl ManagedHostStateSnapshot {
             match hardware_health_config {
                 HardwareHealthReportsConfig::Disabled => {}
                 HardwareHealthReportsConfig::MonitorOnly => {
-                    let mut report = report.clone();
-                    for alert in &mut report.alerts {
-                        alert.classifications.clear();
-                    }
-                    output.merge(&report);
+                    output.merge_with_alert_transform(report, |alert| {
+                        alert.to_mut().classifications.clear();
+                    });
                 }
                 HardwareHealthReportsConfig::Enabled => output.merge(report),
             }
