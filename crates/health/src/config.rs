@@ -303,9 +303,34 @@ impl Default for FirmwareCollectorConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// SSE is the preferred mode for real-time log streaming.
+/// Periodic polling is retained as a fallback for BMCs that lack SSE support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogCollectionMode {
+    Sse,
+    Periodic,
+}
+
+impl Default for LogCollectionMode {
+    fn default() -> Self {
+        Self::Sse
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LogsCollectorConfig {
+    /// Collection mode: "sse" (default, preferred) or "periodic" (fallback).
+    pub mode: LogCollectionMode,
+
+    /// Configuration for periodic log polling
+    pub periodic: Option<PeriodicLogConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeriodicLogConfig {
     /// Interval between log collection.
     #[serde(with = "humantime_serde")]
     pub logs_collection_interval: Duration,
@@ -327,7 +352,7 @@ pub struct LogsCollectorConfig {
     pub logs_max_backups: usize,
 }
 
-impl Default for LogsCollectorConfig {
+impl Default for PeriodicLogConfig {
     fn default() -> Self {
         Self {
             logs_collection_interval: Duration::from_secs(300),
@@ -336,6 +361,20 @@ impl Default for LogsCollectorConfig {
             logs_output_dir: "/tmp/logs".to_string(),
             logs_max_file_size: 104857600,
             logs_max_backups: 5,
+        }
+    }
+}
+
+impl LogsCollectorConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        match self.mode {
+            LogCollectionMode::Periodic if self.periodic.is_none() => {
+                Err("[collectors.logs.periodic] is required when mode = \"periodic\"".to_string())
+            }
+            LogCollectionMode::Sse if self.periodic.is_some() => {
+                Err("[collectors.logs.periodic] should not be set when mode = \"sse\"".to_string())
+            }
+            _ => Ok(()),
         }
     }
 }
@@ -627,7 +666,9 @@ mod tests {
         }
 
         if let Configurable::Enabled(ref logs) = config.collectors.logs {
-            assert_eq!(logs.state_refresh_interval, Duration::from_secs(1800));
+            assert_eq!(logs.mode, LogCollectionMode::Sse);
+            assert!(logs.periodic.is_none(), "SSE mode should not have periodic config");
+            assert!(logs.validate().is_ok());
         } else {
             panic!("logs empty")
         }
@@ -977,5 +1018,65 @@ switch_serial = "SN-SW-001"
                 .as_deref(),
             Some("SN-SWITCH-001")
         );
+    }
+
+    #[test]
+    fn test_log_config_sse_mode_rejects_periodic_config() {
+        let toml = r#"
+            mode = "sse"
+            [periodic]
+            logs_collection_interval = "5m"
+        "#;
+        let config: LogsCollectorConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("should parse");
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_log_config_periodic_mode_requires_periodic_config() {
+        let toml = r#"
+            mode = "periodic"
+        "#;
+        let config: LogsCollectorConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("should parse");
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_log_config_periodic_mode_with_periodic_config_valid() {
+        let toml = r#"
+            mode = "periodic"
+            [periodic]
+            logs_collection_interval = "5m"
+        "#;
+        let config: LogsCollectorConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("should parse");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_log_config_sse_mode_without_periodic_config_valid() {
+        let toml = r#"
+            mode = "sse"
+        "#;
+        let config: LogsCollectorConfig = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("should parse");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_log_config_default_is_sse() {
+        let config = LogsCollectorConfig::default();
+        assert_eq!(config.mode, LogCollectionMode::Sse);
+        assert!(config.periodic.is_none());
+        assert!(config.validate().is_ok());
     }
 }
