@@ -3894,11 +3894,6 @@ message DpuExtensionServiceComponent {
   string status = 4;
 }
 
-message HardwareHealthReport {
-  common.MachineId machine_id = 1;
-  health.HealthReport report = 2;
-}
-
 message OptionalHealthReport {
   optional health.HealthReport report = 1;
 }
