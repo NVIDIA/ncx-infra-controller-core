@@ -51,5 +51,8 @@ thiserror = { workspace = true }
 
 carbide-rpc = { path = "../rpc" }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 [lints]
 workspace = true

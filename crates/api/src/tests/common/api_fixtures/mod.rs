@@ -1193,11 +1193,10 @@ async fn create_pool(current_pool: sqlx::PgPool) -> sqlx::PgPool {
         .get_database()
         .expect("No database is set initially.");
 
-    let db_url = format!("{db_url}/{db}");
-
     use sqlx::ConnectOptions;
     let connect_options = PgConnectOptions::from_str(&db_url)
         .unwrap()
+        .database(db)
         .log_statements("INFO".parse().unwrap());
 
     sqlx::postgres::PgPoolOptions::new()

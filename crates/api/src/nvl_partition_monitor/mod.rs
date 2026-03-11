@@ -21,6 +21,7 @@ use std::time::Duration;
 use carbide_uuid::machine::MachineId;
 use carbide_uuid::nvlink::{NvLinkDomainId, NvLinkLogicalPartitionId, NvLinkPartitionId};
 use chrono::Utc;
+use config_version::Versioned;
 use db::machine::find_machine_ids;
 use db::managed_host::load_by_machine_ids;
 use db::nvl_logical_partition::{IdColumn as LpIdColumn, LogicalPartition};
@@ -29,6 +30,8 @@ use db::work_lock_manager::WorkLockManagerHandle;
 use db::{self, ObjectColumnFilter, machine};
 use metrics::{AppliedChange, NmxmPartitionOperationStatus, NvlPartitionMonitorMetrics};
 use model::hardware_info::{MachineNvLinkInfo, NvLinkGpu};
+use model::instance::status::SyncState;
+use model::instance::status::nvlink::InstanceNvLinkStatus;
 use model::machine::machine_search_config::MachineSearchConfig;
 use model::machine::nvlink::{MachineNvLinkGpuStatusObservation, MachineNvLinkStatusObservation};
 use model::machine::{HostHealthConfig, LoadSnapshotOptions, ManagedHostStateSnapshot};
@@ -554,10 +557,13 @@ impl PartitionProcessingContext {
                         .chain(std::iter::once(ctx.gpu_nmx_m_id.clone()))
                         .collect();
                 }
-                _ => {
+                libnmxm::nmxm_model::PartitionMembers::InnerStructs(_) => {
                     return Err(CarbideError::internal(
-                        "Expected IDs partition members".to_string(),
+                        "Partition members are location-based, expected GPU-ID-based".to_string(),
                     ));
+                }
+                libnmxm::nmxm_model::PartitionMembers::Empty(_) => {
+                    gpu_ids = vec![ctx.gpu_nmx_m_id.clone()];
                 }
             }
         } else {
@@ -1171,12 +1177,28 @@ impl NvlPartitionMonitor {
                                     .cloned()
                                 {
                                     // Add to existing partition in the same domain
-                                    partition_ctx.handle_gpu_addition_existing_partition(
-                                        &gpu_ctx, &partition,
-                                    )?;
+                                    if let Err(e) = partition_ctx
+                                        .handle_gpu_addition_existing_partition(
+                                            &gpu_ctx, &partition,
+                                        )
+                                    {
+                                        tracing::error!(
+                                            gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                            machine_id = %instance.machine_id,
+                                            "Failed to handle GPU addition to existing partition: {e}"
+                                        );
+                                    }
                                 } else {
                                     // Create new partition in a different domain
-                                    partition_ctx.handle_gpu_addition_new_partition(&gpu_ctx)?;
+                                    if let Err(e) =
+                                        partition_ctx.handle_gpu_addition_new_partition(&gpu_ctx)
+                                    {
+                                        tracing::error!(
+                                            gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                            machine_id = %instance.machine_id,
+                                            "Failed to handle GPU addition to new partition: {e}"
+                                        );
+                                    }
                                 }
                             }
                             GpuAction::RemoveFromPartition => {
@@ -1192,7 +1214,15 @@ impl NvlPartitionMonitor {
                                     continue;
                                 };
 
-                                partition_ctx.handle_gpu_removal(&gpu_ctx, gpus_to_keep)?;
+                                if let Err(e) =
+                                    partition_ctx.handle_gpu_removal(&gpu_ctx, gpus_to_keep)
+                                {
+                                    tracing::error!(
+                                        gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                        machine_id = %instance.machine_id,
+                                        "Failed to handle GPU removal from partition: {e}"
+                                    );
+                                }
                             }
                             GpuAction::RemoveFromUnknownPartition => {
                                 if let Some(gpus_to_keep) = partition_ctx
@@ -1203,13 +1233,23 @@ impl NvlPartitionMonitor {
                                         device_instance,
                                     )
                                 {
-                                    partition_ctx.handle_gpu_removal_from_unknown_partition(
-                                        &gpu_ctx.partition_nmx_m_id,
-                                        &gpu_ctx.gpu_nmx_m_id,
-                                        gpus_to_keep,
-                                    )?;
+                                    if let Err(e) = partition_ctx
+                                        .handle_gpu_removal_from_unknown_partition(
+                                            &gpu_ctx.partition_nmx_m_id,
+                                            &gpu_ctx.gpu_nmx_m_id,
+                                            gpus_to_keep,
+                                        )
+                                    {
+                                        tracing::error!(
+                                            gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                            machine_id = %instance.machine_id,
+                                            "Failed to handle GPU removal from unknown partition: {e}"
+                                        );
+                                    }
                                 } else {
                                     tracing::error!(
+                                        gpu_nmx_m_id = %gpu_ctx.gpu_nmx_m_id,
+                                        machine_id = %instance.machine_id,
                                         "No default partition found with nmx_m_id = {}",
                                         gpu_ctx.gpu_nmx_m_id
                                     );
@@ -1232,6 +1272,8 @@ impl NvlPartitionMonitor {
             machine_gpu_statuses.insert(instance.machine_id, observation);
         }
 
+        self.record_nvlink_config_pending_durations(&mh_snapshots, &machine_gpu_statuses, metrics);
+
         metrics.num_machine_nvl_status_updates = machine_gpu_statuses.len();
 
         // Add all default partition removals to the normal list so they get executed.
@@ -1249,6 +1291,36 @@ impl NvlPartitionMonitor {
             }
         }
         Ok(machine_gpu_statuses)
+    }
+
+    /// Records time from nvlink_config_version for instances currently in Pending (time spent in Pending).
+    fn record_nvlink_config_pending_durations(
+        &self,
+        mh_snapshots: &HashMap<MachineId, ManagedHostStateSnapshot>,
+        machine_gpu_statuses: &HashMap<MachineId, MachineNvLinkStatusObservation>,
+        metrics: &mut NvlPartitionMonitorMetrics,
+    ) {
+        for (machine_id, observation) in machine_gpu_statuses {
+            let Some(mh) = mh_snapshots.get(machine_id) else {
+                continue;
+            };
+            let Some(instance) = &mh.instance else {
+                continue;
+            };
+            if instance.config.nvlink.gpu_configs.is_empty() {
+                continue;
+            }
+            let nvlink_status = InstanceNvLinkStatus::from_config_and_observation(
+                Versioned::new(&instance.config.nvlink, instance.nvlink_config_version),
+                Some(observation),
+            );
+            if nvlink_status.configs_synced == SyncState::Pending {
+                let duration_ms = (Utc::now() - instance.nvlink_config_version.timestamp())
+                    .num_milliseconds()
+                    .max(0) as f64;
+                metrics.nvlink_config_apply_durations_ms.push(duration_ms);
+            }
+        }
     }
 
     pub fn check_machine_and_handle_gpu_removals(

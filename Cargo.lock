@@ -2122,6 +2122,7 @@ dependencies = [
  "ipnetwork",
  "mac_address",
  "serde",
+ "serde_json",
  "sqlx",
  "thiserror 2.0.17",
 ]
