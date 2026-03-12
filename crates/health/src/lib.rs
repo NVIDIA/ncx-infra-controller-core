@@ -77,7 +77,7 @@ pub enum HealthError {
     #[error("HTTP(S) error: {0}")]
     HttpError(String),
 
-    #[error("SSE not available: {0}")]
+    #[error("Redfish SSE not available: {0}")]
     SseNotAvailable(String),
 }
 
