@@ -19,64 +19,69 @@ use core::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use carbide_host_support::agent_config::AgentConfig;
 use carbide_uuid::machine::{MachineId, MachineInterfaceId};
 use forge_dpu_agent_utils::utils::create_forge_client;
-use rpc::forge::InterfaceList;
+use rpc::forge::MachineInterface;
 use rpc::forge_tls_client::{ForgeClientConfig, ForgeClientT};
 
 use crate::periodic_config_fetcher::PeriodicConfigFetcher;
 
-async fn get_interface_list(
+async fn get_interface(
     client: &mut ForgeClientT,
-    interface: MachineInterfaceId,
-) -> Result<InterfaceList, eyre::Error> {
+    interface_id: MachineInterfaceId,
+) -> Result<MachineInterface, eyre::Error> {
     let request = tonic::Request::new(rpc::forge::InterfaceSearchQuery {
-        id: Some(interface),
+        id: Some(interface_id),
         ip: None,
     });
 
-    match client.find_interfaces(request).await {
+    let mut interface_list = match client.find_interfaces(request).await {
         Ok(response) => Ok(response.into_inner()),
         Err(err) => {
             Err(eyre::eyre!(
-                "Error while executing the FindInterfaces gRPC call: {}",
-                err.to_string()
+                "FindInterfaces gRPC request failed: interface_id={}, error={:?}",
+                interface_id,
+                err,
             ))
         }
-    }
-}
+    }?;
 
-fn take_single<T>(mut items: Vec<T>) -> Result<T, eyre::Error> {
-    let len = items.len();
+    let len = interface_list.interfaces.len();
     if len != 1 {
-        return Err(eyre::eyre!("expected exactly 1 element, found {len}"));
+        return Err(eyre::eyre!("expected exactly 1 interface, found {len}"));
     }
-    Ok(items.remove(0))
+    Ok(interface_list.interfaces.remove(0))
 }
 
 pub async fn get_host_machine_id(
+    agent_config: &AgentConfig,
     fetcher: &PeriodicConfigFetcher,
     forge_client_config: Arc<ForgeClientConfig>,
     forge_api: &str,
 ) -> Result<Option<MachineId>, eyre::Error> {
-    if let Some(interface_id) = fetcher.get_host_machine_interface_id() {
+    // Try to get interface id from the agent config, otherwise try the periodic config fetcher.
+    let interface_id_option = match agent_config.machine.interface_id {
+        Some(id) => Some(id.to_string()),
+        None => fetcher.get_host_machine_interface_id(),
+    };
+
+    if let Some(interface_id) = interface_id_option {
         let mut client = create_forge_client(forge_api, &forge_client_config).await?;
-        let interface_list = get_interface_list(&mut client, MachineInterfaceId::from_str(&interface_id)?)
-            .await
-            .map_err(|e| {
-                tracing::error!("get_interface({}) failed: {:?}", interface_id, e);
-                e
-            })?;
-        let interface = take_single(interface_list.interfaces)?;
-        if let Some(id) = interface.machine_id {
-            return Ok(Some(id));
-        }
+
+        let interface = get_interface(
+            &mut client,
+            MachineInterfaceId::from_str(&interface_id)?,
+        ).await?;
+
+        return Ok(interface.machine_id);
     }
 
     Ok(None)
 }
 
 pub async fn get_host_machine_id_retry(
+    agent_config: &AgentConfig,
     fetcher: &PeriodicConfigFetcher,
     forge_client_config: Arc<ForgeClientConfig>,
     forge_api: &str,
@@ -89,6 +94,7 @@ pub async fn get_host_machine_id_retry(
 
     (|| async {
         get_host_machine_id(
+            agent_config,
             fetcher,
             forge_client_config.clone(),
             forge_api,

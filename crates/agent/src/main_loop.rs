@@ -191,6 +191,7 @@ pub async fn setup_and_run(
     .await;
 
     let host_machine_id = match get_host_machine_id_retry(
+        &agent_config,
         &periodic_config_fetcher,
         Arc::clone(&forge_client_config),
         &forge_api_server,

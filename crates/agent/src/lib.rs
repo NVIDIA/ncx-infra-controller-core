@@ -242,6 +242,7 @@ pub async fn start(cmdline: command_line::Options) -> eyre::Result<()> {
             .await;
 
             let host_machine_id = match get_host_machine_id_retry(
+                &agent,
                 &periodic_config_fetcher,
                 Arc::clone(&forge_client_config),
                 &forge_api_server,
