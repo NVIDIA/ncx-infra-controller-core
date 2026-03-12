@@ -85,11 +85,7 @@ fn event_to_logs<B: Bmc>(event: &Event, bmc: &B) -> Vec<Result<CollectorEvent, H
         .map(|record| {
             let body = record.message.as_deref().unwrap_or("").to_string();
 
-            let severity = record
-                .severity
-                .as_deref()
-                .unwrap_or("Unknown")
-                .to_string();
+            let severity = record.severity.as_deref().unwrap_or("Unknown").to_string();
 
             let mut attributes = vec![
                 (Cow::Borrowed("message_id"), record.message_id.clone()),

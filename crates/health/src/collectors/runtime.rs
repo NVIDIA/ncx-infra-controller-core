@@ -136,8 +136,15 @@ impl ExponentialBackoff {
     }
 }
 
-pub type SseStream =
-    Pin<Box<dyn futures::TryStream<Ok = EventStreamPayload, Error = HealthError, Item = Result<EventStreamPayload, HealthError>> + Send>>;
+pub type SseStream = Pin<
+    Box<
+        dyn futures::TryStream<
+                Ok = EventStreamPayload,
+                Error = HealthError,
+                Item = Result<EventStreamPayload, HealthError>,
+            > + Send,
+    >,
+>;
 
 /// Open a Redfish SSE event stream from a BMC.
 pub async fn open_sse_stream<B: Bmc + 'static>(bmc: Arc<B>) -> Result<SseStream, HealthError> {

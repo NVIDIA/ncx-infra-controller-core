@@ -115,8 +115,7 @@ pub(super) async fn spawn_collectors_for_endpoint(
                     return Ok(());
                 };
                 let endpoint_id = endpoint.log_identity().into_owned();
-                let state_file_path =
-                    logs_state_file_path(&pcfg.logs_state_file, &endpoint_id);
+                let state_file_path = logs_state_file_path(&pcfg.logs_state_file, &endpoint_id);
 
                 let log_writer = match create_log_file_writer(
                     PathBuf::from(&pcfg.logs_output_dir),
