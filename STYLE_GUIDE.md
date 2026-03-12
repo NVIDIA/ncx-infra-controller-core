@@ -111,8 +111,35 @@ using interpolation if it makes sense.
 
 - Implementations of all gRPC functions exposed by the core service should reside in subdirectories of `api/src/handlers`.
 - API handlers should inject the deserialized request arguments into the API logs by calling `log_request_data` to assist debugging. If the request contains sensitive data (e.g. credentials), the data however needs to be filtered before logging.
-- Inside API handlers, the `CarbideError` data type should be used to construct errors. It should then be converted into `tonic::Status` using `.into()`. All errors being derived from `CarbideError` assures that the errors will look uniform to tenants.
-- The `CarbideError` variant that is used should be selected based on whether the error gets returned due to the user passing invalid arguments or due to the system not being able to handle the request correctly. Error variants that should be used if the user passing invalid arguments can be `InvalidArgument`, `InvalidConfiguration`, `NotFoundError` or `ConcurrentModificationError` - these will map to "4xx-like" gRPC error codes. An example of a system-side error would be `CarbideError::Internal`.
+
+### Core API handler Errors
+Inside API handlers, the `CarbideError` data type should be used to construct errors. It should then be converted into `tonic::Status` using `.into()`. All errors being derived from `CarbideError` assures that the errors will look uniform to tenants.
+
+The `CarbideError` variant that is used should be selected based on whether the error gets returned due to the user passing invalid arguments or due to the system not being able to handle the request correctly. Error variants that should be used if the user passing invalid arguments can be `InvalidArgument`, `InvalidConfiguration`, `NotFoundError` or `ConcurrentModificationError` - these will map to "4xx-like" gRPC error codes. An example of a system-side error would be `CarbideError::Internal`.
+
+```rust
+// Avoid — constructing Status directly, bypassing `CarbideError` error mapping
+pub async fn create_resource(
+    api: &Api,
+    request: Request<rpc::Resource>,
+) -> Result<Response<()>, Status> {
+    let resource = request.into_inner();
+    let id = resource
+        .id
+        .ok_or_else(|| Status::invalid_argument("id is required"))?;
+}
+
+// Prefer — uses `CarbideError::InvalidArgument`
+pub async fn create_resource(
+    api: &Api,
+    request: Request<rpc::Resource>,
+) -> Result<Response<()>, Status> {
+    let resource = request.into_inner();
+    let id = resource
+        .id
+        .ok_or(CarbideError::InvalidArgument("id is required".into()))?;
+}
+```
 
 ## Crate Features
 
@@ -492,6 +519,7 @@ fn avoid() {
     // never get run
     let _dontcare = fails();
 }
+
 
 fn prefer() {
     // if somebody makes `fails()` async later, you get a compiler error
