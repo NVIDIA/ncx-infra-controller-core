@@ -141,26 +141,26 @@ pub type SseStream =
 
 /// Open a Redfish SSE event stream from a BMC.
 pub async fn open_sse_stream<B: Bmc + 'static>(bmc: Arc<B>) -> Result<SseStream, HealthError> {
-    let root = ServiceRoot::new(bmc).await.map_err(|e| {
-        HealthError::GenericError(format!("failed to get ServiceRoot: {e}"))
-    })?;
+    let root = ServiceRoot::new(bmc)
+        .await
+        .map_err(|e| HealthError::BmcError(Box::new(e)))?;
 
     let event_service = root
         .event_service()
         .await
-        .map_err(|e| HealthError::GenericError(format!("failed to get EventService: {e}")))?
+        .map_err(|e| HealthError::BmcError(Box::new(e)))?
         .ok_or_else(|| {
-            HealthError::GenericError("BMC does not expose an EventService".to_string())
+            HealthError::SseNotAvailable("BMC does not expose an EventService".to_string())
         })?;
 
     let stream = event_service
         .events()
         .await
-        .map_err(|e| HealthError::GenericError(format!("failed to open SSE stream: {e}")))?;
+        .map_err(|e| HealthError::BmcError(Box::new(e)))?;
 
-    Ok(Box::pin(stream.map_err(|e| {
-        HealthError::GenericError(format!("SSE stream error: {e}"))
-    })))
+    Ok(Box::pin(
+        stream.map_err(|e| HealthError::BmcError(Box::new(e))),
+    ))
 }
 
 // SSE EventSource readyState values for the connection_state gauge
