@@ -474,7 +474,7 @@ impl<B: Bmc + 'static> LogsCollector<B> {
                     Ok(Some(v)) => {
                         tracing::info!(
                             %service_id,
-                            endpont=?self.endpoint.addr,
+                            endpoint=?self.endpoint.addr,
                             "Last seen id is empty, fetching all entries");
                         v
                     }

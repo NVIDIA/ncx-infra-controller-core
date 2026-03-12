@@ -545,6 +545,10 @@ impl Config {
             );
         }
 
+        if let Configurable::Enabled(logs) = &self.collectors.logs {
+            logs.validate()?;
+        }
+
         self.metrics_addr()?;
 
         Ok(())
@@ -802,6 +806,29 @@ cache_size = 50
             minimum_alerts_per_report: 0,
         });
         assert!(config.validate().is_err());
+
+        config.processors.leak_detection = Configurable::Enabled(LeakDetectionProcessorConfig::default());
+
+        config.collectors.logs = Configurable::Enabled(LogsCollectorConfig {
+            mode: LogCollectionMode::Periodic,
+            periodic: None,
+        });
+        assert!(config.validate().is_err());
+
+        config.collectors.logs = Configurable::Enabled(LogsCollectorConfig {
+            mode: LogCollectionMode::Sse,
+            periodic: Some(PeriodicLogConfig::default()),
+        });
+        assert!(config.validate().is_err());
+
+        config.collectors.logs = Configurable::Enabled(LogsCollectorConfig {
+            mode: LogCollectionMode::Sse,
+            periodic: None,
+        });
+        assert!(config.validate().is_ok());
+
+        config.collectors.logs = Configurable::Disabled;
+        assert!(config.validate().is_ok());
     }
 
     #[test]
