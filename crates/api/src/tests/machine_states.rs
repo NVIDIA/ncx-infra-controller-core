@@ -1592,7 +1592,11 @@ async fn test_scout_heartbeat_timeout_alert_cleared_on_instance_creation_transit
 async fn test_scout_heartbeat_timeout_alert_not_cleared_when_unhealthy_allocation_blocked(
     pool: sqlx::PgPool,
 ) {
-    let env = create_test_env(pool).await;
+    let mut config = get_config();
+    config
+        .host_health
+        .prevent_allocations_on_scout_heartbeat_timeout = true;
+    let env = create_test_env_with_overrides(pool, TestEnvOverrides::with_config(config)).await;
     let mh = create_managed_host(&env).await;
     let host_machine_id = mh.host().id;
     let segment_id = env.create_vpc_and_tenant_segment().await;
