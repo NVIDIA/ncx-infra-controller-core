@@ -153,10 +153,7 @@ async fn process_events<P: MqttPublisher>(
     metrics: MqttHookMetrics,
     cancel_token: CancellationToken,
 ) {
-    loop {
-        let Some(Some(msg)) = cancel_token.run_until_cancelled(receiver.recv()).await else {
-            break;
-        };
+    while let Some(Some(msg)) = cancel_token.run_until_cancelled(receiver.recv()).await {
         match timeout_at(msg.deadline, client.publish(&msg.topic, msg.payload)).await {
             Ok(Ok(())) => {
                 tracing::debug!(topic = %msg.topic, "Published state change to MQTT");

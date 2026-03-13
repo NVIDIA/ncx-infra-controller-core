@@ -297,11 +297,7 @@ pub async fn start(
     let mut initialize_tls_acceptor = true;
 
     join_set.build_task().name("listener accept loop").spawn(async move {
-        loop {
-            let Some(incoming_connection) = cancel_token.run_until_cancelled(listener.accept()).await else {
-                tracing::info!("carbide-api shutting down");
-                return;
-            };
+        while let Some(incoming_connection) = cancel_token.run_until_cancelled(listener.accept()).await {
             connection_total_counter.add(1, &[]);
             let (conn, addr) = match incoming_connection {
                 Ok(incoming) => incoming,
@@ -416,6 +412,8 @@ pub async fn start(
                 // Safety: This should only fail if called outside a tokio runtime
                 .expect("could not spawn task to handle HTTP connection");
         }
+
+        tracing::info!("carbide-api shutting down");
     })?;
 
     Ok(())
