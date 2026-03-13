@@ -20,7 +20,6 @@ use ::db::work_lock_manager::WorkLock;
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, Row};
-use tokio::task::JoinSet;
 
 use crate::state_controller::controller::periodic_enqueuer::PeriodicEnqueuer;
 use crate::state_controller::io::StateControllerIO;
@@ -113,8 +112,16 @@ impl<IO: StateControllerIO> StateController<IO> {
     /// Enqueues state handling tasks for all objects and processes them
     #[cfg(test)]
     pub async fn run_single_iteration_ext(&mut self, allow_requeue: bool) {
-        let enqueuer_result = self.enqueuer.run_single_iteration().await;
+        // Delete stale object metrics - e.g. from predicted hosts
+        // They make assertions on actually still valid metrics more tricky
+        self.processor.object_metrics.clear();
+
+        let _enqueuer_result = self.enqueuer.run_single_iteration().await;
         loop {
+            // Prevent metric emission - we only emit them a single time after the loop
+            // That cuts down the noise in tests
+            self.processor.last_metric_emission_time = std::time::Instant::now();
+
             if let Err(err) = self
                 .processor
                 .run_single_iteration(std::time::Duration::MAX, allow_requeue)
@@ -127,8 +134,7 @@ impl<IO: StateControllerIO> StateController<IO> {
             }
         }
         // Immediately emit the latest set of metrics
-        self.processor
-            .emit_metrics_for_iteration(enqueuer_result.iteration.map(|iteration| iteration.id));
+        self.processor.emit_metrics();
     }
 }
 
@@ -144,40 +150,4 @@ enum IterationError {
     Panic(#[from] tokio::task::JoinError),
     #[error("State handler error: {0}")]
     StateHandlerError(#[from] StateHandlerError),
-}
-
-/// A remote handle for the state controller
-pub struct StateControllerHandle {
-    /// Wait on this to ensure all tasks complete. It will return nothing, but panic if any of the
-    /// tasks panicked.
-    join_set: JoinSet<()>,
-}
-
-impl StateControllerHandle {
-    pub async fn wait(self) {
-        self.join_set.join_all().await;
-    }
-}
-
-#[derive(Default)]
-pub struct StateControllerHandleSet {
-    handles: Vec<StateControllerHandle>,
-}
-
-impl StateControllerHandleSet {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn push(&mut self, handle: StateControllerHandle) {
-        self.handles.push(handle);
-    }
-
-    pub async fn wait_all(self) {
-        let mut join_set = JoinSet::new();
-        for handle in self.handles {
-            join_set.spawn(handle.wait());
-        }
-        join_set.join_all().await;
-    }
 }

@@ -448,27 +448,6 @@ impl Forge for Api {
         crate::handlers::dpu::record_dpu_network_status(self, request).await
     }
 
-    async fn record_hardware_health_report(
-        &self,
-        request: Request<rpc::HardwareHealthReport>,
-    ) -> Result<Response<()>, Status> {
-        crate::handlers::health::record_hardware_health_report(self, request).await
-    }
-
-    async fn get_hardware_health_report(
-        &self,
-        request: Request<MachineId>,
-    ) -> Result<Response<rpc::OptionalHealthReport>, Status> {
-        crate::handlers::health::get_hardware_health_report(self, request).await
-    }
-
-    async fn record_log_parser_health_report(
-        &self,
-        request: Request<rpc::HardwareHealthReport>,
-    ) -> Result<Response<()>, Status> {
-        crate::handlers::health::record_log_parser_health_report(self, request).await
-    }
-
     async fn list_health_report_overrides(
         &self,
         request: Request<MachineId>,
@@ -1425,6 +1404,13 @@ impl Forge for Api {
         crate::handlers::rack_firmware::get_job_status(self, request).await
     }
 
+    async fn get_rack_firmware_history(
+        &self,
+        request: tonic::Request<rpc::RackFirmwareHistoryRequest>,
+    ) -> Result<Response<rpc::RackFirmwareHistoryResponse>, tonic::Status> {
+        crate::handlers::rack_firmware::get_history(self, request).await
+    }
+
     async fn get_expected_power_shelf(
         &self,
         request: Request<rpc::ExpectedPowerShelfRequest>,
@@ -2231,7 +2217,36 @@ impl Forge for Api {
     ) -> Result<Response<rpc::GetNetworkSecurityGroupAttachmentsResponse>, Status> {
         crate::handlers::network_security_group::get_attachments(self, request).await
     }
-
+    async fn create_compute_allocation(
+        &self,
+        request: tonic::Request<rpc::CreateComputeAllocationRequest>,
+    ) -> Result<tonic::Response<rpc::CreateComputeAllocationResponse>, Status> {
+        crate::handlers::compute_allocation::create(self, request).await
+    }
+    async fn find_compute_allocation_ids(
+        &self,
+        request: tonic::Request<rpc::FindComputeAllocationIdsRequest>,
+    ) -> Result<tonic::Response<rpc::FindComputeAllocationIdsResponse>, Status> {
+        crate::handlers::compute_allocation::find_ids(self, request).await
+    }
+    async fn find_compute_allocations_by_ids(
+        &self,
+        request: tonic::Request<rpc::FindComputeAllocationsByIdsRequest>,
+    ) -> Result<tonic::Response<rpc::FindComputeAllocationsByIdsResponse>, Status> {
+        crate::handlers::compute_allocation::find_by_ids(self, request).await
+    }
+    async fn delete_compute_allocation(
+        &self,
+        request: tonic::Request<rpc::DeleteComputeAllocationRequest>,
+    ) -> Result<tonic::Response<rpc::DeleteComputeAllocationResponse>, Status> {
+        crate::handlers::compute_allocation::delete(self, request).await
+    }
+    async fn update_compute_allocation(
+        &self,
+        request: tonic::Request<rpc::UpdateComputeAllocationRequest>,
+    ) -> Result<tonic::Response<rpc::UpdateComputeAllocationResponse>, Status> {
+        crate::handlers::compute_allocation::update(self, request).await
+    }
     async fn get_desired_firmware_versions(
         &self,
         request: Request<rpc::GetDesiredFirmwareVersionsRequest>,

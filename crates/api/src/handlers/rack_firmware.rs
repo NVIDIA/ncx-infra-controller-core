@@ -24,7 +24,8 @@ use forge_secrets::credentials::{CredentialKey, CredentialReader, Credentials};
 use rpc::forge::{
     DeviceUpdateResult, NodeJobInfo, RackFirmware, RackFirmwareApplyRequest,
     RackFirmwareApplyResponse, RackFirmwareCreateRequest, RackFirmwareDeleteRequest,
-    RackFirmwareGetRequest, RackFirmwareJobStatusRequest, RackFirmwareJobStatusResponse,
+    RackFirmwareGetRequest, RackFirmwareHistoryRecords, RackFirmwareHistoryRequest,
+    RackFirmwareHistoryResponse, RackFirmwareJobStatusRequest, RackFirmwareJobStatusResponse,
     RackFirmwareList, RackFirmwareListRequest,
 };
 use serde::{Deserialize, Serialize};
@@ -415,6 +416,35 @@ pub async fn delete(
     txn.commit()
         .await
         .map_err(|e| CarbideError::from(DatabaseError::new("commit delete", e)))?;
+
+    // cleanup of downloaded firmware files
+    let firmware_cache_dir = PathBuf::from("/forge-boot-artifacts/blobs/internal/fw")
+        .join("rack_firmware")
+        .join(&req.id);
+    if let Err(e) = tokio::fs::remove_dir_all(&firmware_cache_dir).await {
+        tracing::warn!(
+            firmware_id = %req.id,
+            "Failed to delete firmware cache directory {}: {}",
+            firmware_cache_dir.display(),
+            e
+        );
+    }
+
+    // cleanup of credentials from Vault
+    let credential_key = CredentialKey::RackFirmware {
+        firmware_id: req.id.clone(),
+    };
+    if let Err(e) = api
+        .credential_manager
+        .delete_credentials(&credential_key)
+        .await
+    {
+        tracing::warn!(
+            firmware_id = %req.id,
+            "Failed to delete credentials from Vault: {}",
+            e
+        );
+    }
 
     Ok(Response::new(()))
 }
@@ -1161,6 +1191,22 @@ pub async fn apply(
         "Firmware apply operation completed"
     );
 
+    // Record apply event in history
+    let rack_id_str = rack_id.to_string();
+    let mut conn = api
+        .database_connection
+        .acquire()
+        .await
+        .map_err(|e| CarbideError::from(DatabaseError::new("acquire for apply history", e)))?;
+    db::rack_firmware::record_apply_history(
+        &mut conn,
+        &req.firmware_id,
+        &rack_id_str,
+        &req.firmware_type,
+    )
+    .await
+    .map_err(CarbideError::from)?;
+
     Ok(Response::new(RackFirmwareApplyResponse {
         total_updates: device_results.len() as i32,
         successful_updates,
@@ -1303,4 +1349,43 @@ pub async fn get_job_status(
         error_message: rms_response.error_message,
         result_json: rms_response.result_json,
     }))
+}
+
+/// Get the history of rack firmware apply operations
+pub async fn get_history(
+    api: &Api,
+    request: Request<RackFirmwareHistoryRequest>,
+) -> Result<Response<RackFirmwareHistoryResponse>, Status> {
+    let req = request.into_inner();
+
+    let firmware_id_filter = if req.firmware_id.is_empty() {
+        None
+    } else {
+        Some(req.firmware_id.as_str())
+    };
+
+    let mut conn = api
+        .database_connection
+        .acquire()
+        .await
+        .map_err(|e| CarbideError::from(DatabaseError::new("acquire for history", e)))?;
+
+    let records =
+        db::rack_firmware::list_apply_history(&mut conn, firmware_id_filter, &req.rack_ids)
+            .await
+            .map_err(CarbideError::from)?;
+
+    // Group results by rack_id
+    let mut histories: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+    for record in records {
+        let rack_id = record.rack_id.clone();
+        histories.entry(rack_id).or_default().push(record.into());
+    }
+
+    let histories = histories
+        .into_iter()
+        .map(|(rack_id, records)| (rack_id, RackFirmwareHistoryRecords { records }))
+        .collect();
+
+    Ok(Response::new(RackFirmwareHistoryResponse { histories }))
 }

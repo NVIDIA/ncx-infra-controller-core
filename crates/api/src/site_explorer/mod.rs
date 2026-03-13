@@ -18,12 +18,14 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt::Display;
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::panic::Location;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use carbide_network::sanitized_mac;
 use carbide_uuid::machine::MachineType;
 use carbide_uuid::network::NetworkSegmentId;
 use carbide_uuid::power_shelf::{PowerShelfIdSource, PowerShelfType};
@@ -34,7 +36,6 @@ use db::{
     self, DatabaseError, ObjectFilter, Transaction, machine, network_segment as db_network_segment,
     power_shelf as db_power_shelf, switch as db_switch,
 };
-use forge_network::sanitized_mac;
 use futures_util::stream::FuturesUnordered;
 use futures_util::{StreamExt, TryFutureExt};
 use itertools::Itertools;
@@ -55,7 +56,8 @@ use model::site_explorer::{
 };
 use model::switch::{NewSwitch, SwitchConfig};
 use sqlx::PgPool;
-use tokio::sync::oneshot;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use version_compare::Cmp;
 
@@ -179,19 +181,22 @@ impl SiteExplorer {
     }
 
     /// Start the SiteExplorer and return a [sending channel](tokio::sync::oneshot::Sender) that will stop the SiteExplorer when dropped.
-    pub fn start(mut self) -> eyre::Result<oneshot::Sender<i32>> {
-        let (stop_sender, stop_receiver) = oneshot::channel();
-
+    pub fn start(
+        mut self,
+        join_set: &mut JoinSet<()>,
+        cancel_token: CancellationToken,
+    ) -> io::Result<()> {
         if self.enabled {
-            tokio::task::Builder::new()
+            join_set
+                .build_task()
                 .name("site_explorer")
-                .spawn(async move { self.run(stop_receiver).await })?;
+                .spawn(async move { self.run(cancel_token).await })?;
         }
 
-        Ok(stop_sender)
+        Ok(())
     }
 
-    async fn run(&mut self, mut stop_receiver: oneshot::Receiver<i32>) {
+    async fn run(&mut self, cancel_token: CancellationToken) {
         let timer = PeriodicTimer::new(self.config.run_interval);
         loop {
             let tick = timer.tick();
@@ -206,7 +211,7 @@ impl SiteExplorer {
 
             tokio::select! {
                 _ = tick.sleep() => {},
-                _ = &mut stop_receiver => {
+                _ = cancel_token.cancelled() => {
                     tracing::info!("SiteExplorer stop was requested");
                     return;
                 }
@@ -2702,27 +2707,11 @@ fn find_host_pf_mac_address(dpu_ep: &ExploredEndpoint) -> Result<MacAddress, Str
     // back to the legacy method via get_sys_image_version.
 
     // Try the explored computer-system base_mac first
-    if let Some(system_mac) = dpu_ep
-        .report
-        .systems
-        .first()
-        .and_then(|s| s.base_mac.clone())
-    {
-        // Once we've got some unsanitized MAC value,
-        // sanitize it (stripping out garbage like spaces, double quotes, etc),
-        // and return a sanitized MA:CA:DD:RE:SS as a MacAddress.
-        match sanitized_mac(&system_mac) {
-            Ok(mac) => return Ok(mac),
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to sanitize ComputerSystem base_mac, falling back to legacy method: {} (source_mac: {})",
-                    e,
-                    system_mac
-                );
-            }
-        }
+    if let Some(system_mac) = dpu_ep.report.systems.first().and_then(|s| s.base_mac) {
+        return Ok(system_mac.to_mac());
     }
 
+    tracing::warn!("ComputerSystem doesn't have base_mac, falling back to legacy method");
     let legacy_mac = get_base_mac_from_sys_image_version(get_sys_image_version(
         dpu_ep.report.service.as_ref(),
     )?)?;

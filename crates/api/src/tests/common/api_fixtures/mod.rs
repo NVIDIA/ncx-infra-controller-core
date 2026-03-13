@@ -23,6 +23,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use carbide_dpf::KubeImpl;
 use carbide_uuid::instance::InstanceId;
@@ -75,6 +76,7 @@ use site_explorer::new_host_with_machine_validation;
 use sqlx::PgPool;
 use sqlx::postgres::PgConnectOptions;
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tonic::Request;
 use tracing_subscriber::EnvFilter;
@@ -82,14 +84,15 @@ use tracing_subscriber::EnvFilter;
 use crate::api::Api;
 use crate::api::metrics::ApiMetricsEmitter;
 use crate::cfg::file::{
-    BomValidationConfig, CarbideConfig, DpaConfig, DpaInterfaceStateControllerConfig,
-    DpuConfig as InitialDpuConfig, FirmwareGlobal, FnnConfig, IBFabricConfig, IbFabricDefinition,
-    IbPartitionStateControllerConfig, ListenMode, MachineStateControllerConfig, MachineUpdater,
-    MachineValidationConfig, MeasuredBootMetricsCollectorConfig, NetworkSecurityGroupConfig,
+    BomValidationConfig, CarbideConfig, ComputeAllocationEnforcement, DpaConfig,
+    DpaInterfaceStateControllerConfig, DpuConfig as InitialDpuConfig, FirmwareGlobal, FnnConfig,
+    IBFabricConfig, IbFabricDefinition, IbPartitionStateControllerConfig, ListenMode,
+    MachineStateControllerConfig, MachineUpdater, MachineValidationConfig,
+    MeasuredBootMetricsCollectorConfig, MqttAuthConfig, NetworkSecurityGroupConfig,
     NetworkSegmentStateControllerConfig, NvLinkConfig, PowerManagerOptions,
-    PowerShelfStateControllerConfig, RackStateControllerConfig, SiteExplorerConfig, SpdmConfig,
-    SpdmStateControllerConfig, StateControllerConfig, SwitchStateControllerConfig, VmaasConfig,
-    VpcPeeringPolicy, default_max_find_by_ids,
+    PowerShelfStateControllerConfig, RackStateControllerConfig, SiteExplorerConfig,
+    SiteExplorerExploreMode, SpdmConfig, SpdmStateControllerConfig, StateControllerConfig,
+    SwitchStateControllerConfig, VmaasConfig, VpcPeeringPolicy, default_max_find_by_ids,
 };
 use crate::ethernet_virtualization::{EthVirtData, SiteFabricPrefixList};
 use crate::ib::{self, IBFabricManagerImpl, IBFabricManagerType};
@@ -97,6 +100,7 @@ use crate::ib_fabric_monitor::IbFabricMonitor;
 use crate::ipmitool::IPMIToolTestImpl;
 use crate::logging::level_filter::ActiveLevel;
 use crate::logging::log_limiter::LogLimiter;
+use crate::nv_redfish::NvRedfishClientPool;
 use crate::nvl_partition_monitor::NvlPartitionMonitor;
 use crate::nvlink::NmxmClientPool;
 use crate::nvlink::test_support::NmxmSimClient;
@@ -261,8 +265,10 @@ pub struct TestEnvOverrides {
     pub dpf_config: Option<DpfConfig>,
     pub fnn_config: Option<FnnConfig>,
     pub nmxm_default_partition: Option<bool>,
+    pub nmxm_unknown_partition: Option<bool>,
     // After n create_requests succeed, they will start failing.
     pub nmxm_fail_after_n_creates: Option<usize>,
+    pub compute_allocation_enforcement: Option<ComputeAllocationEnforcement>,
 }
 
 impl TestEnvOverrides {
@@ -308,6 +314,14 @@ impl TestEnvOverrides {
         self
     }
 
+    pub fn with_compute_allocation_enforcement(
+        mut self,
+        enforcement: ComputeAllocationEnforcement,
+    ) -> Self {
+        self.compute_allocation_enforcement = Some(enforcement);
+        self
+    }
+
     pub fn no_network_segments() -> Self {
         Self {
             create_network_segments: Some(false),
@@ -350,6 +364,8 @@ pub struct TestEnv {
     pub test_credential_manager: Arc<TestCredentialManager>,
     pub rms_sim: Arc<RmsSim>,
     pub drop_guard: DropGuard,
+    // Background tasks are spawned here, hold it so they don't get dropped.
+    pub join_set: JoinSet<()>,
 }
 
 impl TestEnv {
@@ -1007,6 +1023,7 @@ pub fn get_config() -> CarbideConfig {
         alt_metric_prefix: None,
         database_url: "pgsql:://localhost".to_string(),
         max_database_connections: 1000,
+        compute_allocation_enforcement: Default::default(),
         asn: 0,
         datacenter_asn: 0,
         dhcp_servers: vec![],
@@ -1069,6 +1086,7 @@ pub fn get_config() -> CarbideConfig {
             dpu_up_threshold: Duration::weeks(52),
             controller: StateControllerConfig::default(),
             scout_reporting_timeout: Duration::weeks(52),
+            uefi_boot_wait: Duration::seconds(0),
         },
         network_segment_state_controller: NetworkSegmentStateControllerConfig {
             network_segment_drain_time: Duration::seconds(2),
@@ -1132,6 +1150,7 @@ pub fn get_config() -> CarbideConfig {
             hb_interval: Duration::minutes(2),
             subnet_ip: Ipv4Addr::UNSPECIFIED,
             subnet_mask: 0_i32,
+            auth: MqttAuthConfig::default(),
         }),
         power_manager_options: PowerManagerOptions {
             enabled: false,
@@ -1178,11 +1197,10 @@ async fn create_pool(current_pool: sqlx::PgPool) -> sqlx::PgPool {
         .get_database()
         .expect("No database is set initially.");
 
-    let db_url = format!("{db_url}/{db}");
-
     use sqlx::ConnectOptions;
     let connect_options = PgConnectOptions::from_str(&db_url)
         .unwrap()
+        .database(db)
         .log_statements("INFO".parse().unwrap());
 
     sqlx::postgres::PgPoolOptions::new()
@@ -1257,12 +1275,18 @@ pub async fn create_test_env_with_overrides(
     overrides: TestEnvOverrides,
 ) -> TestEnv {
     let db_pool = create_pool(db_pool).await;
+    let cancel_token = CancellationToken::new();
+    let mut join_set = JoinSet::new();
+
     let work_lock_manager_handle = work_lock_manager::start(
+        &mut join_set,
         db_pool.clone(),
         work_lock_manager::KeepaliveConfig::default(),
+        cancel_token.clone(),
     )
     .await
     .expect("work_lock_manager failed to start: no availble connections?");
+
     let test_meter = TestMeter::default();
     let credential_manager = Arc::new(TestCredentialManager::default());
 
@@ -1282,6 +1306,8 @@ pub async fn create_test_env_with_overrides(
             NmxmSimClient::with_fail_after_n_creates(n)
         } else if overrides.nmxm_default_partition == Some(true) {
             NmxmSimClient::with_default_partition()
+        } else if overrides.nmxm_unknown_partition == Some(true) {
+            NmxmSimClient::with_unknown_partition()
         } else {
             NmxmSimClient::default()
         });
@@ -1301,6 +1327,9 @@ pub async fn create_test_env_with_overrides(
     } else {
         Default::default()
     };
+
+    config.compute_allocation_enforcement =
+        overrides.compute_allocation_enforcement.unwrap_or_default();
 
     let config = Arc::new(config);
 
@@ -1396,12 +1425,15 @@ pub async fn create_test_env_with_overrides(
     };
 
     let ipmi_tool = Arc::new(IPMIToolTestImpl {});
-
+    let bmc_proxy = Arc::new(ArcSwap::new(None.into()));
     let bmc_explorer = Arc::new(BmcEndpointExplorer::new(
         redfish_sim.clone(),
+        Arc::new(NvRedfishClientPool::new(bmc_proxy)),
         ipmi_tool.clone(),
         composite_manager.clone(),
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        // Tests use MockEndpointExplorer. So this doesn't affect anything.
+        SiteExplorerExploreMode::NvRedfish,
     ));
 
     let reachability_params = ReachabilityParams {
@@ -1409,6 +1441,7 @@ pub async fn create_test_env_with_overrides(
         power_down_wait: Duration::seconds(0),
         failure_retry_time: Duration::seconds(0),
         scout_reporting_timeout: config.machine_state_controller.scout_reporting_timeout,
+        uefi_boot_wait: Duration::seconds(0),
     };
 
     let rms_sim = Arc::new(RmsSim::default());
@@ -1491,7 +1524,6 @@ pub async fn create_test_env_with_overrides(
     });
 
     let state_controller_id = uuid::Uuid::new_v4().to_string();
-    let cancel_token = CancellationToken::new();
 
     let machine_controller = StateController::<MachineStateControllerIO>::builder()
         .database(db_pool.clone(), work_lock_manager_handle.clone())
@@ -1598,6 +1630,8 @@ pub async fn create_test_env_with_overrides(
             switches_created_per_run: 1,
             rotate_switch_nvos_credentials: Arc::new(false.into()),
             use_onboard_nic: Arc::new(false.into()),
+            // Tests use MockEndpointExplorer. So this doesn't affect anything.
+            explore_mode: SiteExplorerExploreMode::NvRedfish,
         },
         test_meter.meter(),
         Arc::new(fake_endpoint_explorer.clone()),
@@ -1692,6 +1726,7 @@ pub async fn create_test_env_with_overrides(
         test_credential_manager: credential_manager.clone(),
         rms_sim,
         drop_guard: cancel_token.drop_guard(),
+        join_set,
     }
 }
 
@@ -1711,6 +1746,8 @@ pub async fn get_instance_type_fixture_id(env: &TestEnv) -> String {
         .find_instance_types_by_ids(tonic::Request::new(
             rpc::forge::FindInstanceTypesByIdsRequest {
                 instance_type_ids: existing_instance_type_ids,
+                include_allocation_stats: false,
+                tenant_organization_id: None,
             },
         ))
         .await
@@ -2145,14 +2182,18 @@ pub async fn simulate_hardware_health_report(
     host_machine_id: &MachineId,
     health_report: health_report::HealthReport,
 ) {
-    use rpc::forge::HardwareHealthReport;
     use rpc::forge::forge_server::Forge;
+    use rpc::forge::{HealthReportOverride, InsertHealthReportOverrideRequest};
     use tonic::Request;
+
     let _ = env
         .api
-        .record_hardware_health_report(Request::new(HardwareHealthReport {
+        .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
             machine_id: Some(*host_machine_id),
-            report: Some(health_report.into()),
+            r#override: Some(HealthReportOverride {
+                report: Some(health_report.into()),
+                ..Default::default()
+            }),
         }))
         .await
         .unwrap();

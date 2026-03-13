@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .extern_path(".common.VpcId", "::carbide_uuid::vpc::VpcId")
         .extern_path(".common.VpcPeeringId", "::carbide_uuid::vpc_peering::VpcPeeringId")
         .extern_path(".common.VpcPrefixId", "::carbide_uuid::vpc::VpcPrefixId")
+        .extern_path(".common.ComputeAllocationId", "::carbide_uuid::compute_allocation::ComputeAllocationId")
         .extern_path(".measured_boot.MeasurementSystemProfileId", "::carbide_uuid::measured_boot::MeasurementSystemProfileId")
         .extern_path(".measured_boot.MeasurementSystemProfileAttrId", "::carbide_uuid::measured_boot::MeasurementSystemProfileAttrId")
         .extern_path(".measured_boot.MeasurementBundleId", "::carbide_uuid::measured_boot::MeasurementBundleId")
@@ -61,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .extern_path(".measured_boot.MeasurementApprovedMachineId", "::carbide_uuid::measured_boot::MeasurementApprovedMachineId")
         .extern_path(".measured_boot.MeasurementApprovedProfileId", "::carbide_uuid::measured_boot::MeasurementApprovedProfileId")
         .include_file("prost_common.rs")
-        .type_attribute(".health", "#[derive(serde::Serialize)]")
+        .type_attribute(".health", "#[derive(serde::Deserialize, serde::Serialize)]")
         .type_attribute(
             ".machine_discovery",
             "#[derive(serde::Deserialize, serde::Serialize)]",
@@ -231,7 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(serde::Serialize)]",
         )
         .type_attribute("forge.HealthReportOverride", "#[derive(serde::Serialize)]")
-        .type_attribute("forge.HealthOverrideOrigin", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.HealthOverrideOrigin", "#[derive(serde::Deserialize, serde::Serialize)]")
         .type_attribute(
             "forge.ManagedHostNetworkConfig",
             "#[derive(serde::Serialize)]",
@@ -628,6 +629,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute("forge.RackFirmware", "#[derive(serde::Serialize)]")
         .type_attribute("forge.RackFirmwareList", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.RackFirmwareHistoryRecord", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.RackFirmwareHistoryRecords", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.RackFirmwareHistoryResponse", "#[derive(serde::Serialize)]")
         .type_attribute(
             "forge.MachineHardwareInfoGpu",
             "#[derive(serde::Deserialize, serde::Serialize)]",
@@ -654,6 +658,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "forge.InstanceType",
+            "#[derive(serde::Deserialize,serde::Serialize)]",
+        )
+        .type_attribute(
+            "forge.InstanceTypeAllocationStats",
             "#[derive(serde::Deserialize,serde::Serialize)]",
         )
         .field_attribute(
@@ -742,6 +750,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "forge.RouteServer",
             "#[derive(serde::Serialize)]",
         )
+        .type_attribute(
+            "forge.ComputeAllocation",
+            "#[derive(serde::Serialize)]",
+        )
+        .type_attribute(
+            "forge.ComputeAllocationAttributes",
+            "#[derive(serde::Serialize)]",
+        )
         .build_server(true)
         .build_client(true)
         .protoc_arg("--experimental_allow_proto3_optional")
@@ -805,6 +821,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (
                 ".common.PowerShelfId",
                 "::carbide_uuid::power_shelf::PowerShelfId",
+            ),
+            (
+                ".common.ComputeAllocationId",
+                "::carbide_uuid::compute_allocation::ComputeAllocationId",
             ),
             (".common.RackId", "::carbide_uuid::rack::RackId"),
             (
