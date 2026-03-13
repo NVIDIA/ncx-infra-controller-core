@@ -28,6 +28,7 @@ pub mod raw;
 pub mod sdr;
 pub mod sel;
 pub mod sensor;
+pub mod sol;
 pub mod user;
 
 use clap::Parser;
@@ -115,6 +116,11 @@ pub enum CliCommand {
     User {
         #[command(subcommand)]
         command: user::UserCommand,
+    },
+    /// Serial-over-LAN session.
+    Sol {
+        #[command(subcommand)]
+        command: sol::SolCommand,
     },
     /// Channel configuration and auth capabilities.
     Channel {

@@ -28,4 +28,5 @@ pub mod raw;
 pub mod sdr;
 pub mod sel;
 pub mod sensor;
+pub mod sol;
 pub mod user;
