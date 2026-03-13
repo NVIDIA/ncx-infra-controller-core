@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .extern_path(".measured_boot.MeasurementApprovedMachineId", "::carbide_uuid::measured_boot::MeasurementApprovedMachineId")
         .extern_path(".measured_boot.MeasurementApprovedProfileId", "::carbide_uuid::measured_boot::MeasurementApprovedProfileId")
         .include_file("prost_common.rs")
-        .type_attribute(".health", "#[derive(serde::Serialize)]")
+        .type_attribute(".health", "#[derive(serde::Deserialize, serde::Serialize)]")
         .type_attribute(
             ".machine_discovery",
             "#[derive(serde::Deserialize, serde::Serialize)]",
@@ -232,7 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(serde::Serialize)]",
         )
         .type_attribute("forge.HealthReportOverride", "#[derive(serde::Serialize)]")
-        .type_attribute("forge.HealthOverrideOrigin", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.HealthOverrideOrigin", "#[derive(serde::Deserialize, serde::Serialize)]")
         .type_attribute(
             "forge.ManagedHostNetworkConfig",
             "#[derive(serde::Serialize)]",
@@ -629,6 +629,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute("forge.RackFirmware", "#[derive(serde::Serialize)]")
         .type_attribute("forge.RackFirmwareList", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.RackFirmwareHistoryRecord", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.RackFirmwareHistoryRecords", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.RackFirmwareHistoryResponse", "#[derive(serde::Serialize)]")
         .type_attribute(
             "forge.MachineHardwareInfoGpu",
             "#[derive(serde::Deserialize, serde::Serialize)]",

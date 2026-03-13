@@ -33,12 +33,13 @@ use measured_boot::records::MeasurementBundleState;
 use measured_boot::report::MeasurementReport;
 use model::controller_outcome::PersistentStateHandlerOutcome;
 use model::hardware_info::TpmEkCertificate;
+use model::machine::health_override::HARDWARE_HEALTH_OVERRIDE_PREFIX;
 use model::machine::{
     DpuInitState, FailureCause, FailureDetails, FailureSource, LockdownMode, MachineState,
     MachineValidatingState, ManagedHostState, MeasuringState, ValidationState,
 };
 use rpc::forge::forge_server::Forge;
-use rpc::forge::{HardwareHealthReport, TpmCaCert, TpmCaCertId};
+use rpc::forge::{HealthReportOverride, InsertHealthReportOverrideRequest, TpmCaCert, TpmCaCertId};
 use rpc::forge_agent_control_response::Action;
 use tonic::Request;
 
@@ -1233,9 +1234,14 @@ async fn test_measurement_host_init_failed_to_waiting_for_measurements_to_pendin
     .await;
 
     env.api
-        .record_hardware_health_report(Request::new(HardwareHealthReport {
-            machine_id: host_machine_id.into(),
-            report: Some(HealthReport::empty("hardware-health".to_string()).into()),
+        .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
+            r#override: Some(HealthReportOverride {
+                report: Some(
+                    HealthReport::empty(format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health")).into(),
+                ),
+                ..Default::default()
+            }),
+            machine_id: Some(host_machine_id),
         }))
         .await
         .expect("Failed to add hardware health report to newly created machine");

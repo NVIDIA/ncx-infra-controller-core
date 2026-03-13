@@ -26,6 +26,7 @@ use model::instance::config::network::DeviceLocator;
 use model::instance::config::nvlink::InstanceNvLinkConfig;
 use model::instance::snapshot::InstanceSnapshot;
 use model::instance::status::network::InstanceNetworkStatusObservation;
+use model::machine::health_override::HARDWARE_HEALTH_OVERRIDE_PREFIX;
 use model::machine::{
     CleanupState, Machine, MachineState, MachineValidatingState, ManagedHostState, ValidationState,
 };
@@ -371,7 +372,7 @@ pub async fn advance_created_instance_into_state(
     super::simulate_hardware_health_report(
         env,
         &mh.host().id,
-        health_report::HealthReport::empty("hardware-health".to_string()),
+        health_report::HealthReport::empty(format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health")),
     )
     .await;
 
@@ -424,7 +425,7 @@ pub async fn delete_instance(env: &TestEnv, instance_id: InstanceId, mh: &TestMa
 
     env.run_machine_state_controller_iteration_until_state_matches(
         &mh.host().id,
-        5,
+        7,
         ManagedHostState::Assigned {
             instance_state: model::machine::InstanceState::HostPlatformConfiguration {
                 platform_config_state:
@@ -438,7 +439,7 @@ pub async fn delete_instance(env: &TestEnv, instance_id: InstanceId, mh: &TestMa
 
     env.run_machine_state_controller_iteration_until_state_matches(
         &mh.host().id,
-        1,
+        2,
         ManagedHostState::Assigned {
             instance_state: model::machine::InstanceState::WaitingForDpusToUp,
         },

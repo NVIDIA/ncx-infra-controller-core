@@ -823,6 +823,13 @@ pub struct MachineStateControllerConfig {
         serialize_with = "as_duration"
     )]
     pub scout_reporting_timeout: Duration,
+    /// How long to wait for UEFI boot to complete after rebooting a host
+    #[serde(
+        default = "MachineStateControllerConfig::uefi_boot_wait_default",
+        deserialize_with = "deserialize_duration_chrono",
+        serialize_with = "as_duration"
+    )]
+    pub uefi_boot_wait: Duration,
 }
 
 impl MachineStateControllerConfig {
@@ -845,6 +852,10 @@ impl MachineStateControllerConfig {
     fn scout_reporting_timeout_default() -> Duration {
         Duration::minutes(5)
     }
+
+    pub fn uefi_boot_wait_default() -> Duration {
+        Duration::minutes(5)
+    }
 }
 
 impl Default for MachineStateControllerConfig {
@@ -857,6 +868,7 @@ impl Default for MachineStateControllerConfig {
             dpu_up_threshold: MachineStateControllerConfig::dpu_up_threshold_default(),
             scout_reporting_timeout: MachineStateControllerConfig::scout_reporting_timeout_default(
             ),
+            uefi_boot_wait: MachineStateControllerConfig::uefi_boot_wait_default(),
         }
     }
 }
@@ -1400,6 +1412,9 @@ pub struct SiteExplorerConfig {
         serialize_with = "serialize_arc_atomic_bool"
     )]
     pub use_onboard_nic: Arc<AtomicBool>,
+    #[serde(default = "SiteExplorerConfig::default_explore_mode")]
+    /// What type of exploration to be used.
+    pub explore_mode: SiteExplorerExploreMode,
 }
 
 impl Default for SiteExplorerConfig {
@@ -1426,6 +1441,7 @@ impl Default for SiteExplorerConfig {
             switches_created_per_run: Self::default_switches_created_per_run(),
             rotate_switch_nvos_credentials: Self::default_rotate_switch_nvos_credentials(),
             use_onboard_nic: Arc::new(false.into()),
+            explore_mode: Self::default_explore_mode(),
         }
     }
 }
@@ -1499,6 +1515,20 @@ impl SiteExplorerConfig {
     pub fn default_use_onboard_nic() -> Arc<AtomicBool> {
         Arc::new(false.into())
     }
+
+    pub const fn default_explore_mode() -> SiteExplorerExploreMode {
+        SiteExplorerExploreMode::LibRedfish
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub enum SiteExplorerExploreMode {
+    #[serde(rename = "libredfish")]
+    LibRedfish,
+    #[serde(rename = "nv-redfish")]
+    NvRedfish,
+    #[serde(rename = "compare-result")]
+    CompareResult,
 }
 
 impl DpaConfig {
@@ -2806,6 +2836,7 @@ mod tests {
             failure_retry_time: Duration::minutes(90),
             dpu_up_threshold: Duration::weeks(1),
             scout_reporting_timeout: Duration::minutes(5),
+            uefi_boot_wait: Duration::minutes(5),
         };
 
         let config_str = serde_json::to_string(&input).unwrap();
@@ -2848,6 +2879,7 @@ mod tests {
                 failure_retry_time: Duration::minutes(90),
                 dpu_up_threshold: Duration::weeks(1),
                 scout_reporting_timeout: Duration::minutes(5),
+                uefi_boot_wait: Duration::minutes(5),
             }
         );
     }
@@ -2867,6 +2899,7 @@ mod tests {
                 failure_retry_time: Duration::minutes(90),
                 dpu_up_threshold: Duration::weeks(1),
                 scout_reporting_timeout: Duration::minutes(5),
+                uefi_boot_wait: Duration::minutes(5),
             }
         );
     }
@@ -3091,6 +3124,7 @@ mod tests {
                 switches_created_per_run: 9,
                 rotate_switch_nvos_credentials: Arc::new(false.into()),
                 use_onboard_nic: Arc::new(false.into()),
+                explore_mode: SiteExplorerExploreMode::LibRedfish,
             }
         );
         assert_eq!(
@@ -3110,6 +3144,7 @@ mod tests {
                 failure_retry_time: Duration::minutes(70),
                 dpu_up_threshold: Duration::minutes(77),
                 scout_reporting_timeout: Duration::minutes(5),
+                uefi_boot_wait: Duration::minutes(5),
             }
         );
         assert_eq!(
@@ -3263,6 +3298,7 @@ mod tests {
                 switches_created_per_run: 9,
                 rotate_switch_nvos_credentials: Arc::new(false.into()),
                 use_onboard_nic: Arc::new(false.into()),
+                explore_mode: SiteExplorerExploreMode::LibRedfish,
             }
         );
 
@@ -3283,6 +3319,7 @@ mod tests {
                 failure_retry_time: Duration::minutes(31),
                 dpu_up_threshold: Duration::minutes(33),
                 scout_reporting_timeout: Duration::minutes(20),
+                uefi_boot_wait: Duration::minutes(5),
             }
         );
         assert_eq!(
@@ -3541,6 +3578,7 @@ mod tests {
                 switches_created_per_run: 9,
                 rotate_switch_nvos_credentials: Arc::new(false.into()),
                 use_onboard_nic: Arc::new(false.into()),
+                explore_mode: SiteExplorerExploreMode::LibRedfish,
             }
         );
 
@@ -3561,6 +3599,7 @@ mod tests {
                 failure_retry_time: Duration::minutes(70),
                 dpu_up_threshold: Duration::minutes(77),
                 scout_reporting_timeout: Duration::minutes(20),
+                uefi_boot_wait: Duration::minutes(5),
             }
         );
         assert_eq!(

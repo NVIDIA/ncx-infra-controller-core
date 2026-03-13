@@ -480,7 +480,7 @@ impl ApiClient {
         sku_id: Option<String>,
         rack_id: Option<RackId>,
         default_pause_ingestion_and_poweron: Option<bool>,
-        dpf_enabled: bool,
+        dpf_enabled: Option<bool>,
     ) -> Result<(), CarbideCliError> {
         let expected_machine = self
             .0
@@ -540,7 +540,9 @@ impl ApiClient {
             host_nics: expected_machine.host_nics,
             rack_id: rack_id.or(expected_machine.rack_id),
             default_pause_ingestion_and_poweron,
-            dpf_enabled,
+            #[allow(deprecated)]
+            dpf_enabled: dpf_enabled.unwrap_or_default(),
+            is_dpf_enabled: dpf_enabled,
         };
 
         Ok(self.0.update_expected_machine(request).await?)
@@ -634,7 +636,9 @@ impl ApiClient {
                     rack_id: machine.rack_id,
                     default_pause_ingestion_and_poweron: machine
                         .default_pause_ingestion_and_poweron,
-                    dpf_enabled: machine.dpf_enabled,
+                    #[allow(deprecated)]
+                    dpf_enabled: machine.dpf_enabled.unwrap_or_default(),
+                    is_dpf_enabled: machine.dpf_enabled,
                 })
                 .collect(),
         };
@@ -1422,10 +1426,15 @@ impl ApiClient {
         run_unverfied_tests: bool,
         contexts: Option<Vec<String>>,
     ) -> CarbideCliResult<rpc::MachineValidationOnDemandResponse> {
+        let allowed_tests: Vec<String> = allowed_tests
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| t.to_ascii_lowercase())
+            .collect();
         let request = rpc::MachineValidationOnDemandRequest {
             machine_id: Some(machine_id),
             tags: tags.unwrap_or_default(),
-            allowed_tests: allowed_tests.unwrap_or_default(),
+            allowed_tests,
             action: rpc::machine_validation_on_demand_request::Action::Start.into(),
             run_unverfied_tests,
             contexts: contexts.unwrap_or_default(),

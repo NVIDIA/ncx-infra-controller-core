@@ -36,7 +36,9 @@ pub mod test_support;
 pub mod tls;
 
 pub use combined_server::{CombinedServer, ListenerOrAddress};
-pub use machine_info::{DpuFirmwareVersions, DpuMachineInfo, HostMachineInfo, MachineInfo};
+pub use machine_info::{
+    DpuFirmwareVersions, DpuMachineInfo, DpuSettings, HostMachineInfo, MachineInfo,
+};
 pub use mock_machine_router::{
     BmcCommand, SetSystemPowerError, SetSystemPowerResult, machine_router,
 };
@@ -48,6 +50,8 @@ pub enum HostHardwareType {
     DellPowerEdgeR750,
     #[serde(rename = "wiwynn_gb200_nvl")]
     WiwynnGB200Nvl,
+    #[serde(rename = "liteon_power_shelf")]
+    LiteOnPowerShelf,
 }
 
 #[derive(Debug, Copy, Clone, Default)]

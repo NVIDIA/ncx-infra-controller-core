@@ -130,12 +130,18 @@ impl InternalRBACRules {
             vec![ForgeAdminCLI, Agent, Machineatron, SiteAgent],
         );
         x.perm("RecordDpuNetworkStatus", vec![Agent, Machineatron]);
-        x.perm("RecordHardwareHealthReport", vec![Health]);
-        x.perm("RecordLogParserHealthReport", vec![Health, Ssh, SshRs]);
-        x.perm("GetHardwareHealthReport", vec![]);
-        x.perm("ListHealthReportOverrides", vec![ForgeAdminCLI]);
-        x.perm("InsertHealthReportOverride", vec![ForgeAdminCLI]);
-        x.perm("RemoveHealthReportOverride", vec![ForgeAdminCLI]);
+        x.perm(
+            "ListHealthReportOverrides",
+            vec![ForgeAdminCLI, Health, Ssh, SshRs],
+        );
+        x.perm(
+            "InsertHealthReportOverride",
+            vec![ForgeAdminCLI, Health, Ssh, SshRs],
+        );
+        x.perm(
+            "RemoveHealthReportOverride",
+            vec![ForgeAdminCLI, Health, Ssh, SshRs],
+        );
         x.perm(
             "ListRackHealthReportOverrides",
             vec![ForgeAdminCLI, DsxExchangeConsumer],
@@ -371,6 +377,7 @@ impl InternalRBACRules {
         x.perm("GetRackFirmware", vec![ForgeAdminCLI]);
         x.perm("ApplyRackFirmware", vec![ForgeAdminCLI]);
         x.perm("GetRackFirmwareJobStatus", vec![ForgeAdminCLI]);
+        x.perm("GetRackFirmwareHistory", vec![ForgeAdminCLI]);
         x.perm("RebootCompleted", vec![Machineatron, Scout]);
         x.perm("PersistValidationResult", vec![Scout]);
         x.perm("GetMachineValidationResults", vec![ForgeAdminCLI, Scout]);

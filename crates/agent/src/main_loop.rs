@@ -28,12 +28,12 @@ use ::rpc::forge::ManagedHostNetworkConfigResponse;
 use ::rpc::forge_tls_client::ForgeClientConfig;
 use ::rpc::{forge as rpc, forge_tls_client};
 use carbide_host_support::agent_config::AgentConfig;
+use carbide_network::virtualization::{DEFAULT_NETWORK_VIRTUALIZATION_TYPE, VpcVirtualizationType};
 use carbide_systemd::systemd;
 use carbide_uuid::machine::MachineId;
 use eyre::WrapErr;
 use forge_certs::cert_renewal::ClientCertRenewer;
 use forge_dpu_remediation::remediation::{MachineInfo, RemediationExecutor};
-use forge_network::virtualization::{DEFAULT_NETWORK_VIRTUALIZATION_TYPE, VpcVirtualizationType};
 use ipnetwork::IpNetwork;
 use mac_address::MacAddress;
 use tokio::signal::unix::{SignalKind, signal};
@@ -48,6 +48,7 @@ use crate::dpu::interface::Interface;
 use crate::dpu::route::{DpuRoutePlan, IpRoute, Route};
 use crate::duppet::{SummaryFormat, SyncOptions};
 use crate::ethernet_virtualization::ServiceAddresses;
+use crate::health::HealthCheckParams;
 use crate::instance_metadata_endpoint::InstanceMetadataRouterStateImpl;
 use crate::instrumentation::{create_metrics, get_dpu_agent_meter};
 use crate::machine_inventory_updater::MachineInventoryUpdaterConfig;
@@ -322,7 +323,6 @@ pub async fn setup_and_run(
         service_addrs,
         close_sender,
         network_monitor_handle,
-        interface_state: None,
         extension_service_manager: extension_services::ExtensionServiceManager::default(),
     };
 
@@ -354,13 +354,51 @@ struct MainLoop {
     service_addrs: ServiceAddresses,
     network_monitor_handle: Option<JoinHandle<()>>,
     close_sender: watch::Sender<bool>,
-    interface_state: Option<ethernet_virtualization::InterfaceState>,
     extension_service_manager: extension_services::ExtensionServiceManager,
 }
 
 struct IterationResult {
     stop_agent: bool,
     loop_period: std::time::Duration,
+}
+
+/// Returns the last DHCP request timestamps for all known host interfaces.
+///
+/// When `dhcp_grpc_server` is `Some`, fetches timestamps from the dhcp-server
+/// control service via gRPC.  This is required when the DHCP server runs in a
+/// separate container where the timestamps file on the DPU filesystem is not
+/// accessible.
+///
+/// When `dhcp_grpc_server` is `None`, reads the timestamps file directly from
+/// the DPU filesystem (`DhcpTimestampsFilePath::Dpu`).
+///
+/// Errors on either path are logged as warnings and an empty list is returned
+/// so the caller can degrade gracefully.
+async fn fetch_last_dhcp_requests(dhcp_grpc_server: Option<&str>) -> Vec<rpc::LastDhcpRequest> {
+    if let Some(addr) = dhcp_grpc_server {
+        return match crate::dhcp_server_grpc_client::get_dhcp_timestamps(addr).await {
+            Ok(requests) => requests,
+            Err(e) => {
+                tracing::warn!("Failed to fetch DHCP timestamps via gRPC: {e:#}");
+                vec![]
+            }
+        };
+    }
+
+    let mut dhcp_timestamps = DhcpTimestamps::new(DhcpTimestampsFilePath::Dpu);
+    if let Err(e) = dhcp_timestamps.read() {
+        tracing::warn!(
+            "Failed to read from {}: {e}",
+            DhcpTimestampsFilePath::Dpu.path_str()
+        );
+    }
+    dhcp_timestamps
+        .into_iter()
+        .map(|(host_interface_id, timestamp)| rpc::LastDhcpRequest {
+            host_interface_id: Some(host_interface_id),
+            timestamp,
+        })
+        .collect()
 }
 
 impl MainLoop {
@@ -443,21 +481,8 @@ impl MainLoop {
             dpu_extension_services: vec![],
         };
 
-        let mut last_dhcp_requests = vec![];
-        let mut dhcp_timestamps = DhcpTimestamps::new(DhcpTimestampsFilePath::Dpu);
-        if let Err(e) = dhcp_timestamps.read() {
-            tracing::warn!(
-                "Failed to read from {}: {e}",
-                DhcpTimestampsFilePath::Dpu.path_str()
-            );
-        }
-        for (host_interface_id, timestamp) in dhcp_timestamps.into_iter() {
-            last_dhcp_requests.push(rpc::LastDhcpRequest {
-                host_interface_id: Some(host_interface_id),
-                timestamp: timestamp.to_string(),
-            });
-        }
-        status_out.last_dhcp_requests = last_dhcp_requests;
+        status_out.last_dhcp_requests =
+            fetch_last_dhcp_requests(self.options.dhcp_grpc_server.as_deref()).await;
 
         // `read` does not block
         match self.periodic_config_reader.net_conf_read() {
@@ -527,6 +552,7 @@ impl MainLoop {
                         self.agent_config.hbn.skip_reload,
                         &self.service_addrs,
                         self.hbn_device_names.clone(),
+                        self.options.dhcp_grpc_server.clone(),
                     )
                     .await;
 
@@ -689,26 +715,11 @@ impl MainLoop {
                         }
                     }
 
-                    // In case of secondary DPU, physical interface must be disabled if on admin
-                    // network, else enabled.
-                    match ethernet_virtualization::update_interface_state(
-                        &conf,
-                        self.agent_config.hbn.skip_reload,
-                        &self.hbn_device_names,
-                        &self.interface_state,
-                    )
-                    .await
-                    {
-                        Ok(new_state) => {
-                            self.interface_state = new_state;
-                        }
-                        Err(err) => {
-                            tracing::error!(
-                                error = format!("{err:#}"),
-                                "Updating interface state."
-                            );
-                        }
-                    };
+                    // In case of secondary DPU, the interface must be disabled if on admin network, else enabled.
+                    // Note that the nvue config handles the blocking of traffic on the interface.  This is only so that the host link reflects the correct state.
+                    if let Err(err) = ethernet_virtualization::update_interface_state(&conf).await {
+                        tracing::error!(error = format!("{err:#}"), "Updating interface state.");
+                    }
                 }
 
                 // Feed the latest instance metadata to FMDS and acknowledge it
@@ -728,15 +739,16 @@ impl MainLoop {
                 current_instance_config_version = status_out.instance_config_version.clone();
                 current_instance_id = status_out.instance_id.as_ref().map(|id| id.to_string());
 
-                let health_report = health::health_check(
-                    &self.agent_config.hbn.root_dir,
-                    &tenant_peers,
-                    self.started_at,
+                let health_report = health::health_check(HealthCheckParams {
+                    hbn_root: &self.agent_config.hbn.root_dir,
+                    host_routes: &tenant_peers,
                     has_changed_configs,
-                    conf.min_dpu_functioning_links.unwrap_or(2),
-                    &conf.route_servers,
-                    self.hbn_device_names.clone(),
-                )
+                    min_healthy_links: conf.min_dpu_functioning_links.unwrap_or(2),
+                    route_servers: &conf.route_servers,
+                    hbn_device_names: self.hbn_device_names.clone(),
+                    include_dhcp_server: !conf.use_admin_network || conf.is_primary_dpu,
+                    run_restricted_mode_check: false,
+                })
                 .await;
                 is_healthy = !health_report.successes.is_empty() && health_report.alerts.is_empty();
                 self.is_hbn_up = health::is_up(&health_report);

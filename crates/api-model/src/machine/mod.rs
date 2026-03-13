@@ -105,14 +105,24 @@ pub struct ManagedHostStateSnapshot {
     pub managed_state: ManagedHostState,
     /// Aggregated health. This is calculated based on the health of Hosts and DPUs
     pub aggregate_health: health_report::HealthReport,
+    /// Health overrides inherited from the rack this host belongs to (if any).
+    /// Populated at read time; not stored on the machines table.
+    pub rack_health_overrides: Option<HealthReportOverrides>,
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ManagedHostStateSnapshot {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        #[derive(Deserialize)]
+        struct RackHealthOverrides {
+            json: HealthReportOverrides,
+        }
+
         let host_snapshot: sqlx::types::Json<MachineSnapshotPgJson> =
             row.try_get("host_snapshot")?;
         let dpu_snapshots: sqlx::types::Json<Vec<Option<MachineSnapshotPgJson>>> =
             row.try_get("dpu_snapshots")?;
+        let rack_health_overrides: sqlx::types::Json<Vec<Option<RackHealthOverrides>>> =
+            row.try_get("rack_health_overrides")?;
         // We are setting dpa_interface_snapshots to an emtpy vector here.
         // This will be filled by load_object_state later.
         let dpa_interface_snapshots: Vec<DpaInterface> = Vec::new();
@@ -135,6 +145,20 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ManagedHostStateSnapshot {
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
 
+        let rack_health_overrides = rack_health_overrides
+            .0
+            .into_iter()
+            .next()
+            .flatten()
+            .and_then(|overrides| {
+                let overrides = overrides.json;
+                if overrides.replace.is_some() || !overrides.merges.is_empty() {
+                    Some(overrides)
+                } else {
+                    None
+                }
+            });
+
         // Instance network observation is fetched from dpu_snapshots.
         if let Some(instance) = &mut instance {
             instance.observations.network =
@@ -154,6 +178,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ManagedHostStateSnapshot {
             dpa_interface_snapshots,
             managed_state,
             instance,
+            rack_health_overrides,
             // This will need to be modified by callers, as its value depends on a
             // HardwareHealthReportsConfig being specified.
             aggregate_health: health_report::HealthReport::empty("".to_string()),
@@ -198,6 +223,31 @@ impl From<ManagedHostStateSnapshotError> for sqlx::Error {
 }
 
 impl ManagedHostStateSnapshot {
+    /// Returns `true` if override report is hw_health, `false` otherwise
+    fn merge_override_report_with_hw_health(
+        output: &mut HealthReport,
+        source: &str,
+        report: &mut HealthReport,
+        hardware_health_config: HardwareHealthReportsConfig,
+    ) -> bool {
+        if HealthReportOverrides::is_hardware_health_override_source(source) {
+            match hardware_health_config {
+                HardwareHealthReportsConfig::Disabled => {}
+                HardwareHealthReportsConfig::MonitorOnly => {
+                    for alert in &mut report.alerts {
+                        alert.classifications.clear();
+                    }
+                    output.merge(report)
+                }
+                HardwareHealthReportsConfig::Enabled => output.merge(report),
+            }
+            true
+        } else {
+            output.merge(report);
+            false
+        }
+    }
+
     /// Returns `Ok` if the Host can be used as an instance
     ///
     /// This requires
@@ -246,7 +296,8 @@ impl ManagedHostStateSnapshot {
         let observed_at = Some(chrono::Utc::now());
 
         // If there is an [`OverrideMode::Replace`] health report override on
-        // the host, then use that.
+        // the host, then use that. A host-level Replace takes full precedence,
+        // including over any rack-level overrides.
         if let Some(mut over) = self.host_snapshot.health_report_overrides.replace.clone() {
             over.source = source;
             over.observed_at = observed_at;
@@ -261,11 +312,6 @@ impl ManagedHostStateSnapshot {
             self.host_snapshot.sku_validation_health_report.as_ref()
         {
             output.merge(sku_validation_health_report);
-        }
-
-        // log parser reports are only merged if available, heartbeat timeout is not applicable
-        if let Some(input) = &self.host_snapshot.log_parser_health_report {
-            output.merge(input);
         }
 
         if let Some(report) = self.host_snapshot.site_explorer_health_report.as_ref() {
@@ -285,29 +331,7 @@ impl ManagedHostStateSnapshot {
                 }
             };
 
-        // Merge hardware health if configured.
-        use HardwareHealthReportsConfig as HWConf;
-        match host_health_config.hardware_health_reports {
-            HWConf::Disabled => {}
-            HWConf::MonitorOnly => {
-                // If MonitorOnly, clear all alert classifications.
-                if let Some(h) = &mut self.host_snapshot.hardware_health_report {
-                    for alert in &mut h.alerts {
-                        alert.classifications.clear();
-                    }
-                    output.merge(h)
-                }
-            }
-            HWConf::Enabled => {
-                // If hw_health_reports are enabled, then add a heartbeat timeout
-                // if the report is missing.
-                merge_or_timeout(
-                    &mut output,
-                    &self.host_snapshot.hardware_health_report,
-                    "hardware-health".to_string(),
-                );
-            }
-        }
+        let mut has_hardware_health = false;
 
         // Merge DPU's alerts.  If DPU alerts should be suppressed, than remove the classification from the
         // alert so that metrics won't show a critical issue.
@@ -342,13 +366,40 @@ impl ManagedHostStateSnapshot {
                 output.merge(report);
             }
 
-            for over in snapshot.health_report_overrides.merges.values() {
-                output.merge(over);
+            for (source, over) in snapshot.health_report_overrides.merges.iter_mut() {
+                let merged_hardware = Self::merge_override_report_with_hw_health(
+                    &mut output,
+                    source,
+                    over,
+                    host_health_config.hardware_health_reports,
+                );
+                has_hardware_health |= merged_hardware;
             }
         }
 
-        for over in self.host_snapshot.health_report_overrides.merges.values() {
-            output.merge(over);
+        for (source, over) in self.host_snapshot.health_report_overrides.merges.iter_mut() {
+            let merged_hardware = Self::merge_override_report_with_hw_health(
+                &mut output,
+                source,
+                over,
+                host_health_config.hardware_health_reports,
+            );
+            has_hardware_health |= merged_hardware;
+        }
+
+        if host_health_config.hardware_health_reports == HardwareHealthReportsConfig::Enabled
+            && !has_hardware_health
+        {
+            merge_or_timeout(&mut output, &None, "hardware-health".to_string());
+        }
+
+        if let Some(rack_overrides) = &self.rack_health_overrides {
+            if let Some(rack_replace) = &rack_overrides.replace {
+                output.merge(rack_replace);
+            }
+            for rack_merge in rack_overrides.merges.values() {
+                output.merge(rack_merge);
+            }
         }
 
         output.source = source;
@@ -650,12 +701,6 @@ pub struct Machine {
 
     /// Latest health report received by forge-dpu-agent
     pub dpu_agent_health_report: Option<HealthReport>,
-
-    /// Latest health report received by hardware-health
-    pub hardware_health_report: Option<HealthReport>,
-
-    /// Latest log parser health report received from the log parser
-    pub log_parser_health_report: Option<HealthReport>,
 
     /// Latest health report generated by validation tests
     pub machine_validation_health_report: HealthReport,
@@ -1890,14 +1935,26 @@ pub enum HostPlatformConfigurationState {
     PowerCycle {
         power_on: bool,
     },
+    UnlockHost {
+        #[serde(default)]
+        unlock_host_state: UnlockHostState,
+    },
     CheckHostConfig,
-    UnlockHost,
     ConfigureBios,
     PollingBiosSetup,
     SetBootOrder {
         set_boot_order_info: SetBootOrderInfo,
     },
     LockHost,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Default)]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum UnlockHostState {
+    #[default]
+    DisableLockdown,
+    RebootHost,
+    WaitForUefiBoot,
 }
 
 /// Struct to store information if Reprovision is requested.
