@@ -717,10 +717,10 @@ impl TryFrom<TenantIdentityConfig> for rpc_forge::TokenDelegationResponse {
     fn try_from(value: TenantIdentityConfig) -> Result<Self, Self::Error> {
         let token_endpoint = value
             .token_endpoint
-            .ok_or_else(|| RpcDataConversionError::MissingArgument("token_delegation"))?;
+            .ok_or(RpcDataConversionError::MissingArgument("token_delegation"))?;
         let auth_method = value
             .auth_method
-            .ok_or_else(|| RpcDataConversionError::MissingArgument("token_delegation"))?;
+            .ok_or(RpcDataConversionError::MissingArgument("token_delegation"))?;
 
         let stored: Option<rpc_forge::ClientSecretBasic> = value
             .encrypted_auth_method_config
