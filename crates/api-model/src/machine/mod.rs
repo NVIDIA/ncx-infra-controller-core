@@ -2883,6 +2883,172 @@ mod tests {
             assert_eq!(parsed, DpfState::Unknown);
         }
     }
+
+    fn alert_with_classifications(
+        classifications: Vec<health_report::HealthAlertClassification>,
+    ) -> health_report::HealthProbeAlert {
+        health_report::HealthProbeAlert {
+            id: health_report::HealthProbeId::heartbeat_timeout(),
+            target: None,
+            in_alert_since: Some(chrono::Utc::now()),
+            message: "test alert".to_string(),
+            tenant_message: None,
+            classifications,
+        }
+    }
+
+    fn health_report_with_alerts(
+        alerts: Vec<health_report::HealthProbeAlert>,
+    ) -> health_report::HealthReport {
+        health_report::HealthReport {
+            source: "test".to_string(),
+            triggered_by: None,
+            observed_at: Some(chrono::Utc::now()),
+            successes: vec![],
+            alerts,
+        }
+    }
+
+    /// State with a non-zero SLA returns no_sla when ExcludeFromStateMachineSla
+    /// classification is present on the single alert.
+    #[test]
+    fn test_state_sla_exclude_classification_overrides_sla() {
+        let state = ManagedHostState::Created;
+        let state_version = ConfigVersion::initial();
+        let health = health_report_with_alerts(vec![alert_with_classifications(vec![
+            health_report::HealthAlertClassification::exclude_from_state_machine_sla(),
+        ])]);
+
+        let sla = state_sla(&state, &state_version, &health);
+
+        assert!(sla.sla.is_none(), "SLA should be absent when excluded");
+        assert!(
+            !sla.time_in_state_above_sla,
+            "time_in_state_above_sla should be false when excluded"
+        );
+    }
+
+    /// When there are multiple alerts and only one carries the
+    /// ExcludeFromStateMachineSla classification, the SLA is still suppressed.
+    #[test]
+    fn test_state_sla_exclude_classification_on_one_of_multiple_alerts_suppresses_sla() {
+        let state = ManagedHostState::Created;
+        let state_version = ConfigVersion::initial();
+        let health = health_report_with_alerts(vec![
+            // Alert without the exclusion classification
+            alert_with_classifications(vec![
+                health_report::HealthAlertClassification::prevent_allocations(),
+            ]),
+            // Alert with the exclusion classification
+            alert_with_classifications(vec![
+                health_report::HealthAlertClassification::exclude_from_state_machine_sla(),
+            ]),
+        ]);
+
+        let sla = state_sla(&state, &state_version, &health);
+
+        assert!(
+            sla.sla.is_none(),
+            "SLA should be absent even if only one alert carries the exclusion classification"
+        );
+        assert!(!sla.time_in_state_above_sla);
+    }
+
+    /// Without the ExcludeFromStateMachineSla classification, the normal SLA
+    /// applies to states that have one defined.
+    #[test]
+    fn test_state_sla_without_exclude_classification_normal_sla_applies() {
+        let state = ManagedHostState::Created;
+        let state_version = ConfigVersion::initial();
+        let health = health_report_with_alerts(vec![alert_with_classifications(vec![
+            health_report::HealthAlertClassification::prevent_allocations(),
+        ])]);
+
+        let sla = state_sla(&state, &state_version, &health);
+
+        assert!(
+            sla.sla.is_some(),
+            "SLA should be present when exclusion classification is absent"
+        );
+    }
+
+    /// An empty health report (no alerts) does not trigger the exclusion —
+    /// normal SLA logic applies.
+    #[test]
+    fn test_state_sla_empty_health_report_normal_sla_applies() {
+        let state = ManagedHostState::Created;
+        let state_version = ConfigVersion::initial();
+        let health = health_report_with_alerts(vec![]);
+
+        let sla = state_sla(&state, &state_version, &health);
+
+        assert!(
+            sla.sla.is_some(),
+            "SLA should be present when there are no alerts"
+        );
+    }
+
+    /// The ExcludeFromStateMachineSla classification suppresses the SLA even
+    /// for the Failed state, which ordinarily has an always-violated SLA (duration 0).
+    #[test]
+    fn test_state_sla_exclude_classification_overrides_failed_state_sla() {
+        let state = ManagedHostState::Failed {
+            details: FailureDetails {
+                cause: FailureCause::NoError,
+                failed_at: chrono::Utc::now(),
+                source: FailureSource::NoError,
+            },
+            machine_id: MachineId::from_str(
+                "fm100ds7blqjsadm2uuh3qqbf1h7k8pmf47um6v9uckrg7l03po8mhqgvng",
+            )
+            .unwrap(),
+            retry_count: 1,
+        };
+        let state_version = ConfigVersion::initial();
+        let health = health_report_with_alerts(vec![alert_with_classifications(vec![
+            health_report::HealthAlertClassification::exclude_from_state_machine_sla(),
+        ])]);
+
+        let sla = state_sla(&state, &state_version, &health);
+
+        assert!(
+            sla.sla.is_none(),
+            "SLA should be suppressed for Failed state when excluded"
+        );
+        assert!(!sla.time_in_state_above_sla);
+    }
+
+    /// Without the exclusion classification on a Failed machine, the SLA is
+    /// immediately violated (duration 0).
+    #[test]
+    fn test_state_sla_failed_state_without_exclude_classification_is_above_sla() {
+        let state = ManagedHostState::Failed {
+            details: FailureDetails {
+                cause: FailureCause::NoError,
+                failed_at: chrono::Utc::now(),
+                source: FailureSource::NoError,
+            },
+            machine_id: MachineId::from_str(
+                "fm100ds7blqjsadm2uuh3qqbf1h7k8pmf47um6v9uckrg7l03po8mhqgvng",
+            )
+            .unwrap(),
+            retry_count: 1,
+        };
+        let state_version = ConfigVersion::initial();
+        let health = health_report_with_alerts(vec![]);
+
+        let sla = state_sla(&state, &state_version, &health);
+
+        assert_eq!(
+            sla.sla,
+            Some(std::time::Duration::ZERO),
+            "Failed state should have a zero-duration SLA"
+        );
+        assert!(
+            sla.time_in_state_above_sla,
+            "Failed state should always be above SLA"
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
