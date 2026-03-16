@@ -141,6 +141,8 @@ service Forge {
   // Looks up a DNS record for DNS names assigned by Forge
   rpc LookupRecord(dns.DnsResourceRecordLookupRequest)returns (dns.DnsResourceRecordLookupResponse);
 
+  rpc GetHardwareLeaksReport(HardwareLeaksReportRequest) returns (HardwareLeaksReportResponse);
+
   // DEPRECATED DNS Lookup RPC - for backward compatibility
   // Use LookupRecord with DnsResourceRecordLookupRequest instead
   rpc LookupRecordLegacy(DNSMessage.DNSQuestion)returns (DNSMessage.DNSResponse) {
@@ -6715,4 +6717,30 @@ message DPFStateResponse {
 
 message GetDPFStateRequest {
   repeated common.MachineId machine_ids = 1;
+}
+
+// Get all the alerts that report some type of coolant leak
+// If supplied machine_ids array is empty, call applies to all
+// machines. Otherwise, search for leaks in the list of machines
+// supplied.
+message HardwareLeaksReportRequest {
+  repeated common.MachineId machine_ids = 1;
+}
+
+// Each Leak record returned contains the machine id,
+// the health overrides with classification LEAK, and
+// the last fetched powerstate of the machine
+message HardwareMachineLeaks {
+  enum PowerStatus {
+    On = 0;
+    Off = 1;
+  }
+  common.MachineId machine_id = 1;
+  optional PowerStatus power_status = 2;
+  HealthReportOverride overrides = 3;
+}
+
+// Returns a list of leak_reports with leak type of alert in them
+message HardwareLeaksReportResponse {
+  repeated HardwareMachineLeaks leakt_reports = 1;
 }

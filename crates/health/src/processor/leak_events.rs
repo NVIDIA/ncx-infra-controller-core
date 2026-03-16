@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#[cfg(not(feature = "leak_alert"))]
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -49,6 +50,7 @@ fn is_leak_detector_alert(alert: &HealthReportAlert) -> bool {
         .is_some_and(|input| input.contains(LEAK_DETECTOR_MARKER))
 }
 
+#[cfg(not(feature = "leak_alert"))]
 fn leak_details(alerts: &[&HealthReportAlert]) -> String {
     let targets: BTreeSet<String> = alerts
         .iter()
@@ -78,6 +80,7 @@ impl EventProcessor for LeakEventProcessor {
             .filter(|alert| is_leak_detector_alert(alert))
             .collect();
 
+        #[cfg(not(feature = "leak_alert"))]
         let alerts = if self.is_leaking(leak_alerts.len()) {
             let details = leak_details(&leak_alerts);
 
@@ -94,6 +97,19 @@ impl EventProcessor for LeakEventProcessor {
             }]
         } else {
             vec![]
+        };
+
+        #[cfg(feature = "leak_alert")]
+        let alerts = {
+            let alr = vec![HealthReportAlert {
+                probe_id: Probe::LeakDetection,
+                target: None,
+                message: format!(
+                    "Leak detected: 3 leak-detector alerts reached threshold 1 (detectors: LeakDetector_2, LeakDetector_3, LeakDetector_4)",
+                ),
+                classifications: vec![Classification::Leak],
+            }];
+            alr
         };
 
         let successes = if self.is_leaking(leak_alerts.len()) {

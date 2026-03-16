@@ -490,6 +490,13 @@ impl Forge for Api {
         crate::handlers::rack::remove_rack_health_report_override(self, request).await
     }
 
+    async fn get_hardware_leaks_report(
+        &self,
+        request: Request<rpc::HardwareLeaksReportRequest>,
+    ) -> Result<Response<rpc::HardwareLeaksReportResponse>, Status> {
+        crate::handlers::health::get_hardware_leaks_report(self, request).await
+    }
+
     async fn get_all_domain_metadata(
         &self,
         request: Request<DomainMetadataRequest>,

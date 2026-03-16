@@ -68,8 +68,14 @@ logfmt = { path = "../logfmt" }
 [build-dependencies]
 carbide-version = { path = "../version" }
 
+# For testing purposes:
+# Turning on leak_alert feature forces a leak health override to be posted
+# Turning on cpu2temp_alert feature forces a BMC Sensor health override to be psoted
 [features]
+default = []
 bench-hooks = []
+cpu2temp_alert = []
+leak_alert = []
 
 [dev-dependencies]
 criterion = { workspace = true }
