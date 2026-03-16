@@ -1,6 +1,6 @@
 # Architecture
 
-This page discusses the high level architecture of a site running NVIDIA NCX Infra Controller (NICo).
+This page discusses the high level architecture of a site running NCX Infra Controller (NICo).
 
 NICo orchestrates the lifecycle of ["Managed Hosts"](#managed-hosts) and other resources via set of cooperating control plane services.
 These control plane services have to be deployed to a Kubernetes cluster with a size of at least 3 nodes (for high availability).

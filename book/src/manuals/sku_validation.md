@@ -1,6 +1,6 @@
 # SKU Validation
 
-NVIDIA NCX Infra Controller (NICo) supports checking and validating the hardware in a machine, known as "SKU Validation."
+NCX Infra Controller (NICo) supports checking and validating the hardware in a machine, known as "SKU Validation."
 
 ## Summary
 

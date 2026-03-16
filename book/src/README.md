@@ -1,6 +1,6 @@
 # Overview
 
-NVIDIA NCX Infra Controller (NICo) is an API-based microservice that provides site-local, zero-trust bare-metal lifecycle management with DPU-enforced isolation, allowing for deployment of multi-tenant AI infrastructure at scale. NICo enables zero-touch automation and ensures the integrity and separation of workloads at the bare-metal layer.
+NCX Infra Controller (NICo) is an API-based microservice that provides site-local, zero-trust bare-metal lifecycle management with DPU-enforced isolation, allowing for deployment of multi-tenant AI infrastructure at scale. NICo enables zero-touch automation and ensures the integrity and separation of workloads at the bare-metal layer.
 
 ## NICo Operational Principles
 

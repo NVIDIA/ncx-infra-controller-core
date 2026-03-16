@@ -1,6 +1,6 @@
-# NVIDIA NCX Infra Controller
+# NCX Infra Controller
 
-NVIDIA NCX Infra Controller (NICo) delivers zero-touch lifecycle automation for bare-metal
+NCX Infra Controller (NICo) delivers zero-touch lifecycle automation for bare-metal
 systems that secures datacenter infrastructure at its foundation.
 
 It is an API-based microservice that provides site-local, zero-trust,
@@ -10,7 +10,7 @@ building next generation AI Cloud offerings.
 
 ## Getting Started
 
-- Go to the [NVIDIA NCX Infra Controller overview](book/src/README.md) to get an overview of NVIDIA Bare Metal Manager architecture and capabilities.
+- Go to the [NCX Infra Controller overview](book/src/README.md) to get an overview of NVIDIA Bare Metal Manager architecture and capabilities.
 - Or jump to the [Site Setup guide](book/src/manuals/site-setup.md) to start setting up your site for NVIDIA Bare Metal Manager.
 - Or jump to the [Building Containers guide](book/src/manuals/building_nico_containers.md) to see an overview for building the containers.
 

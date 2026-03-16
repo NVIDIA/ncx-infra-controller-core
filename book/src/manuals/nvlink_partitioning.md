@@ -3,7 +3,7 @@
 NVIDIA [NVLink](https://www.nvidia.com/en-us/data-center/nvlink/) is a high-speed interconnect technology that allows for memory-sharing between GPUs. Sharing
 is allowed between all GPUs in an NVLink *partition*, and a *partition* is made up of GPUs within the same NVLink *domain*, which can be a single NVL72 rack or two NVL36 racks cabled together.
 
-NVIDIA NCX Infra Controller (NICo) allows you to do the following with NVLink:
+NCX Infra Controller (NICo) allows you to do the following with NVLink:
 
 * Create, update, and delete NVLink partitions using the NICo API.
 * Allocate instances to NVLink domains without knowledge of the underlying NVLink topology.

@@ -1,6 +1,6 @@
 ## Health alert classifications
 
-NVIDIA NCX Infra Controller (NICo) currently uses and recognizes the following set of health alert classifications by convention:
+NCX Infra Controller (NICo) currently uses and recognizes the following set of health alert classifications by convention:
 
 ### `PreventAllocations`
 

@@ -1,6 +1,6 @@
 # Infiniband NIC and port selection
 
-NVIDIA NCX Infra Controller (NICo) supports multiple Infiniband enabled Network Interface Cards (NICs).
+NCX Infra Controller (NICo) supports multiple Infiniband enabled Network Interface Cards (NICs).
 Each of those NICs might feature 1-2 physical ports, where each port allows
 to connect the NIC to an Infiniband switch that is part of a certain Infiniband fabric.
 

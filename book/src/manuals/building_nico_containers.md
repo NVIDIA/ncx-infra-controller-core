@@ -1,6 +1,6 @@
 # Building NICo Containers
 
-This section provides instructions for building the containers for NVIDIA NCX Infra Controller (NICo).
+This section provides instructions for building the containers for NCX Infra Controller (NICo).
 
 ## Installing Prerequisite Software
 

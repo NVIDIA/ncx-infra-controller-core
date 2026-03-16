@@ -1,6 +1,6 @@
 # Ingesting Hosts
 
-Once you have NVIDIA NCX Infra Controller (NICo) up and running, you can begin ingesting machines.
+Once you have NCX Infra Controller (NICo) up and running, you can begin ingesting machines.
 
 ## Prerequisites
 

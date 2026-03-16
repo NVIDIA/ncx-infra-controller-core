@@ -1,6 +1,6 @@
 # Development
 
-NVIDIA NCX Infra Controller (NICo) uses docker-compose to instantiate a development
+NCX Infra Controller (NICo) uses docker-compose to instantiate a development
 environment.
 
 ## Local environment prep
