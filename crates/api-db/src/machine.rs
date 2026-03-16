@@ -1066,19 +1066,13 @@ where
             .await
     } else {
         let machine_id_strings: Vec<String> = machine_ids.iter().map(|id| id.to_string()).collect();
-        let query = r#"
-            SELECT m.id, m.health_report_overrides, po.last_fetched_power_state
-            FROM machines m
-            LEFT JOIN power_options po ON m.id = po.host_id
-            WHERE m.id = ANY($1::varchar[])
-            AND m.health_report_overrides->'merges' ? 'hardware-health.tray-leak-detection'
-            AND EXISTS (
-                SELECT 1 FROM jsonb_array_elements(
-                    m.health_report_overrides->'merges'->'hardware-health.tray-leak-detection'->'alerts'
-                ) AS alert
-                WHERE alert->'classifications' ? 'Leak'
-            )
-            "#.to_string();
+
+        lazy_static! {
+            static ref query: String = format!(
+                "{} AND m.id = ANY($1::varchar[])",
+                LEAK_DETECTION_QUERY_BASE,
+            );
+        }
 
         sqlx::query(&query)
             .bind(machine_id_strings)

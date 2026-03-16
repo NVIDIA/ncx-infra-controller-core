@@ -6742,5 +6742,5 @@ message HardwareMachineLeaks {
 
 // Returns a list of leak_reports with leak type of alert in them
 message HardwareLeaksReportResponse {
-  repeated HardwareMachineLeaks leakt_reports = 1;
+  repeated HardwareMachineLeaks leak_reports = 1;
 }

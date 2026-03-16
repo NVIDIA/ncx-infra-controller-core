@@ -45,10 +45,10 @@ pub async fn get_hardware_leaks_report(
 
     txn.commit().await?;
 
-    let leakt_reports = machines_with_leaks
+    let leak_reports = machines_with_leaks
         .into_iter()
         .filter_map(|(machine_id, power_state, overrides)| {
-            let report = overrides?.merges.get(TRAY_LEAK_DETECTION_SOURCE).cloned()?;
+            let report = overrides?.merges.remove(TRAY_LEAK_DETECTION_SOURCE)?;
             let power_status = power_state.and_then(|s| match s {
                 model::power_manager::PowerState::On => Some(PowerStatus::On as i32),
                 model::power_manager::PowerState::Off => Some(PowerStatus::Off as i32),
@@ -66,7 +66,7 @@ pub async fn get_hardware_leaks_report(
         .collect();
 
     Ok(Response::new(rpc::HardwareLeaksReportResponse {
-        leakt_reports,
+        leak_reports,
     }))
 }
 
