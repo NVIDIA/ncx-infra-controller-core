@@ -23,6 +23,8 @@ IMAGE_TAR=/usr/lib/otel-agent/docker/otel-agent-image.tar.gz
 FORCE_REBUILD=false
 STATE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/otel-agent-build.hash"
 CARBIDE_API=carbide-api.forge
+TAR_DIR=/var/lib/otelcol-contrib
+CERTS_DIR=/etc/otelcol-contrib/certs
 
 # Parse optional flags
 while [[ "$#" -gt 0 ]]; do
@@ -36,6 +38,36 @@ while [[ "$#" -gt 0 ]]; do
         ;;
     esac
 done
+
+if [[ ! -f "$CERTS_DIR/private/otel-key.pem" ]]; then
+    # mTLS certs are not installed yet. Look for initial certs in a tar file at
+    # $TAR_DIR. If they aren't there yet, fail and let the service retry until
+    # initial certs are provided.
+    if [[ -f "$TAR_DIR/mtls-certs.tar" ]]; then
+        cd "$TAR_DIR"
+        tar xvf mtls-certs.tar --exclude='._*' --warning=no-unknown-keyword
+        if [[ $? -ne 0 ]]; then
+            echo "Failed to extract mtls-certs.tar" >&2
+            exit 1
+        fi
+        if [[ ! -d certs ]]; then
+            echo "Expected 'certs' directory missing after extraction" >&2
+            exit 1
+        fi
+        mv certs/ca.pem "$CERTS_DIR/" || exit 1
+        mv certs/client-cert.pem "$CERTS_DIR/otel-cert.pem" || exit 1
+        mv certs/client-key.pem "$CERTS_DIR/private/otel-key.pem" || exit 1
+        rm mtls-certs.tar
+        rmdir certs 2>/dev/null || true
+        cd - >/dev/null || exit 1
+        if [[ -z "$(find "$TAR_DIR" -mindepth 1 -maxdepth 1 2>/dev/null)" ]]; then
+            rmdir "$TAR_DIR"
+        fi
+    else
+        echo "Initial mTLS certs not found at $TAR_DIR/mtls-certs.tar" >&2
+        exit 1
+    fi
+fi
 
 mkdir -p "$(dirname "$STATE_FILE")"
 
