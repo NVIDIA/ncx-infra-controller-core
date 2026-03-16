@@ -15,4 +15,19 @@
  * limitations under the License.
  */
 
-include!(concat!(env!("OUT_DIR"), "/crds/mod.rs"));
+mod helpers;
+mod maintenance_flow;
+mod sdk_device_registration;
+mod sdk_initialization;
+mod sdk_maintenance_hold;
+mod sdk_provisioning_flow;
+mod sdk_reboot_annotation;
+mod watcher_combined;
+mod watcher_error;
+mod watcher_errors;
+mod watcher_lifecycle;
+mod watcher_machine_id;
+mod watcher_maintenance;
+mod watcher_phase;
+mod watcher_ready;
+mod watcher_reboot;

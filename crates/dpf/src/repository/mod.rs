@@ -15,4 +15,14 @@
  * limitations under the License.
  */
 
-include!(concat!(env!("OUT_DIR"), "/crds/mod.rs"));
+//! Repository pattern for DPF Kubernetes resources.
+//!
+//! This module provides trait-based abstractions for interacting with DPF CRDs,
+//! enabling dependency injection and testability.
+
+mod kube;
+mod traits;
+
+pub use traits::*;
+
+pub use self::kube::KubeRepository;
