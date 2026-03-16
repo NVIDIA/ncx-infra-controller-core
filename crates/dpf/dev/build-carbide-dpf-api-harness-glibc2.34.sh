@@ -22,7 +22,7 @@ echo ""
 echo "Building Docker image (this may take a while on first run)..."
 docker build \
     --progress=plain \
-    -f crates/dpf-beta/dev/Dockerfile.carbide-dpf-api-harness-glibc2.34 \
+    -f crates/dpf/dev/Dockerfile.carbide-dpf-api-harness-glibc2.34 \
     -t "${IMAGE_NAME}" \
     .
 

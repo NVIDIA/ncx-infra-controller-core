@@ -38,7 +38,7 @@ This SDK provides a Rust interface for Carbide to interact with the DPF operator
 The `carbide-dpf-api-harness` binary exercises the DPF SDK (same surface as Carbide API) against a real DPF operator for integration testing. Build with the `driver` feature:
 
 ```bash
-cargo build -p carbide-dpf-beta --features driver --bin carbide-dpf-api-harness
+cargo build -p carbide-dpf --features driver --bin carbide-dpf-api-harness
 ```
 
 **Main flows:**
@@ -66,12 +66,12 @@ Other subcommands: `get-phase`, `force-delete-dpu`, `force-delete-node`, `delete
 
 ## Regenerating CRDs
 
-This crate commits CRD YAML files in `crates/dpf-beta/crds/`. Rust CRD bindings are generated at compile time by `build.rs` using [kopium](https://github.com/kube-rs/kopium) as a build dependency.
+This crate commits CRD YAML files in `crates/dpf/crds/`. Rust CRD bindings are generated at compile time by `build.rs` using [kopium](https://github.com/kube-rs/kopium) as a build dependency.
 
 To refresh committed YAML inputs from NVIDIA doca-platform and verify generation:
 
 ```bash
-cd crates/dpf-beta
+cd crates/dpf
 cargo make generate
 ```
 

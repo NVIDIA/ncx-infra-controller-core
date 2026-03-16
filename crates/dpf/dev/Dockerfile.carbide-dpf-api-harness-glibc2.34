@@ -1,6 +1,6 @@
 # Dockerfile for building carbide-dpf-api-harness against GLIBC 2.34
 # Uses Ubuntu 22.04 (Jammy) which ships with GLIBC 2.34
-# Build from workspace root: docker build -f crates/dpf-beta/dev/Dockerfile.carbide-dpf-api-harness-glibc2.34 -t carbide-dpf-api-harness:glibc2.34 .
+# Build from workspace root: docker build -f crates/dpf/dev/Dockerfile.carbide-dpf-api-harness-glibc2.34 -t carbide-dpf-api-harness:glibc2.34 .
 
 FROM ubuntu:22.04 AS builder
 
@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/workspace/target \
-    cargo build --release --package carbide-dpf-beta --bin carbide-dpf-api-harness --features driver && \
+    cargo build --release --package carbide-dpf --bin carbide-dpf-api-harness --features driver && \
     cp target/release/carbide-dpf-api-harness /tmp/carbide-dpf-api-harness && \
     strip /tmp/carbide-dpf-api-harness && \
     echo "Binary built successfully from workspace"
