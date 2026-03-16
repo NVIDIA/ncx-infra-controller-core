@@ -215,6 +215,22 @@ pub async fn find_all_by_ip(
         .map_err(|e| DatabaseError::new("explored_endpoints find_all_by_ip", e))
 }
 
+pub async fn lookup_vendor_by_ip(
+    address: IpAddr,
+    db_reader: impl DbReader<'_>,
+) -> Result<Option<String>, DatabaseError> {
+    let query = "SELECT exploration_report ->> 'Vendor' AS vendor FROM explored_endpoints WHERE address = $1";
+
+    // exploration_report is JSONB and technically the Vendor field can be set to NULL, so we need 2 levels of Option<T>
+    let vendor: Option<Option<String>> = sqlx::query_scalar(query)
+        .bind(address)
+        .fetch_optional(db_reader)
+        .await
+        .map_err(|e| DatabaseError::new("explored_endpoints lookup_vendor_by_ip", e))?;
+
+    Ok(vendor.flatten())
+}
+
 /// Updates the explored information about a node
 ///
 /// This operation will return `Ok(false)` if the entry had been deleted in

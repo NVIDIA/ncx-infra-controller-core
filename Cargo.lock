@@ -2306,6 +2306,7 @@ name = "carbide-ssh-console"
 version = "0.1.0"
 dependencies = [
  "bmc-mock",
+ "bmc-vendor",
  "carbide-api-test-helper",
  "carbide-machine-a-tron",
  "carbide-rpc",
