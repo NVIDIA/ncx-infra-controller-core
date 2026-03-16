@@ -1,6 +1,8 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +27,6 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use carbide_dpf::KubeImpl;
 use carbide_uuid::instance::InstanceId;
 use carbide_uuid::instance_type::InstanceTypeId;
 use carbide_uuid::machine::MachineId;
@@ -76,6 +77,7 @@ use site_explorer::new_host_with_machine_validation;
 use sqlx::PgPool;
 use sqlx::postgres::PgConnectOptions;
 use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tonic::Request;
 use tracing_subscriber::EnvFilter;
@@ -93,6 +95,7 @@ use crate::cfg::file::{
     SiteExplorerExploreMode, SpdmConfig, SpdmStateControllerConfig, StateControllerConfig,
     SwitchStateControllerConfig, VmaasConfig, VpcPeeringPolicy, default_max_find_by_ids,
 };
+use crate::dpf::DpfOperations;
 use crate::ethernet_virtualization::{EthVirtData, SiteFabricPrefixList};
 use crate::ib::{self, IBFabricManagerImpl, IBFabricManagerType};
 use crate::ib_fabric_monitor::IbFabricMonitor;
@@ -112,8 +115,7 @@ use crate::state_controller::controller::{Enqueuer, StateController};
 use crate::state_controller::ib_partition::handler::IBPartitionStateHandler;
 use crate::state_controller::ib_partition::io::IBPartitionStateControllerIO;
 use crate::state_controller::machine::handler::{
-    DpfConfig, MachineStateHandler, MachineStateHandlerBuilder, PowerOptionConfig,
-    ReachabilityParams,
+    MachineStateHandler, MachineStateHandlerBuilder, PowerOptionConfig, ReachabilityParams,
 };
 use crate::state_controller::machine::io::MachineStateControllerIO;
 use crate::state_controller::network_segment::handler::NetworkSegmentStateHandler;
@@ -236,21 +238,6 @@ lazy_static! {
     ];
 }
 
-#[derive(Clone, Debug)]
-pub struct TestDpfKubeClient {}
-
-#[async_trait::async_trait]
-impl KubeImpl for TestDpfKubeClient {
-    async fn get_kube_client(&self) -> Result<kube::Client, carbide_dpf::DpfError> {
-        let (service, _handle) = tower_test::mock::pair::<
-            http::Request<kube::client::Body>,
-            http::Response<kube::client::Body>,
-        >();
-        let client = kube::Client::new(service, "default");
-        Ok(client)
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct TestEnvOverrides {
     pub allow_zero_dpu_hosts: Option<bool>,
@@ -261,7 +248,7 @@ pub struct TestEnvOverrides {
     pub prevent_allocations_on_stale_dpu_agent_version: Option<bool>,
     pub network_segments_drain_period: Option<chrono::Duration>,
     pub power_manager_enabled: Option<bool>,
-    pub dpf_config: Option<DpfConfig>,
+    pub dpf_sdk: Option<Arc<dyn DpfOperations>>,
     pub fnn_config: Option<FnnConfig>,
     pub nmxm_default_partition: Option<bool>,
     pub nmxm_unknown_partition: Option<bool>,
@@ -278,8 +265,8 @@ impl TestEnvOverrides {
         }
     }
 
-    pub fn with_dpf_config(mut self, dpf_config: DpfConfig) -> Self {
-        self.dpf_config = Some(dpf_config);
+    pub fn with_dpf_sdk(mut self, dpf_sdk: Arc<dyn DpfOperations>) -> Self {
+        self.dpf_sdk = Some(dpf_sdk);
         self
     }
 
@@ -363,6 +350,8 @@ pub struct TestEnv {
     pub test_credential_manager: Arc<TestCredentialManager>,
     pub rms_sim: Arc<RmsSim>,
     pub drop_guard: DropGuard,
+    // Background tasks are spawned here, hold it so they don't get dropped.
+    pub join_set: JoinSet<()>,
 }
 
 impl TestEnv {
@@ -1175,6 +1164,7 @@ pub fn get_config() -> CarbideConfig {
             enabled: true,
             nras_config: Some(nras::Config::default()),
         },
+        machine_identity: crate::cfg::file::MachineIdentityConfig::default(),
         dsx_exchange_event_bus: None,
         use_onboard_nic: Arc::new(false.into()),
         dpf: crate::cfg::file::DpfConfig::default(),
@@ -1272,12 +1262,18 @@ pub async fn create_test_env_with_overrides(
     overrides: TestEnvOverrides,
 ) -> TestEnv {
     let db_pool = create_pool(db_pool).await;
+    let cancel_token = CancellationToken::new();
+    let mut join_set = JoinSet::new();
+
     let work_lock_manager_handle = work_lock_manager::start(
+        &mut join_set,
         db_pool.clone(),
         work_lock_manager::KeepaliveConfig::default(),
+        cancel_token.clone(),
     )
     .await
     .expect("work_lock_manager failed to start: no availble connections?");
+
     let test_meter = TestMeter::default();
     let credential_manager = Arc::new(TestCredentialManager::default());
 
@@ -1437,8 +1433,11 @@ pub async fn create_test_env_with_overrides(
 
     let rms_sim = Arc::new(RmsSim::default());
 
+    let dpf_sdk = overrides.dpf_sdk;
+    let api_dpf_sdk = dpf_sdk.clone();
+
     let api = Arc::new(Api {
-        kube_client_provider: Arc::new(TestDpfKubeClient {}),
+        dpf_sdk: api_dpf_sdk,
         runtime_config: config.clone(),
         credential_manager: composite_manager,
         certificate_provider: certificate_provider.clone(),
@@ -1465,12 +1464,6 @@ pub async fn create_test_env_with_overrides(
         power_options.enabled = v;
     }
 
-    let dpf_config = if let Some(override_dpf_config) = overrides.dpf_config {
-        override_dpf_config
-    } else {
-        DpfConfig::from(config.dpf.clone(), Arc::new(carbide_dpf::Production {}))
-    };
-
     let machine_swap = SwapHandler {
         inner: Arc::new(Mutex::new(
             MachineStateHandlerBuilder::builder()
@@ -1490,7 +1483,7 @@ pub async fn create_test_env_with_overrides(
                     config.machine_updater.instance_autoreboot_period.clone(),
                 )
                 .power_options_config(power_options)
-                .dpf_config(dpf_config)
+                .dpf_sdk(dpf_sdk)
                 .build(),
         )),
     };
@@ -1515,7 +1508,6 @@ pub async fn create_test_env_with_overrides(
     });
 
     let state_controller_id = uuid::Uuid::new_v4().to_string();
-    let cancel_token = CancellationToken::new();
 
     let machine_controller = StateController::<MachineStateControllerIO>::builder()
         .database(db_pool.clone(), work_lock_manager_handle.clone())
@@ -1718,6 +1710,7 @@ pub async fn create_test_env_with_overrides(
         test_credential_manager: credential_manager.clone(),
         rms_sim,
         drop_guard: cancel_token.drop_guard(),
+        join_set,
     }
 }
 
@@ -2254,10 +2247,23 @@ pub async fn create_managed_host(env: &TestEnv) -> TestManagedHost {
 
 /// Create a managed host with 1 DPU (default config)
 pub async fn create_managed_host_with_dpf(env: &TestEnv) -> TestManagedHost {
-    let dpu_config = DpuConfig::with_hardware_info_template(
-        managed_host::HardwareInfoTemplate::Custom(dpu::DPU_BF3_INFO_JSON),
-    );
-    let mh_config = ManagedHostConfig::with_dpus(vec![dpu_config]);
+    create_managed_host_with_dpf_multi(env, 1).await
+}
+
+/// Create a managed host with `dpu_count` DPUs using the DPF path.
+pub async fn create_managed_host_with_dpf_multi(
+    env: &TestEnv,
+    dpu_count: usize,
+) -> TestManagedHost {
+    assert!(dpu_count >= 1, "need to specify at least 1 dpu");
+    let dpu_configs: Vec<DpuConfig> = (0..dpu_count)
+        .map(|_| {
+            DpuConfig::with_hardware_info_template(managed_host::HardwareInfoTemplate::Custom(
+                dpu::DPU_BF3_INFO_JSON,
+            ))
+        })
+        .collect();
+    let mh_config = ManagedHostConfig::with_dpus(dpu_configs);
     let mh = site_explorer::new_mock_host_with_dpf(env, mh_config)
         .await
         .expect("Failed to create a new host");

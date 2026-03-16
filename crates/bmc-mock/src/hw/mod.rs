@@ -29,3 +29,24 @@ pub mod dell_poweredge_r750;
 
 /// Support of Wiwynn GB200 NVL servers.
 pub mod wiwynn_gb200_nvl;
+
+/// Support of LiteOn Power Shelf.
+pub mod liteon_power_shelf;
+
+/// Support of NVIDIA Switch ND5200_LD.
+pub mod nvidia_switch_nd5200_ld;
+
+use bmc_vendor::BMCVendor;
+
+pub fn bmc_vendor_to_udev_dmi(v: BMCVendor) -> &'static str {
+    match v {
+        BMCVendor::Lenovo => "Lenovo",
+        BMCVendor::Dell => "Dell Inc.",
+        BMCVendor::Nvidia => "https://www.mellanox.com",
+        BMCVendor::Supermicro => "Supermicro",
+        BMCVendor::Hpe => "HPE",
+        BMCVendor::LenovoAMI => "Unknown",
+        BMCVendor::Liteon => "Unknown",
+        BMCVendor::Unknown => "Unknown",
+    }
+}
