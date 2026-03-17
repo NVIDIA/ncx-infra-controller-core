@@ -35,18 +35,18 @@ const API_URL: &str = "https://carbide-api.forge";
 const PXE_URL: &str = "http://carbide-pxe.forge";
 const BMC_FW_UPDATE_KEY: &str = "bmc_fw_update";
 const SECONDS_SINCE_EPOCH_KEY: &str = "seconds_since_epoch";
-const HBN_REPS_KEY: &str = "forge_hbn_reps";
-const HBN_SFS_KEY: &str = "forge_hbn_sfs";
-const VF_INTERCEPT_BRIDGE_NAME_KEY: &str = "forge_vf_intercept_bridge_name";
-const HOST_INTERCEPT_BRIDGE_NAME_KEY: &str = "forge_host_intercept_bridge_name";
-const HOST_INTERCEPT_HBN_PORT_KEY: &str = "forge_host_intercept_hbn_port";
-const HOST_INTERCEPT_BRIDGE_PORT_KEY: &str = "forge_host_intercept_bridge_port";
-const VF_INTERCEPT_HBN_PORT_KEY: &str = "forge_vf_intercept_hbn_port";
-const VF_INTERCEPT_BRIDGE_PORT_KEY: &str = "forge_vf_intercept_bridge_port";
-const VF_INTERCEPT_BRIDGE_SF_REPRESENTOR_KEY: &str = "forge_vf_intercept_bridge_sf_representor";
+const HBN_REPS_KEY: &str = "carbide_hbn_reps";
+const HBN_SFS_KEY: &str = "carbide_hbn_sfs";
+const VF_INTERCEPT_BRIDGE_NAME_KEY: &str = "carbide_vf_intercept_bridge_name";
+const HOST_INTERCEPT_BRIDGE_NAME_KEY: &str = "carbide_host_intercept_bridge_name";
+const HOST_INTERCEPT_HBN_PORT_KEY: &str = "carbide_host_intercept_hbn_port";
+const HOST_INTERCEPT_BRIDGE_PORT_KEY: &str = "carbide_host_intercept_bridge_port";
+const VF_INTERCEPT_HBN_PORT_KEY: &str = "carbide_vf_intercept_hbn_port";
+const VF_INTERCEPT_BRIDGE_PORT_KEY: &str = "carbide_vf_intercept_bridge_port";
+const VF_INTERCEPT_BRIDGE_SF_REPRESENTOR_KEY: &str = "carbide_vf_intercept_bridge_sf_representor";
 const VF_INTERCEPT_BRIDGE_SF_HBN_BRIDGE_REPRESENTOR_KEY: &str =
-    "forge_vf_intercept_bridge_sf_hbn_bridge_representor";
-const VF_INTERCEPT_BRIDGE_SF_KEY: &str = "forge_vf_intercept_bridge_sf";
+    "carbide_vf_intercept_bridge_sf_hbn_bridge_representor";
+const VF_INTERCEPT_BRIDGE_SF_KEY: &str = "carbide_vf_intercept_bridge_sf";
 
 const BFB_PATH: &str = "/public/blobs/internal/aarch64/forge.bfb";
 
