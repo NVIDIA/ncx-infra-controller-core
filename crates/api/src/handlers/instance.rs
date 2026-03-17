@@ -266,7 +266,10 @@ pub(crate) async fn find_by_machine_id(
 }
 
 /// Creates a TenantReportedIssue health override template with issue details
-fn create_tenant_reported_issue_override(issue: &rpc::Issue) -> HealthReport {
+fn create_tenant_reported_issue_override(
+    issue: &rpc::Issue,
+    tenant_organization_id: &str,
+) -> HealthReport {
     HealthReport {
         source: "tenant-reported-issue".to_string(),
         observed_at: Some(chrono::Utc::now()),
@@ -277,7 +280,8 @@ fn create_tenant_reported_issue_override(issue: &rpc::Issue) -> HealthReport {
             message: json!({
                 "issue_category": format!("{:?}", rpc::IssueCategory::try_from(issue.category).unwrap_or(rpc::IssueCategory::Unspecified)),
                 "summary": issue.summary,
-                "details": issue.details
+                "details": issue.details,
+                "tenant_organization_id": tenant_organization_id
             }).to_string(),
             tenant_message: Some(format!("TenantReportedIssue: {}", issue.summary)),
             classifications: vec![
@@ -404,6 +408,7 @@ async fn handle_instance_release_from_repair_tenant(
     machine_id: &MachineId,
     issue: Option<&rpc::Issue>,
     machine: &model::machine::Machine,
+    tenant_organization_id: &str,
 ) -> Result<(), CarbideError> {
     let has_request_repair = machine
         .health_report_overrides
@@ -420,7 +425,8 @@ async fn handle_instance_release_from_repair_tenant(
                 "Repair tenant reports issues on machine without RequestRepair override"
             );
 
-            let override_report = create_tenant_reported_issue_override(issue);
+            let override_report =
+                create_tenant_reported_issue_override(issue, tenant_organization_id);
             apply_health_override(
                 txn,
                 machine_id,
@@ -469,7 +475,8 @@ async fn handle_instance_release_from_repair_tenant(
                 "Repair tenant reports new issues after repair completion"
             );
 
-            let override_report = create_tenant_reported_issue_override(issue);
+            let override_report =
+                create_tenant_reported_issue_override(issue, tenant_organization_id);
             apply_health_override(
                 txn,
                 machine_id,
@@ -523,7 +530,8 @@ async fn handle_instance_release_from_repair_tenant(
             }
         };
 
-        let override_report = create_tenant_reported_issue_override(&issue_to_apply);
+        let override_report =
+            create_tenant_reported_issue_override(&issue_to_apply, tenant_organization_id);
         apply_health_override(
             txn,
             machine_id,
@@ -557,6 +565,7 @@ async fn handle_instance_release_from_regular_tenant_and_report_issue(
     machine_id: &MachineId,
     issue: &rpc::Issue,
     auto_repair_enabled: bool,
+    tenant_organization_id: &str,
 ) -> Result<(), CarbideError> {
     tracing::info!(
         machine_id = %machine_id,
@@ -566,7 +575,7 @@ async fn handle_instance_release_from_regular_tenant_and_report_issue(
     );
 
     // Apply TenantReportedIssue health override
-    let tenant_override = create_tenant_reported_issue_override(issue);
+    let tenant_override = create_tenant_reported_issue_override(issue, tenant_organization_id);
     apply_health_override(
         txn,
         machine_id,
@@ -666,6 +675,7 @@ pub(crate) async fn release(
             &instance.machine_id,
             delete_instance.issue.as_ref(),
             &machine,
+            instance.config.tenant.tenant_organization_id.as_str(),
         )
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
@@ -678,6 +688,7 @@ pub(crate) async fn release(
             &instance.machine_id,
             issue,
             auto_repair_enabled,
+            instance.config.tenant.tenant_organization_id.as_str(),
         )
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
