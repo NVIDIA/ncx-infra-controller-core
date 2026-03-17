@@ -13,9 +13,11 @@ pub mod tls;
 pub mod types;
 
 pub mod proto {
+    #[allow(clippy::enum_variant_names)]
     pub mod nsm {
         include!(concat!(env!("OUT_DIR"), "/nsm/v1.rs"));
     }
+    #[allow(clippy::enum_variant_names)]
     pub mod psm {
         include!(concat!(env!("OUT_DIR"), "/psm/v1.rs"));
     }

@@ -7,7 +7,7 @@ use std::net::IpAddr;
 use mac_address::MacAddress;
 
 use crate::error::ComponentManagerError;
-use crate::types::PowerAction;
+use crate::types::{FirmwareState, PowerAction};
 
 /// Physical network identifiers for an NV-Switch, used to register with and
 /// operate against the backend service (NSM).
@@ -32,17 +32,6 @@ pub struct SwitchFirmwareUpdateStatus {
     pub state: FirmwareState,
     pub target_version: String,
     pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FirmwareState {
-    Unknown,
-    Queued,
-    InProgress,
-    Verifying,
-    Completed,
-    Failed,
-    Cancelled,
 }
 
 /// Backend trait for NV-Switch management operations.

@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use mac_address::MacAddress;
 use tonic::transport::Channel;
 use tracing::instrument;
 
 use crate::config::BackendTlsConfig;
 use crate::error::ComponentManagerError;
 use crate::power_shelf_manager::{
-    FirmwareState, PowerShelfComponentResult, PowerShelfEndpoint, PowerShelfFirmwareUpdateStatus,
+    PowerShelfComponentResult, PowerShelfEndpoint, PowerShelfFirmwareUpdateStatus,
     PowerShelfManager, PowerShelfVendor,
 };
 use crate::proto::psm;
-use crate::types::PowerAction;
+use crate::types::{FirmwareState, PowerAction, parse_mac};
 
 #[derive(Debug)]
 pub struct PsmPowerShelfBackend {
@@ -39,11 +38,6 @@ fn map_psm_fw_state(state: i32) -> FirmwareState {
         Ok(psm::FirmwareUpdateState::Failed) => FirmwareState::Failed,
         _ => FirmwareState::Unknown,
     }
-}
-
-fn parse_mac(s: &str) -> Result<MacAddress, ComponentManagerError> {
-    s.parse::<MacAddress>()
-        .map_err(|e| ComponentManagerError::Internal(format!("invalid MAC from backend: {e}")))
 }
 
 fn map_vendor(v: &PowerShelfVendor) -> i32 {
@@ -360,5 +354,81 @@ impl PowerShelfManager for PsmPowerShelfBackend {
             .collect();
 
         Ok(versions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn psm_state_queued() {
+        assert_eq!(
+            map_psm_fw_state(psm::FirmwareUpdateState::Queued as i32),
+            FirmwareState::Queued,
+        );
+    }
+
+    #[test]
+    fn psm_state_verifying() {
+        assert_eq!(
+            map_psm_fw_state(psm::FirmwareUpdateState::Verifying as i32),
+            FirmwareState::Verifying,
+        );
+    }
+
+    #[test]
+    fn psm_state_completed() {
+        assert_eq!(
+            map_psm_fw_state(psm::FirmwareUpdateState::Completed as i32),
+            FirmwareState::Completed,
+        );
+    }
+
+    #[test]
+    fn psm_state_failed() {
+        assert_eq!(
+            map_psm_fw_state(psm::FirmwareUpdateState::Failed as i32),
+            FirmwareState::Failed,
+        );
+    }
+
+    #[test]
+    fn psm_state_unknown_for_unrecognized_value() {
+        assert_eq!(map_psm_fw_state(9999), FirmwareState::Unknown);
+    }
+
+    #[test]
+    fn vendor_mapping_unknown() {
+        assert_eq!(
+            map_vendor(&PowerShelfVendor::Unknown),
+            psm::PmcVendor::PmcTypeUnknown as i32,
+        );
+    }
+
+    #[test]
+    fn vendor_mapping_liteon() {
+        assert_eq!(
+            map_vendor(&PowerShelfVendor::Liteon),
+            psm::PmcVendor::PmcTypeLiteon as i32,
+        );
+    }
+
+    #[test]
+    fn mac_strings_from_endpoints() {
+        let eps = vec![
+            PowerShelfEndpoint {
+                pmc_ip: "10.0.0.1".parse().unwrap(),
+                pmc_mac: "AA:BB:CC:DD:EE:01".parse().unwrap(),
+                pmc_vendor: PowerShelfVendor::Liteon,
+            },
+            PowerShelfEndpoint {
+                pmc_ip: "10.0.0.2".parse().unwrap(),
+                pmc_mac: "AA:BB:CC:DD:EE:02".parse().unwrap(),
+                pmc_vendor: PowerShelfVendor::Unknown,
+            },
+        ];
+        let macs = mac_strings(&eps);
+        assert_eq!(macs, vec!["AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"]);
     }
 }

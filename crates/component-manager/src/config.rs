@@ -90,3 +90,80 @@ impl Default for ComponentManagerConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tls_config(
+        cert_dir: Option<&str>,
+        ca: Option<&str>,
+        cert: Option<&str>,
+        key: Option<&str>,
+    ) -> BackendTlsConfig {
+        BackendTlsConfig {
+            cert_dir: cert_dir.map(String::from),
+            ca_cert_path: ca.map(String::from),
+            client_cert_path: cert.map(String::from),
+            client_key_path: key.map(String::from),
+            domain: None,
+        }
+    }
+
+    #[test]
+    fn resolve_ca_cert_explicit_path_wins() {
+        let cfg = tls_config(Some("/dir"), Some("/explicit/ca.pem"), None, None);
+        assert_eq!(cfg.resolve_ca_cert_path().unwrap(), "/explicit/ca.pem");
+    }
+
+    #[test]
+    fn resolve_ca_cert_falls_back_to_dir() {
+        let cfg = tls_config(Some("/certs"), None, None, None);
+        assert_eq!(cfg.resolve_ca_cert_path().unwrap(), "/certs/ca.crt");
+    }
+
+    #[test]
+    fn resolve_ca_cert_none_when_nothing_set() {
+        let cfg = tls_config(None, None, None, None);
+        assert!(cfg.resolve_ca_cert_path().is_none());
+    }
+
+    #[test]
+    fn resolve_client_cert_explicit_path_wins() {
+        let cfg = tls_config(Some("/dir"), None, Some("/explicit/client.pem"), None);
+        assert_eq!(
+            cfg.resolve_client_cert_path().unwrap(),
+            "/explicit/client.pem"
+        );
+    }
+
+    #[test]
+    fn resolve_client_cert_falls_back_to_dir() {
+        let cfg = tls_config(Some("/certs"), None, None, None);
+        assert_eq!(cfg.resolve_client_cert_path().unwrap(), "/certs/tls.crt");
+    }
+
+    #[test]
+    fn resolve_client_cert_none_when_nothing_set() {
+        let cfg = tls_config(None, None, None, None);
+        assert!(cfg.resolve_client_cert_path().is_none());
+    }
+
+    #[test]
+    fn resolve_client_key_explicit_path_wins() {
+        let cfg = tls_config(Some("/dir"), None, None, Some("/explicit/key.pem"));
+        assert_eq!(cfg.resolve_client_key_path().unwrap(), "/explicit/key.pem");
+    }
+
+    #[test]
+    fn resolve_client_key_falls_back_to_dir() {
+        let cfg = tls_config(Some("/certs"), None, None, None);
+        assert_eq!(cfg.resolve_client_key_path().unwrap(), "/certs/tls.key");
+    }
+
+    #[test]
+    fn resolve_client_key_none_when_nothing_set() {
+        let cfg = tls_config(None, None, None, None);
+        assert!(cfg.resolve_client_key_path().is_none());
+    }
+}

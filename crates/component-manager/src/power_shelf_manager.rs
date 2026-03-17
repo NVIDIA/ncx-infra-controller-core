@@ -7,7 +7,7 @@ use std::net::IpAddr;
 use mac_address::MacAddress;
 
 use crate::error::ComponentManagerError;
-use crate::types::PowerAction;
+use crate::types::{FirmwareState, PowerAction};
 
 /// Physical network identifiers for a power shelf, used to register with and
 /// operate against the backend service (PSM).
@@ -24,6 +24,10 @@ pub enum PowerShelfVendor {
     Liteon,
 }
 
+impl PowerShelfVendor {
+    pub const DEFAULT: Self = Self::Liteon;
+}
+
 #[derive(Debug, Clone)]
 pub struct PowerShelfComponentResult {
     pub pmc_mac: MacAddress,
@@ -37,17 +41,6 @@ pub struct PowerShelfFirmwareUpdateStatus {
     pub state: FirmwareState,
     pub target_version: String,
     pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FirmwareState {
-    Unknown,
-    Queued,
-    InProgress,
-    Verifying,
-    Completed,
-    Failed,
-    Cancelled,
 }
 
 /// Backend trait for power shelf management operations.

@@ -10,11 +10,10 @@ use tracing::instrument;
 use crate::config::BackendTlsConfig;
 use crate::error::ComponentManagerError;
 use crate::nv_switch_manager::{
-    FirmwareState, NvSwitchManager, SwitchComponentResult, SwitchEndpoint,
-    SwitchFirmwareUpdateStatus,
+    NvSwitchManager, SwitchComponentResult, SwitchEndpoint, SwitchFirmwareUpdateStatus,
 };
 use crate::proto::nsm;
-use crate::types::PowerAction;
+use crate::types::{FirmwareState, PowerAction, parse_mac};
 
 #[derive(Debug)]
 pub struct NsmSwitchBackend {
@@ -50,29 +49,14 @@ fn map_nsm_update_state(state: i32) -> FirmwareState {
     }
 }
 
-fn parse_mac(s: &str) -> Result<MacAddress, ComponentManagerError> {
-    s.parse::<MacAddress>()
-        .map_err(|e| ComponentManagerError::Internal(format!("invalid MAC from backend: {e}")))
-}
-
-/// Builds registration requests and a bmc_mac-indexed lookup from endpoints.
-fn build_registration(
-    endpoints: &[SwitchEndpoint],
-) -> (
-    Vec<nsm::RegisterNvSwitchRequest>,
-    HashMap<String, MacAddress>,
-) {
-    let mut reqs = Vec::with_capacity(endpoints.len());
-    let mut bmc_mac_by_bmc_str: HashMap<String, MacAddress> = HashMap::new();
-
-    for ep in endpoints {
-        let bmc_mac_str = ep.bmc_mac.to_string();
-        bmc_mac_by_bmc_str.insert(bmc_mac_str.clone(), ep.bmc_mac);
-
-        reqs.push(nsm::RegisterNvSwitchRequest {
+/// Builds registration requests from endpoints.
+fn build_registration(endpoints: &[SwitchEndpoint]) -> Vec<nsm::RegisterNvSwitchRequest> {
+    endpoints
+        .iter()
+        .map(|ep| nsm::RegisterNvSwitchRequest {
             vendor: nsm::Vendor::Nvidia as i32,
             bmc: Some(nsm::Subsystem {
-                mac_address: bmc_mac_str,
+                mac_address: ep.bmc_mac.to_string(),
                 ip_address: ep.bmc_ip.to_string(),
                 credentials: None,
                 port: 0,
@@ -84,10 +68,8 @@ fn build_registration(
                 port: 0,
             }),
             rack_id: String::new(),
-        });
-    }
-
-    (reqs, bmc_mac_by_bmc_str)
+        })
+        .collect()
 }
 
 /// Registers endpoints with NSM and returns bidirectional maps between
@@ -96,7 +78,7 @@ async fn register_and_map(
     client: &mut nsm::nv_switch_manager_client::NvSwitchManagerClient<Channel>,
     endpoints: &[SwitchEndpoint],
 ) -> Result<(HashMap<MacAddress, String>, HashMap<String, MacAddress>), ComponentManagerError> {
-    let (reqs, bmc_mac_by_bmc_str) = build_registration(endpoints);
+    let reqs = build_registration(endpoints);
 
     let response = client
         .register_nv_switches(nsm::RegisterNvSwitchesRequest {
@@ -126,10 +108,6 @@ async fn register_and_map(
             "NSM registration failed for all switches".into(),
         ));
     }
-
-    // Also build uuid_to_mac from bmc_mac_by_bmc_str for response mapping
-    // that may come back with BMC MAC strings instead of UUIDs
-    let _ = bmc_mac_by_bmc_str;
 
     Ok((mac_to_uuid, uuid_to_mac))
 }
@@ -295,5 +273,105 @@ impl NvSwitchManager for NsmSwitchBackend {
         let response = self.client.clone().list_bundles(()).await?.into_inner();
 
         Ok(response.bundles.into_iter().map(|b| b.version).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nsm_state_queued() {
+        assert_eq!(
+            map_nsm_update_state(nsm::UpdateState::Queued as i32),
+            FirmwareState::Queued,
+        );
+    }
+
+    #[test]
+    fn nsm_state_in_progress_variants() {
+        for state in [
+            nsm::UpdateState::Copy,
+            nsm::UpdateState::Upload,
+            nsm::UpdateState::Install,
+            nsm::UpdateState::PollCompletion,
+            nsm::UpdateState::PowerCycle,
+            nsm::UpdateState::WaitReachable,
+        ] {
+            assert_eq!(
+                map_nsm_update_state(state as i32),
+                FirmwareState::InProgress,
+                "expected InProgress for {state:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn nsm_state_verifying_variants() {
+        for state in [nsm::UpdateState::Verify, nsm::UpdateState::Cleanup] {
+            assert_eq!(
+                map_nsm_update_state(state as i32),
+                FirmwareState::Verifying,
+                "expected Verifying for {state:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn nsm_state_completed() {
+        assert_eq!(
+            map_nsm_update_state(nsm::UpdateState::Completed as i32),
+            FirmwareState::Completed,
+        );
+    }
+
+    #[test]
+    fn nsm_state_failed() {
+        assert_eq!(
+            map_nsm_update_state(nsm::UpdateState::Failed as i32),
+            FirmwareState::Failed,
+        );
+    }
+
+    #[test]
+    fn nsm_state_cancelled() {
+        assert_eq!(
+            map_nsm_update_state(nsm::UpdateState::Cancelled as i32),
+            FirmwareState::Cancelled,
+        );
+    }
+
+    #[test]
+    fn nsm_state_unknown_for_unrecognized_value() {
+        assert_eq!(map_nsm_update_state(9999), FirmwareState::Unknown);
+    }
+
+    #[test]
+    fn build_registration_empty() {
+        let reqs = build_registration(&[]);
+        assert!(reqs.is_empty());
+    }
+
+    #[test]
+    fn build_registration_populates_fields() {
+        let ep = SwitchEndpoint {
+            bmc_ip: "10.0.0.1".parse().unwrap(),
+            bmc_mac: "AA:BB:CC:DD:EE:01".parse().unwrap(),
+            nvos_ip: "10.0.0.2".parse().unwrap(),
+            nvos_mac: "AA:BB:CC:DD:EE:02".parse().unwrap(),
+        };
+        let reqs = build_registration(&[ep]);
+        assert_eq!(reqs.len(), 1);
+
+        let req = &reqs[0];
+        assert_eq!(req.vendor, nsm::Vendor::Nvidia as i32);
+
+        let bmc = req.bmc.as_ref().unwrap();
+        assert_eq!(bmc.ip_address, "10.0.0.1");
+        assert_eq!(bmc.mac_address, "AA:BB:CC:DD:EE:01");
+
+        let nvos = req.nvos.as_ref().unwrap();
+        assert_eq!(nvos.ip_address, "10.0.0.2");
+        assert_eq!(nvos.mac_address, "AA:BB:CC:DD:EE:02");
     }
 }

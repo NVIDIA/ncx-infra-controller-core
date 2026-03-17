@@ -417,7 +417,7 @@ pub async fn start_api(
     } else {
         None
     };
-        
+
     let component_manager = if let Some(cd_config) = &carbide_config.component_manager {
         match component_manager::component_manager::build_component_manager(cd_config).await {
             Ok(cm) => {

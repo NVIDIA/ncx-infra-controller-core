@@ -47,7 +47,7 @@ pub async fn build_component_manager(
                 crate::nsm::NsmSwitchBackend::connect(&endpoint.url, endpoint.tls.as_ref()).await?,
             )
         }
-        "mock" => Arc::new(crate::mock::MockNvSwitchManager::default()),
+        "mock" => Arc::new(crate::mock::MockNvSwitchManager),
         other => {
             return Err(ComponentManagerError::InvalidArgument(format!(
                 "unknown nv_switch_backend: {other}"
@@ -68,7 +68,7 @@ pub async fn build_component_manager(
                     .await?,
             )
         }
-        "mock" => Arc::new(crate::mock::MockPowerShelfManager::default()),
+        "mock" => Arc::new(crate::mock::MockPowerShelfManager),
         other => {
             return Err(ComponentManagerError::InvalidArgument(format!(
                 "unknown power_shelf_backend: {other}"
@@ -77,4 +77,75 @@ pub async fn build_component_manager(
     };
 
     Ok(ComponentManager::new(nv_switch, power_shelf))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ComponentManagerConfig;
+
+    #[tokio::test]
+    async fn build_with_mock_backends() {
+        let config = ComponentManagerConfig {
+            nv_switch_backend: "mock".into(),
+            power_shelf_backend: "mock".into(),
+            nsm: None,
+            psm: None,
+        };
+        let cm = build_component_manager(&config).await.unwrap();
+        assert_eq!(cm.nv_switch.name(), "mock-nsm");
+        assert_eq!(cm.power_shelf.name(), "mock-psm");
+    }
+
+    #[tokio::test]
+    async fn build_rejects_unknown_nv_switch_backend() {
+        let config = ComponentManagerConfig {
+            nv_switch_backend: "bogus".into(),
+            power_shelf_backend: "mock".into(),
+            nsm: None,
+            psm: None,
+        };
+        let err = build_component_manager(&config).await.unwrap_err();
+        assert!(
+            matches!(err, ComponentManagerError::InvalidArgument(msg) if msg.contains("bogus"))
+        );
+    }
+
+    #[tokio::test]
+    async fn build_rejects_unknown_power_shelf_backend() {
+        let config = ComponentManagerConfig {
+            nv_switch_backend: "mock".into(),
+            power_shelf_backend: "bogus".into(),
+            nsm: None,
+            psm: None,
+        };
+        let err = build_component_manager(&config).await.unwrap_err();
+        assert!(
+            matches!(err, ComponentManagerError::InvalidArgument(msg) if msg.contains("bogus"))
+        );
+    }
+
+    #[tokio::test]
+    async fn build_nsm_without_config_returns_error() {
+        let config = ComponentManagerConfig {
+            nv_switch_backend: "nsm".into(),
+            power_shelf_backend: "mock".into(),
+            nsm: None,
+            psm: None,
+        };
+        let err = build_component_manager(&config).await.unwrap_err();
+        assert!(matches!(err, ComponentManagerError::InvalidArgument(_)));
+    }
+
+    #[tokio::test]
+    async fn build_psm_without_config_returns_error() {
+        let config = ComponentManagerConfig {
+            nv_switch_backend: "mock".into(),
+            power_shelf_backend: "psm".into(),
+            nsm: None,
+            psm: None,
+        };
+        let err = build_component_manager(&config).await.unwrap_err();
+        assert!(matches!(err, ComponentManagerError::InvalidArgument(_)));
+    }
 }

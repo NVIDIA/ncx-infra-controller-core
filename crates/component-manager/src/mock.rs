@@ -3,14 +3,13 @@
 
 use crate::error::ComponentManagerError;
 use crate::nv_switch_manager::{
-    FirmwareState as SwFwState, NvSwitchManager, SwitchComponentResult, SwitchEndpoint,
-    SwitchFirmwareUpdateStatus,
+    NvSwitchManager, SwitchComponentResult, SwitchEndpoint, SwitchFirmwareUpdateStatus,
 };
 use crate::power_shelf_manager::{
-    FirmwareState as PsFwState, PowerShelfComponentResult, PowerShelfEndpoint,
-    PowerShelfFirmwareUpdateStatus, PowerShelfManager,
+    PowerShelfComponentResult, PowerShelfEndpoint, PowerShelfFirmwareUpdateStatus,
+    PowerShelfManager,
 };
-use crate::types::PowerAction;
+use crate::types::{FirmwareState, PowerAction};
 
 #[derive(Debug, Default)]
 pub struct MockNvSwitchManager;
@@ -60,7 +59,7 @@ impl NvSwitchManager for MockNvSwitchManager {
             .iter()
             .map(|ep| SwitchFirmwareUpdateStatus {
                 bmc_mac: ep.bmc_mac,
-                state: SwFwState::Completed,
+                state: FirmwareState::Completed,
                 target_version: "mock-1.0.0".into(),
                 error: None,
             })
@@ -120,7 +119,7 @@ impl PowerShelfManager for MockPowerShelfManager {
             .iter()
             .map(|ep| PowerShelfFirmwareUpdateStatus {
                 pmc_mac: ep.pmc_mac,
-                state: PsFwState::Completed,
+                state: FirmwareState::Completed,
                 target_version: "mock-1.0.0".into(),
                 error: None,
             })

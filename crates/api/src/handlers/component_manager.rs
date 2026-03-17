@@ -189,7 +189,8 @@ async fn resolve_power_shelf_endpoints(
         endpoints.push(PowerShelfEndpoint {
             pmc_ip: row.pmc_ip,
             pmc_mac: row.pmc_mac,
-            pmc_vendor: PowerShelfVendor::Liteon,
+            // TODO: retrieve vendor from DB instead of using a hardcoded default
+            pmc_vendor: PowerShelfVendor::DEFAULT,
         });
     }
 
@@ -213,21 +214,8 @@ fn ps_mac_to_id_str(mac: &MacAddress, mac_to_id: &HashMap<MacAddress, PowerShelf
         .unwrap_or_else(|| mac.to_string())
 }
 
-fn map_fw_state_switch(state: component_manager::nv_switch_manager::FirmwareState) -> i32 {
-    use component_manager::nv_switch_manager::FirmwareState;
-    match state {
-        FirmwareState::Unknown => rpc::FirmwareUpdateState::FwStateUnknown as i32,
-        FirmwareState::Queued => rpc::FirmwareUpdateState::FwStateQueued as i32,
-        FirmwareState::InProgress => rpc::FirmwareUpdateState::FwStateInProgress as i32,
-        FirmwareState::Verifying => rpc::FirmwareUpdateState::FwStateVerifying as i32,
-        FirmwareState::Completed => rpc::FirmwareUpdateState::FwStateCompleted as i32,
-        FirmwareState::Failed => rpc::FirmwareUpdateState::FwStateFailed as i32,
-        FirmwareState::Cancelled => rpc::FirmwareUpdateState::FwStateCancelled as i32,
-    }
-}
-
-fn map_fw_state_ps(state: component_manager::power_shelf_manager::FirmwareState) -> i32 {
-    use component_manager::power_shelf_manager::FirmwareState;
+fn map_fw_state(state: component_manager::types::FirmwareState) -> i32 {
+    use component_manager::types::FirmwareState;
     match state {
         FirmwareState::Unknown => rpc::FirmwareUpdateState::FwStateUnknown as i32,
         FirmwareState::Queued => rpc::FirmwareUpdateState::FwStateQueued as i32,
@@ -325,7 +313,6 @@ pub(crate) async fn get_component_inventory(
     request: Request<rpc::GetComponentInventoryRequest>,
 ) -> Result<Response<rpc::GetComponentInventoryResponse>, Status> {
     log_request_data(&request);
-    let _cm = require_component_manager(api)?;
     let req = request.into_inner();
 
     let target = req
@@ -397,7 +384,7 @@ pub(crate) async fn get_component_inventory(
                 .map_err(|e| Status::internal(format!("db error: {e}")))?;
 
             let bmc_pairs = db::machine_topology::find_machine_bmc_pairs_by_machine_id(
-                &mut *txn,
+                &mut txn,
                 list.machine_ids.clone(),
             )
             .await
@@ -534,7 +521,7 @@ pub(crate) async fn get_component_firmware_status(
                         } else {
                             error_result(&id, s.error.unwrap_or_default())
                         }),
-                        state: map_fw_state_switch(s.state),
+                        state: map_fw_state(s.state),
                         target_version: s.target_version,
                         updated_at: None,
                     }
@@ -558,7 +545,7 @@ pub(crate) async fn get_component_firmware_status(
                         } else {
                             error_result(&id, s.error.unwrap_or_default())
                         }),
-                        state: map_fw_state_ps(s.state),
+                        state: map_fw_state(s.state),
                         target_version: s.target_version,
                         updated_at: None,
                     }
@@ -618,5 +605,203 @@ pub(crate) async fn list_component_firmware_versions(
         rpc::list_component_firmware_versions_request::Target::MachineIds(_) => Err(
             Status::unimplemented("machine firmware versions are not supported via this RPC"),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use component_manager::types::FirmwareState;
+    use tonic::Code;
+
+    use super::*;
+
+    #[test]
+    fn error_to_status_unavailable() {
+        let st =
+            component_manager_error_to_status(ComponentManagerError::Unavailable("gone".into()));
+        assert_eq!(st.code(), Code::Unavailable);
+        assert!(st.message().contains("gone"));
+    }
+
+    #[test]
+    fn error_to_status_not_found() {
+        let st =
+            component_manager_error_to_status(ComponentManagerError::NotFound("missing".into()));
+        assert_eq!(st.code(), Code::NotFound);
+    }
+
+    #[test]
+    fn error_to_status_invalid_argument() {
+        let st =
+            component_manager_error_to_status(ComponentManagerError::InvalidArgument("bad".into()));
+        assert_eq!(st.code(), Code::InvalidArgument);
+    }
+
+    #[test]
+    fn error_to_status_internal() {
+        let st = component_manager_error_to_status(ComponentManagerError::Internal("oops".into()));
+        assert_eq!(st.code(), Code::Internal);
+    }
+
+    #[test]
+    fn error_to_status_passthrough() {
+        let original = Status::permission_denied("nope");
+        let st = component_manager_error_to_status(ComponentManagerError::Status(original));
+        assert_eq!(st.code(), Code::PermissionDenied);
+    }
+
+    #[test]
+    fn power_action_on() {
+        let action = map_power_action(SystemPowerControl::On as i32).unwrap();
+        assert!(matches!(action, PowerAction::On));
+    }
+
+    #[test]
+    fn power_action_graceful_shutdown() {
+        let action = map_power_action(SystemPowerControl::GracefulShutdown as i32).unwrap();
+        assert!(matches!(action, PowerAction::GracefulShutdown));
+    }
+
+    #[test]
+    fn power_action_force_off() {
+        let action = map_power_action(SystemPowerControl::ForceOff as i32).unwrap();
+        assert!(matches!(action, PowerAction::ForceOff));
+    }
+
+    #[test]
+    fn power_action_graceful_restart() {
+        let action = map_power_action(SystemPowerControl::GracefulRestart as i32).unwrap();
+        assert!(matches!(action, PowerAction::GracefulRestart));
+    }
+
+    #[test]
+    fn power_action_force_restart() {
+        let action = map_power_action(SystemPowerControl::ForceRestart as i32).unwrap();
+        assert!(matches!(action, PowerAction::ForceRestart));
+    }
+
+    #[test]
+    fn power_action_ac_powercycle() {
+        let action = map_power_action(SystemPowerControl::AcPowercycle as i32).unwrap();
+        assert!(matches!(action, PowerAction::AcPowercycle));
+    }
+
+    #[test]
+    fn power_action_invalid_value() {
+        let err = map_power_action(9999).unwrap_err();
+        assert_eq!(err.code(), Code::InvalidArgument);
+    }
+
+    #[test]
+    fn fw_state_round_trip_all_variants() {
+        let cases = [
+            (
+                FirmwareState::Unknown,
+                rpc::FirmwareUpdateState::FwStateUnknown as i32,
+            ),
+            (
+                FirmwareState::Queued,
+                rpc::FirmwareUpdateState::FwStateQueued as i32,
+            ),
+            (
+                FirmwareState::InProgress,
+                rpc::FirmwareUpdateState::FwStateInProgress as i32,
+            ),
+            (
+                FirmwareState::Verifying,
+                rpc::FirmwareUpdateState::FwStateVerifying as i32,
+            ),
+            (
+                FirmwareState::Completed,
+                rpc::FirmwareUpdateState::FwStateCompleted as i32,
+            ),
+            (
+                FirmwareState::Failed,
+                rpc::FirmwareUpdateState::FwStateFailed as i32,
+            ),
+            (
+                FirmwareState::Cancelled,
+                rpc::FirmwareUpdateState::FwStateCancelled as i32,
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(map_fw_state(input), expected, "mismatch for {input:?}");
+        }
+    }
+
+    #[test]
+    fn make_result_fields() {
+        let r = make_result(
+            "sw-1",
+            rpc::ComponentManagerStatusCode::Success,
+            Some("info".into()),
+        );
+        assert_eq!(r.component_id, "sw-1");
+        assert_eq!(r.status, rpc::ComponentManagerStatusCode::Success as i32);
+        assert_eq!(r.error, "info");
+    }
+
+    #[test]
+    fn success_result_has_no_error() {
+        let r = success_result("sw-2");
+        assert_eq!(r.status, rpc::ComponentManagerStatusCode::Success as i32);
+        assert!(r.error.is_empty());
+    }
+
+    #[test]
+    fn not_found_result_has_error_message() {
+        let r = not_found_result("sw-3");
+        assert_eq!(r.status, rpc::ComponentManagerStatusCode::NotFound as i32);
+        assert!(r.error.contains("sw-3"));
+    }
+
+    #[test]
+    fn error_result_has_internal_error_status() {
+        let r = error_result("sw-4", "boom".into());
+        assert_eq!(
+            r.status,
+            rpc::ComponentManagerStatusCode::InternalError as i32,
+        );
+        assert_eq!(r.error, "boom");
+    }
+
+    fn test_switch_id() -> SwitchId {
+        use carbide_uuid::switch::{SwitchIdSource, SwitchType};
+        SwitchId::new(SwitchIdSource::Tpm, [0u8; 32], SwitchType::NvLink)
+    }
+
+    fn test_power_shelf_id() -> PowerShelfId {
+        use carbide_uuid::power_shelf::{PowerShelfIdSource, PowerShelfType};
+        PowerShelfId::new(PowerShelfIdSource::Tpm, [0u8; 32], PowerShelfType::Rack)
+    }
+
+    #[test]
+    fn switch_mac_to_id_str_found() {
+        let mac: MacAddress = "AA:BB:CC:DD:EE:01".parse().unwrap();
+        let id = test_switch_id();
+        let map = HashMap::from([(mac, id)]);
+        assert_eq!(switch_mac_to_id_str(&mac, &map), id.to_string());
+    }
+
+    #[test]
+    fn switch_mac_to_id_str_not_found_falls_back_to_mac() {
+        let mac: MacAddress = "AA:BB:CC:DD:EE:01".parse().unwrap();
+        let map = HashMap::new();
+        assert_eq!(switch_mac_to_id_str(&mac, &map), mac.to_string());
+    }
+
+    #[test]
+    fn ps_mac_to_id_str_found() {
+        let mac: MacAddress = "AA:BB:CC:DD:EE:02".parse().unwrap();
+        let id = test_power_shelf_id();
+        let map = HashMap::from([(mac, id)]);
+        assert_eq!(ps_mac_to_id_str(&mac, &map), id.to_string());
+    }
+
+    #[test]
+    fn ps_mac_to_id_str_not_found_falls_back_to_mac() {
+        let mac: MacAddress = "AA:BB:CC:DD:EE:02".parse().unwrap();
+        let map = HashMap::new();
+        assert_eq!(ps_mac_to_id_str(&mac, &map), mac.to_string());
     }
 }
