@@ -474,7 +474,7 @@ pub struct TenantIdentityConfig {
     pub signing_key_public: String,
     pub key_id: String,
     pub algorithm: String,
-    pub master_key_id: String,
+    pub encryption_key_id: String,
     // Token delegation (optional)
     pub token_endpoint: Option<String>,
     pub auth_method: Option<TokenDelegationAuthMethod>,
@@ -496,7 +496,7 @@ pub struct IdentityConfig {
     pub enabled: bool,
     pub rotate_key: bool,
     pub algorithm: String,
-    pub master_key_id: String,
+    pub encryption_key_id: String,
 }
 
 /// Validation bounds for IdentityConfig. Passed from site config (machine_identity).
@@ -505,7 +505,7 @@ pub struct IdentityConfigValidationBounds {
     pub token_ttl_min_sec: u32,
     pub token_ttl_max_sec: u32,
     pub algorithm: String,
-    pub master_key_id: String,
+    pub encryption_key_id: String,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -556,7 +556,7 @@ impl IdentityConfig {
             enabled: value.enabled,
             rotate_key: value.rotate_key,
             algorithm: bounds.algorithm.clone(),
-            master_key_id: bounds.master_key_id.clone(),
+            encryption_key_id: bounds.encryption_key_id.clone(),
         })
     }
 }
@@ -961,7 +961,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: "ES256".to_string(),
-            master_key_id: "test-master".to_string(),
+            encryption_key_id: "test-master".to_string(),
         };
         let config = IdentityConfig::try_from_proto(proto, &bounds).unwrap();
         assert_eq!(config.issuer, "https://issuer.example.com");
@@ -972,7 +972,7 @@ mod tests {
         assert!(config.enabled);
         assert!(!config.rotate_key);
         assert_eq!(config.algorithm, "ES256");
-        assert_eq!(config.master_key_id, "test-master");
+        assert_eq!(config.encryption_key_id, "test-master");
     }
 
     #[test]
@@ -990,7 +990,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: "ES256".to_string(),
-            master_key_id: "test".to_string(),
+            encryption_key_id: "test".to_string(),
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
         assert!(err.0.contains("issuer is required"));
@@ -1011,7 +1011,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: "ES256".to_string(),
-            master_key_id: "test".to_string(),
+            encryption_key_id: "test".to_string(),
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
         assert!(err.0.contains("default_audience is required"));
@@ -1032,7 +1032,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: "ES256".to_string(),
-            master_key_id: "test".to_string(),
+            encryption_key_id: "test".to_string(),
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
         assert!(err.0.contains("subject_prefix is required"));
@@ -1053,7 +1053,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: "ES256".to_string(),
-            master_key_id: "test".to_string(),
+            encryption_key_id: "test".to_string(),
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
         assert!(err.0.contains("token_ttl_sec"));
@@ -1074,7 +1074,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: "ES256".to_string(),
-            master_key_id: "test".to_string(),
+            encryption_key_id: "test".to_string(),
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
         assert!(err.0.contains("token_ttl_sec must be between"));
@@ -1095,7 +1095,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: "ES256".to_string(),
-            master_key_id: "test".to_string(),
+            encryption_key_id: "test".to_string(),
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
         assert!(err.0.contains("token_ttl_sec must be between"));

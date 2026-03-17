@@ -1,6 +1,6 @@
 -- Tenant identity config table for SPIFFE JWT-SVID machine identity.
 -- Stores per-org identity config, signing key pairs, and optional token delegation.
--- Private key is encrypted with a master key.
+-- Private key is encrypted with an encryption key.
 -- Token delegation columns are nullable when an org does not use delegation.
 
 CREATE TYPE token_delegation_auth_method_t AS ENUM ('none', 'client_secret_basic');
@@ -21,7 +21,7 @@ CREATE TABLE tenant_identity_config (
     signing_key_public       VARCHAR(255) NOT NULL,
     key_id                   VARCHAR(255) NOT NULL,
     algorithm                VARCHAR(255) NOT NULL,
-    master_key_id            VARCHAR(255) NOT NULL,
+    encryption_key_id        VARCHAR(255) NOT NULL,
     -- Token delegation (from PUT identity/token-delegation, optional)
     -- auth_method: none, client_secret_basic
     -- encrypted_auth_method_config: encrypted blob (TEXT). API uses auth_method_config.
