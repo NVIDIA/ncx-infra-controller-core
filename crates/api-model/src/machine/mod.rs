@@ -79,6 +79,21 @@ pub mod nvlink;
 pub mod topology;
 pub mod upgrade_policy;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DpuInfo {
+    pub id: String,
+    pub loopback_ip: String,
+}
+
+impl From<DpuInfo> for rpc::forge::DpuInfo {
+    fn from(info: DpuInfo) -> Self {
+        rpc::forge::DpuInfo {
+            id: info.id,
+            loopback_ip: info.loopback_ip,
+        }
+    }
+}
+
 type DpuDeviceMappings = (HashMap<MachineId, String>, HashMap<String, Vec<MachineId>>);
 
 pub fn get_display_ids(machines: &[Machine]) -> String {
@@ -3082,6 +3097,17 @@ mod tests {
             sla.time_in_state_above_sla,
             "Failed state should always be above SLA"
         );
+    }
+
+    #[test]
+    fn dpu_info_to_rpc() {
+        let info = DpuInfo {
+            id: "dpu-123".to_string(),
+            loopback_ip: "10.0.0.1".to_string(),
+        };
+        let rpc_info: rpc::forge::DpuInfo = info.into();
+        assert_eq!(rpc_info.id, "dpu-123");
+        assert_eq!(rpc_info.loopback_ip, "10.0.0.1");
     }
 }
 

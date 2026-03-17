@@ -84,6 +84,7 @@ pub mod sku;
 pub mod storage;
 pub mod switch;
 pub mod tenant;
+pub mod trim_table;
 pub mod vpc;
 pub mod vpc_prefix;
 
