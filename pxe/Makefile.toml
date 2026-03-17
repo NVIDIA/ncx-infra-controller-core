@@ -62,17 +62,6 @@ command = "cp"
 args = ["/tmp/bfb-dump/${BFB_NAME}", "preingestion.bfb"]
 cwd = "static/blobs/internal/aarch64"
 
-[tasks.stage-nvinit]
-condition = { env_not_set = ["SA_ENABLEMENT"] }
-# Note that libnss-exec is located here: https://gitlab-master.nvidia.com/ngcsecurity/nvssh/-/tree/master/ansible/roles/nvssh/files
-description = "Stages files required for nvssh into the mkosi image for installation in postinst script"
-script = '''
-  cp -R ${REPO_ROOT}/pxe/nvinit_setup mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
-  cp -R ${REPO_ROOT}/pxe/debs/libnss-exec_0.2.0-1_amd64.deb mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
-  cp -R ${REPO_ROOT}/pxe/nvinit_setup mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
-  cp -R ${REPO_ROOT}/pxe/debs/libnss-exec_0.2.0-1_arm64.deb mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
-'''
-
 [tasks.stage-disk_imaging-script]
 description = "Copies the disk_imaging.sh script to the qcow profile directories"
 script = '''
@@ -791,7 +780,6 @@ dependencies = [
   "bfb-extract-ifconfig",
   "bfb-add-scout-to-bfb-ci",
   "bfb-add-debs-to-bfb",
-  "bfb-add-nvinit-setup-to-bfb",
   "bfb-add-prod-forge-root-ca-to-bfb",
   "download-hbn-installer-to-bfb-sa",                                      # put doca_container_configs.zip in /tmp
   "mkdir-hbn-folder-in-bfb",
@@ -824,7 +812,6 @@ dependencies = [
   "bfb-extract-ifconfig",
   "bfb-add-scout-to-bfb-ci",
   "bfb-add-debs-to-bfb",
-  "bfb-add-nvinit-setup-to-bfb",
   "bfb-add-prod-forge-root-ca-to-bfb",
   "mkdir-hbn-folder-in-bfb",
   "download-hbn-installer-to-bfb",
@@ -858,7 +845,6 @@ dependencies = [
   "bfb-extract-ifconfig",
   "bfb-add-scout-to-bfb",
   "bfb-add-debs-to-bfb",
-  "bfb-add-nvinit-setup-to-bfb",
   "bfb-add-dev-forge-root-ca-to-bfb",
   "mkdir-hbn-folder-in-bfb",
   "download-hbn-installer-to-bfb",
@@ -996,13 +982,6 @@ script = '''
   ls "${BUILD_LOCATION}/debs/"
 '''
 dependencies = ["download-debs-for-bfb"]
-
-[tasks.bfb-add-nvinit-setup-to-bfb]
-condition = { env_not_set = ["SA_ENABLEMENT"] }
-category = "iPXE Kernel"
-description = "Add nvinit_setup folder to the BFB"
-command = "cp"
-args = ["-R", "${REPO_ROOT}/pxe/nvinit_setup", "${BUILD_LOCATION}"]
 
 [tasks.bfb-add-scout-to-bfb-ci]
 category = "iPXE Kernel"

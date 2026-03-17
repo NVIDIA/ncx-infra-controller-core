@@ -69,7 +69,7 @@ use model::machine::{
     InstanceState, LockdownInfo, LockdownState, Machine, MachineLastRebootRequested,
     MachineLastRebootRequestedMode, MachineNextStateResolver, MachineState, ManagedHostState,
     ManagedHostStateSnapshot, MeasuringState, NetworkConfigUpdateState, NextStateBFBSupport,
-    PerformPowerOperation, PowerDrainState, ReprovisionState, RetryInfo, SecureEraseBossContext,
+    PerformPowerOperation, PowerDrainState, ReprovisionState, RetryInfo,     BiosConfigInfo, BiosConfigState, SecureEraseBossContext,
     SecureEraseBossState, SetBootOrderInfo, SetBootOrderState, SetSecureBootState,
     StateMachineArea, UefiSetupInfo, UefiSetupState, ValidationState,
     dpf_based_dpu_provisioning_possible, get_display_ids,
@@ -4153,6 +4153,8 @@ pub struct RebootStatus {
 enum BiosConfigOutcome {
     Done,
     WaitingForReboot(String),
+    /// Dell BIOS PATCH returned a job ID; wait for it to complete before boot order.
+    WaitingForBiosJob(BiosConfigInfo),
 }
 
 /// Outcome of set_host_boot_order function.
@@ -4813,14 +4815,61 @@ impl StateHandler for HostMachineStateHandler {
                     .await?
                     {
                         BiosConfigOutcome::Done => {
-                            // BIOS configuration done, move to polling
+                            println!("<kcdTaskIDs> HostInit ConfigureBios Done -> PollingBiosSetup");
                             Ok(StateHandlerOutcome::transition(
                                 ManagedHostState::HostInit {
                                     machine_state: MachineState::PollingBiosSetup,
                                 },
                             ))
                         }
+                        BiosConfigOutcome::WaitingForBiosJob(bios_config_info) => {
+                            println!("<kcdTaskIDs> HostInit ConfigureBios WaitingForBiosJob -> WaitingForBiosJob state");
+                            Ok(StateHandlerOutcome::transition(
+                                ManagedHostState::HostInit {
+                                    machine_state: MachineState::WaitingForBiosJob {
+                                        bios_config_info,
+                                    },
+                                },
+                            ))
+                        }
                         BiosConfigOutcome::WaitingForReboot(reason) => {
+                            Ok(StateHandlerOutcome::wait(reason))
+                        }
+                    }
+                }
+                MachineState::WaitingForBiosJob { bios_config_info } => {
+                    println!("<kcdTaskIDs> HostInit WaitingForBiosJob advancing state machine");
+                    let redfish_client = ctx
+                        .services
+                        .create_redfish_client_from_machine(&mh_snapshot.host_snapshot)
+                        .await?;
+                    match advance_bios_config_job(
+                        ctx,
+                        redfish_client.as_ref(),
+                        mh_snapshot,
+                        bios_config_info.clone(),
+                    )
+                    .await?
+                    {
+                        BiosConfigJobAdvanceOutcome::Continue(updated) => {
+                            println!("<kcdTaskIDs> HostInit WaitingForBiosJob Continue");
+                            Ok(StateHandlerOutcome::transition(
+                                ManagedHostState::HostInit {
+                                    machine_state: MachineState::WaitingForBiosJob {
+                                        bios_config_info: updated,
+                                    },
+                                },
+                            ))
+                        }
+                        BiosConfigJobAdvanceOutcome::Done => {
+                            println!("<kcdTaskIDs> HostInit WaitingForBiosJob Done -> PollingBiosSetup");
+                            Ok(StateHandlerOutcome::transition(
+                                ManagedHostState::HostInit {
+                                    machine_state: MachineState::PollingBiosSetup,
+                                },
+                            ))
+                        }
+                        BiosConfigJobAdvanceOutcome::Wait(reason) => {
                             Ok(StateHandlerOutcome::wait(reason))
                         }
                     }
@@ -8865,6 +8914,8 @@ fn can_restart_reprovision(dpu_snapshots: &[Machine], version: ConfigVersion) ->
 }
 
 /// Call [`Redfish::machine_setup`], but ignore any [`RedfishError::NoDpu`] if we expect there to be no DPUs.
+/// Returns `Ok(Some(job_id))` when the vendor (e.g. Dell) creates a BIOS config job that must complete
+/// before configuring boot order; `Ok(None)` when no job to wait for.
 ///
 /// TODO(ken): This is a temporary workaround for work-in-progress on zero-DPU support (August 2024)
 /// The way we should do this going forward is to plumb the actual non-DPU MAC address we want to
@@ -8875,7 +8926,8 @@ async fn call_machine_setup_and_handle_no_dpu_error(
     boot_interface_mac: Option<&str>,
     expected_dpu_count: usize,
     site_config: &CarbideConfig,
-) -> Result<(), RedfishError> {
+) -> Result<Option<String>, RedfishError> {
+    println!("<kcdTaskIDs> call_machine_setup_and_handle_no_dpu_error entry");
     let setup_result = redfish_client
         .machine_setup(
             boot_interface_mac,
@@ -8883,7 +8935,7 @@ async fn call_machine_setup_and_handle_no_dpu_error(
             site_config.selected_profile,
         )
         .await;
-    match (
+    let out = match (
         setup_result,
         expected_dpu_count,
         site_config.site_explorer.allow_zero_dpu_hosts,
@@ -8892,11 +8944,16 @@ async fn call_machine_setup_and_handle_no_dpu_error(
             tracing::info!(
                 "redfish machine_setup failed due to there being no DPUs on the host. This is expected as the host has no DPUs, and we are configured to allow this."
             );
-            Ok(())
+            Ok(None)
         }
-        (Ok(()), _, _) => Ok(()),
+        (Ok(maybe_jid), _, _) => {
+            println!("<kcdTaskIDs> call_machine_setup_and_handle_no_dpu_error success bios_job_id={:?}", maybe_jid);
+            Ok(maybe_jid)
+        }
         (Err(e), _, _) => Err(e),
-    }
+    };
+    println!("<kcdTaskIDs> call_machine_setup_and_handle_no_dpu_error returning");
+    out
 }
 
 async fn set_boot_order_dpu_first_and_handle_no_dpu_error(
@@ -9195,33 +9252,67 @@ async fn handle_instance_host_platform_config(
                 })?;
 
             InstanceState::HostPlatformConfiguration {
-                platform_config_state: HostPlatformConfigurationState::ConfigureBios,
+                platform_config_state: HostPlatformConfigurationState::ConfigureBios {
+                    bios_config_info: None,
+                },
             }
         }
-        HostPlatformConfigurationState::ConfigureBios => {
-            match configure_host_bios(
-                ctx,
-                reachability_params,
-                redfish_client.as_ref(),
-                mh_snapshot,
-            )
-            .await?
-            {
-                BiosConfigOutcome::Done => {
-                    // BIOS configuration done, move to polling
-                    return Ok(StateHandlerOutcome::transition(
-                        ManagedHostState::Assigned {
-                            instance_state: InstanceState::HostPlatformConfiguration {
-                                platform_config_state:
-                                    HostPlatformConfigurationState::PollingBiosSetup,
-                            },
-                        },
-                    ));
+        HostPlatformConfigurationState::ConfigureBios { bios_config_info } => {
+            let next_platform = if let Some(info) = bios_config_info {
+                println!("<kcdTaskIDs> Assigned ConfigureBios advancing bios job state machine");
+                match advance_bios_config_job(
+                    ctx,
+                    redfish_client.as_ref(),
+                    mh_snapshot,
+                    info.clone(),
+                )
+                .await?
+                {
+                    BiosConfigJobAdvanceOutcome::Continue(updated) => {
+                        println!("<kcdTaskIDs> Assigned ConfigureBios Continue");
+                        HostPlatformConfigurationState::ConfigureBios {
+                            bios_config_info: Some(updated),
+                        }
+                    }
+                    BiosConfigJobAdvanceOutcome::Done => {
+                        println!("<kcdTaskIDs> Assigned ConfigureBios Done -> PollingBiosSetup");
+                        HostPlatformConfigurationState::PollingBiosSetup
+                    }
+                    BiosConfigJobAdvanceOutcome::Wait(reason) => {
+                        return Ok(StateHandlerOutcome::wait(reason));
+                    }
                 }
-                BiosConfigOutcome::WaitingForReboot(reason) => {
-                    return Ok(StateHandlerOutcome::wait(reason));
+            } else {
+                println!("<kcdTaskIDs> Assigned ConfigureBios calling configure_host_bios (no job yet)");
+                match configure_host_bios(
+                    ctx,
+                    reachability_params,
+                    redfish_client.as_ref(),
+                    mh_snapshot,
+                )
+                .await?
+                {
+                    BiosConfigOutcome::Done => {
+                        HostPlatformConfigurationState::PollingBiosSetup
+                    }
+                    BiosConfigOutcome::WaitingForBiosJob(bios_config_info) => {
+                        println!("<kcdTaskIDs> Assigned ConfigureBios -> WaitingForBiosJob");
+                        HostPlatformConfigurationState::ConfigureBios {
+                            bios_config_info: Some(bios_config_info),
+                        }
+                    }
+                    BiosConfigOutcome::WaitingForReboot(reason) => {
+                        return Ok(StateHandlerOutcome::wait(reason));
+                    }
                 }
-            }
+            };
+            return Ok(StateHandlerOutcome::transition(
+                ManagedHostState::Assigned {
+                    instance_state: InstanceState::HostPlatformConfiguration {
+                        platform_config_state: next_platform,
+                    },
+                },
+            ));
         }
         HostPlatformConfigurationState::PollingBiosSetup => {
             let next_instance_state = InstanceState::HostPlatformConfiguration {
@@ -9349,7 +9440,8 @@ async fn configure_host_bios(
         None
     };
 
-    if let Err(e) = call_machine_setup_and_handle_no_dpu_error(
+    println!("<kcdTaskIDs> configure_host_bios calling machine_setup");
+    let bios_job_id = match call_machine_setup_and_handle_no_dpu_error(
         redfish_client,
         boot_interface_mac.as_deref(),
         mh_snapshot.host_snapshot.associated_dpu_machine_ids().len(),
@@ -9357,48 +9449,262 @@ async fn configure_host_bios(
     )
     .await
     {
-        tracing::warn!(
-            "redfish machine_setup failed for {}, potentially due to known race condition between UEFI POST and BMC. triggering force-restart if needed. err: {}",
-            mh_snapshot.host_snapshot.id,
-            e
-        );
+        Err(e) => {
+            tracing::warn!(
+                "redfish machine_setup failed for {}, potentially due to known race condition between UEFI POST and BMC. triggering force-restart if needed. err: {}",
+                mh_snapshot.host_snapshot.id,
+                e
+            );
 
-        // if machine_setup failed, rebooted to potentially work around
-        // a known race between the DPU UEFI and the BMC, where if
-        // the BMC is not up when DPU UEFI runs, then Attributes might
-        // not come through. The fix is to force-restart the DPU to
-        // re-POST.
-        //
-        // As of July 2024, Josh Price said there's an NBU FR to fix
-        // this, but it wasn't target to a release yet.
-        let reboot_status = if mh_snapshot.host_snapshot.last_reboot_requested.is_none() {
-            handler_host_power_control(mh_snapshot, ctx, SystemPowerControl::ForceRestart).await?;
+            // if machine_setup failed, rebooted to potentially work around
+            // a known race between the DPU UEFI and the BMC, where if
+            // the BMC is not up when DPU UEFI runs, then Attributes might
+            // not come through. The fix is to force-restart the DPU to
+            // re-POST.
+            //
+            // As of July 2024, Josh Price said there's an NBU FR to fix
+            // this, but it wasn't target to a release yet.
+            let reboot_status = if mh_snapshot.host_snapshot.last_reboot_requested.is_none() {
+                handler_host_power_control(mh_snapshot, ctx, SystemPowerControl::ForceRestart).await?;
 
-            RebootStatus {
-                increase_retry_count: true,
-                status: "Restarted host".to_string(),
-            }
-        } else {
-            trigger_reboot_if_needed(
-                &mh_snapshot.host_snapshot,
-                mh_snapshot,
-                None,
-                reachability_params,
-                ctx,
-            )
-            .await?
-        };
-        // Return WaitingForReboot instead of Err to ensure the transaction is committed
-        // and last_reboot_requested is persisted. Returning Err would cause a transaction
-        // rollback, leading to a tight reboot loop since the reboot timestamp is lost.
-        return Ok(BiosConfigOutcome::WaitingForReboot(format!(
-            "redfish machine_setup failed: {e}; triggered host reboot: {reboot_status:#?}"
-        )));
+                RebootStatus {
+                    increase_retry_count: true,
+                    status: "Restarted host".to_string(),
+                }
+            } else {
+                trigger_reboot_if_needed(
+                    &mh_snapshot.host_snapshot,
+                    mh_snapshot,
+                    None,
+                    reachability_params,
+                    ctx,
+                )
+                .await?
+            };
+            return Ok(BiosConfigOutcome::WaitingForReboot(format!(
+                "redfish machine_setup failed: {e}; triggered host reboot: {reboot_status:#?}"
+            )));
+        }
+        Ok(jid) => jid,
     };
 
-    // Host needs to be rebooted to pick up the changes after calling machine_setup
+    if let Some(job_id) = &bios_job_id {
+        println!("<kcdTaskIDs> configure_host_bios BIOS job id={}, returning WaitingForBiosJob (will wait before boot order)", job_id);
+        return Ok(BiosConfigOutcome::WaitingForBiosJob(BiosConfigInfo {
+            bios_job_id: Some(job_id.clone()),
+            bios_config_state: BiosConfigState::WaitForBiosJobScheduled,
+        }));
+    }
+
+    // No job to wait for (non-Dell or vendor that doesn't return job); reboot to apply and continue.
+    println!("<kcdTaskIDs> configure_host_bios no BIOS job, rebooting and returning Done");
     handler_host_power_control(mh_snapshot, ctx, SystemPowerControl::ForceRestart).await?;
     Ok(BiosConfigOutcome::Done)
+}
+
+/// Outcome of advancing the BIOS config job state machine (Dell: wait for BIOS PATCH job before boot order).
+enum BiosConfigJobAdvanceOutcome {
+    Continue(BiosConfigInfo),
+    Done,
+    /// Same state, but wait (e.g. waiting for power down or BMC to come back).
+    Wait(String),
+}
+
+/// Advance one step of the BIOS config job wait state machine. Same pattern as set_host_boot_order.
+async fn advance_bios_config_job(
+    ctx: &mut StateHandlerContext<'_, MachineStateHandlerContextObjects>,
+    redfish_client: &dyn Redfish,
+    mh_snapshot: &ManagedHostStateSnapshot,
+    info: BiosConfigInfo,
+) -> Result<BiosConfigJobAdvanceOutcome, StateHandlerError> {
+    println!("<kcdTaskIDs> advance_bios_config_job state={:?}", info.bios_config_state);
+    match info.bios_config_state {
+        BiosConfigState::WaitForBiosJobScheduled => {
+            if let Some(job_id) = &info.bios_job_id {
+                println!("<kcdTaskIDs> advance_bios_config_job polling for Scheduled job_id={}", job_id);
+                let job_state = redfish_client.get_job_state(job_id).await.map_err(|e| {
+                    StateHandlerError::RedfishError {
+                        operation: "get_job_state",
+                        error: e,
+                    }
+                })?;
+                println!("<kcdTaskIDs> advance_bios_config_job BIOS job state={:?}", job_state);
+                if matches!(job_state, libredfish::JobState::ScheduledWithErrors | libredfish::JobState::CompletedWithErrors) {
+                    let failure = format!("BIOS job {} failed with state {job_state:#?}", job_id);
+                    tracing::warn!("{} for {}, transitioning to HandleBiosJobFailure (power cycle + BMC reset)", failure, mh_snapshot.host_snapshot.id);
+                    return Ok(BiosConfigJobAdvanceOutcome::Continue(BiosConfigInfo {
+                        bios_job_id: info.bios_job_id.clone(),
+                        bios_config_state: BiosConfigState::HandleBiosJobFailure {
+                            failure: failure.clone(),
+                            power_state: libredfish::PowerState::Off,
+                        },
+                    }));
+                }
+                if !matches!(job_state, libredfish::JobState::Scheduled) {
+                    return Err(StateHandlerError::GenericError(eyre::eyre!(
+                        "waiting for BIOS job {:#?} to be scheduled; current state: {job_state:#?}",
+                        job_id
+                    )));
+                }
+            }
+            println!("<kcdTaskIDs> advance_bios_config_job BIOS job scheduled, transitioning to RebootHost");
+            Ok(BiosConfigJobAdvanceOutcome::Continue(BiosConfigInfo {
+                bios_job_id: info.bios_job_id.clone(),
+                bios_config_state: BiosConfigState::RebootHost,
+            }))
+        }
+        BiosConfigState::RebootHost => {
+            println!("<kcdTaskIDs> advance_bios_config_job rebooting host for BIOS job");
+            handler_host_power_control(mh_snapshot, ctx, SystemPowerControl::ForceRestart).await?;
+            Ok(BiosConfigJobAdvanceOutcome::Continue(BiosConfigInfo {
+                bios_job_id: info.bios_job_id.clone(),
+                bios_config_state: BiosConfigState::WaitForBiosJobCompletion,
+            }))
+        }
+        BiosConfigState::WaitForBiosJobCompletion => {
+            const JOB_QUERY_WAIT_MINUTES: i64 = 5;
+            if let Some(job_id) = &info.bios_job_id {
+                println!("<kcdTaskIDs> advance_bios_config_job polling for Completion job_id={}", job_id);
+                let job_state = match redfish_client.get_job_state(job_id).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let minutes_since_state_change = mh_snapshot
+                            .host_snapshot
+                            .state
+                            .version
+                            .since_state_change()
+                            .num_minutes();
+                        if minutes_since_state_change < JOB_QUERY_WAIT_MINUTES {
+                            return Err(StateHandlerError::RedfishError {
+                                operation: "get_job_state",
+                                error: e,
+                            });
+                        }
+                        let failure = format!("BIOS config job {} lookup failed after {} min: {}", job_id, minutes_since_state_change, e);
+                        tracing::warn!("{} for {}, transitioning to HandleBiosJobFailure (power cycle + BMC reset)", failure, mh_snapshot.host_snapshot.id);
+                        return Ok(BiosConfigJobAdvanceOutcome::Continue(BiosConfigInfo {
+                            bios_job_id: info.bios_job_id.clone(),
+                            bios_config_state: BiosConfigState::HandleBiosJobFailure {
+                                failure,
+                                power_state: libredfish::PowerState::Off,
+                            },
+                        }));
+                    }
+                };
+                println!("<kcdTaskIDs> advance_bios_config_job BIOS job state={:?}", job_state);
+                match job_state {
+                    libredfish::JobState::Completed => {
+                        println!("<kcdTaskIDs> advance_bios_config_job BIOS job completed, Done");
+                        Ok(BiosConfigJobAdvanceOutcome::Done)
+                    }
+                    libredfish::JobState::ScheduledWithErrors
+                    | libredfish::JobState::CompletedWithErrors => {
+                        let failure = format!("BIOS config job {} failed with state {job_state:#?}", job_id);
+                        tracing::warn!(
+                            "{} for {}, transitioning to HandleBiosJobFailure (power cycle + BMC reset)",
+                            failure,
+                            mh_snapshot.host_snapshot.id,
+                        );
+                        Ok(BiosConfigJobAdvanceOutcome::Continue(BiosConfigInfo {
+                            bios_job_id: info.bios_job_id.clone(),
+                            bios_config_state: BiosConfigState::HandleBiosJobFailure {
+                                failure,
+                                power_state: libredfish::PowerState::Off,
+                            },
+                        }))
+                    }
+                    _ => Err(StateHandlerError::GenericError(eyre::eyre!(
+                        "waiting for BIOS job {:#?} to complete; current state: {job_state:#?}",
+                        job_id
+                    ))),
+                }
+            } else {
+                Ok(BiosConfigJobAdvanceOutcome::Done)
+            }
+        }
+        BiosConfigState::HandleBiosJobFailure {
+            failure,
+            power_state,
+        } => {
+            // Same as boot order HandleJobFailure: power off → BMC reset → power on → Done.
+            println!("<kcdTaskIDs> advance_bios_config_job HandleBiosJobFailure power_state={:?}", power_state);
+            let current_power_state = redfish_client.get_power_state().await.map_err(|e| {
+                StateHandlerError::RedfishError {
+                    operation: "get_power_state",
+                    error: e,
+                }
+            })?;
+
+            match power_state {
+                libredfish::PowerState::Off => {
+                    if current_power_state != libredfish::PowerState::Off {
+                        handler_host_power_control(mh_snapshot, ctx, SystemPowerControl::ForceOff)
+                            .await?;
+                        return Ok(BiosConfigJobAdvanceOutcome::Wait(format!(
+                            "HandleBiosJobFailure: waiting for {} to power down; current power state: {current_power_state}; failure: {}",
+                            mh_snapshot.host_snapshot.id, failure
+                        )));
+                    }
+                    println!("<kcdTaskIDs> advance_bios_config_job HandleBiosJobFailure host off, resetting BMC");
+                    tracing::info!(
+                        "HandleBiosJobFailure: Resetting BMC for {} after BIOS job failure: {}",
+                        mh_snapshot.host_snapshot.id,
+                        failure
+                    );
+                    redfish_client.bmc_reset().await.map_err(|e| {
+                        StateHandlerError::RedfishError {
+                            operation: "bmc_reset",
+                            error: e,
+                        }
+                    })?;
+                    Ok(BiosConfigJobAdvanceOutcome::Continue(BiosConfigInfo {
+                        bios_job_id: info.bios_job_id.clone(),
+                        bios_config_state: BiosConfigState::HandleBiosJobFailure {
+                            failure: failure.clone(),
+                            power_state: libredfish::PowerState::On,
+                        },
+                    }))
+                }
+                libredfish::PowerState::On => {
+                    if current_power_state != libredfish::PowerState::On {
+                        let basetime = mh_snapshot
+                            .host_snapshot
+                            .last_reboot_requested
+                            .as_ref()
+                            .map(|x| x.time)
+                            .unwrap_or(mh_snapshot.host_snapshot.state.version.timestamp());
+                        let power_down_wait = ctx
+                            .services
+                            .site_config
+                            .machine_state_controller
+                            .power_down_wait;
+                        if Utc::now().signed_duration_since(basetime) < power_down_wait {
+                            return Ok(BiosConfigJobAdvanceOutcome::Wait(format!(
+                                "HandleBiosJobFailure: waiting for BMC to come back online for {}; failure: {}",
+                                mh_snapshot.host_snapshot.id, failure
+                            )));
+                        }
+                        handler_host_power_control(mh_snapshot, ctx, SystemPowerControl::On)
+                            .await?;
+                        return Ok(BiosConfigJobAdvanceOutcome::Wait(format!(
+                            "HandleBiosJobFailure: powering on {} after BMC reset; failure: {}",
+                            mh_snapshot.host_snapshot.id, failure
+                        )));
+                    }
+                    println!("<kcdTaskIDs> advance_bios_config_job HandleBiosJobFailure complete -> Done");
+                    tracing::info!(
+                        "HandleBiosJobFailure: BMC reset complete and host powered on for {}, proceeding to PollingBiosSetup",
+                        mh_snapshot.host_snapshot.id,
+                    );
+                    Ok(BiosConfigJobAdvanceOutcome::Done)
+                }
+                _ => Err(StateHandlerError::GenericError(eyre::eyre!(
+                    "HandleBiosJobFailure: unexpected power state {power_state:#?} for {}",
+                    mh_snapshot.host_snapshot.id
+                ))),
+            }
+        }
+    }
 }
 
 async fn set_host_boot_order(

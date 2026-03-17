@@ -157,6 +157,7 @@ impl StateControllerIO for MachineStateControllerIO {
             match machine_state {
                 MachineState::Init => "init",
                 MachineState::WaitingForPlatformConfiguration => "waitingforplatformconfiguration",
+                MachineState::WaitingForBiosJob { .. } => "waitingforbiosjob",
                 MachineState::PollingBiosSetup => "pollingbiossetup",
                 MachineState::SetBootOrder { .. } => "setbootorder",
                 MachineState::UefiSetup { .. } => "uefisetup",

@@ -1678,6 +1678,10 @@ pub enum MachineState {
     Init,
     EnableIpmiOverLan,
     WaitingForPlatformConfiguration,
+    /// Wait for BIOS config job (Dell) to complete before PollingBiosSetup / SetBootOrder.
+    WaitingForBiosJob {
+        bios_config_info: BiosConfigInfo,
+    },
     PollingBiosSetup,
     SetBootOrder {
         set_boot_order_info: Option<SetBootOrderInfo>,
@@ -1727,6 +1731,29 @@ pub enum UefiSetupState {
     // Deprecated: no-op state, transitions directly to WaitingForLockdown::SetLockdown
     // Kept for backwards compatibility with hosts that may be in this state
     LockdownHost,
+}
+
+/// Tracks progress waiting for the Dell BIOS config job (from machine_setup PATCH) to complete
+/// before configuring boot order. Same pattern as SetBootOrderInfo / SetBootOrderState.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub struct BiosConfigInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bios_job_id: Option<String>,
+    pub bios_config_state: BiosConfigState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, EnumIter)]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum BiosConfigState {
+    WaitForBiosJobScheduled,
+    RebootHost,
+    WaitForBiosJobCompletion,
+    /// Power off → BMC reset → power on when job fails or is scheduled with errors (same as boot order).
+    HandleBiosJobFailure {
+        failure: String,
+        power_state: PowerState,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -1892,7 +1919,11 @@ pub enum HostPlatformConfigurationState {
     },
     CheckHostConfig,
     UnlockHost,
-    ConfigureBios,
+    /// When bios_config_info is Some, we are waiting for the BIOS job to complete (Dell).
+    ConfigureBios {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bios_config_info: Option<BiosConfigInfo>,
+    },
     PollingBiosSetup,
     SetBootOrder {
         set_boot_order_info: SetBootOrderInfo,
