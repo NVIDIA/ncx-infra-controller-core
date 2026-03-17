@@ -23,7 +23,6 @@ use std::net::IpAddr;
 use std::ops::Deref;
 use std::str::FromStr;
 
-use ::rpc::forge::DpuInfo;
 use carbide_uuid::instance_type::InstanceTypeId;
 use carbide_uuid::machine::{MachineId, MachineType};
 use chrono::prelude::*;
@@ -42,7 +41,7 @@ use model::machine::network::{
 use model::machine::nvlink::MachineNvLinkStatusObservation;
 use model::machine::upgrade_policy::AgentUpgradePolicy;
 use model::machine::{
-    Dpf, FailureDetails, Machine, MachineInterfaceSnapshot, MachineLastRebootRequested,
+    Dpf, DpuInfo, FailureDetails, Machine, MachineInterfaceSnapshot, MachineLastRebootRequested,
     MachineLastRebootRequestedMode, ManagedHostState, ReprovisionRequest, UpgradeDecision,
 };
 use model::machine_interface_address::MachineInterfaceAssociation;

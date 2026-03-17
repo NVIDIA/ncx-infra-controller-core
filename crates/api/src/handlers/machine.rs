@@ -661,7 +661,9 @@ pub(crate) async fn get_dpu_info_list(
 
     txn.commit().await?;
 
-    let response = rpc::GetDpuInfoListResponse { dpu_list };
+    let response = rpc::GetDpuInfoListResponse {
+        dpu_list: dpu_list.into_iter().map(rpc::DpuInfo::from).collect(),
+    };
     Ok(Response::new(response))
 }
 
