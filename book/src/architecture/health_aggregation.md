@@ -1,4 +1,4 @@
-# Bare Metal Manager Health Checks and Health Aggregation
+# Health Checks and Health Aggregation
 
 [summary]: #summary
 

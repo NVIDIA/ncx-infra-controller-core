@@ -1,4 +1,4 @@
-# Bare Metal Manager Core Metrics
+# NCX Infra Controller (NICo) core metrics
 
 This file contains a list of metrics exported by NCX Infra Controller (NICo). The list is auto-generated from an integration test (`test_integration`). Metrics for workflows which are not exercised by the test are missing.
 
@@ -43,9 +43,10 @@ This file contains a list of metrics exported by NCX Infra Controller (NICo). Th
 <tr><td>carbide_hosts_usable_count</td><td>gauge</td><td>The remaining number of hosts in the Forge site which are available for immediate instance creation</td></tr>
 <tr><td>carbide_hosts_with_bios_password_set</td><td>gauge</td><td>The total number of Hosts in the system that have their BIOS password set.</td></tr>
 <tr><td>carbide_ib_partitions_enqueuer_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to enqueue state handling tasks for all carbide_ib_partitions in the system</td></tr>
-<tr><td>carbide_ib_partitions_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to handle state for all carbide_ib_partitions in the system</td></tr>
+<tr><td>carbide_ib_partitions_iteration_latency_milliseconds</td><td>histogram</td><td>The elapsed time in the last state processor iteration to handle objects of type carbide_ib_partitions</td></tr>
 <tr><td>carbide_ib_partitions_object_tasks_enqueued_total</td><td>counter</td><td>The amount of types that object handling tasks that have been freshly enqueued for objects of type carbide_ib_partitions</td></tr>
 <tr><td>carbide_ib_partitions_total</td><td>gauge</td><td>The total number of carbide_ib_partitions in the system</td></tr>
+<tr><td>carbide_machine_reboot_duration_seconds</td><td>histogram</td><td>Time taken for machine/host to reboot in seconds</td></tr>
 <tr><td>carbide_machine_updates_started_count</td><td>gauge</td><td>The number of machines in the system that in the process of updating.</td></tr>
 <tr><td>carbide_machine_validation_completed</td><td>gauge</td><td>Count of machine validation that have completed successfully</td></tr>
 <tr><td>carbide_machine_validation_failed</td><td>gauge</td><td>Count of machine validation that have failed</td></tr>
@@ -54,7 +55,7 @@ This file contains a list of metrics exported by NCX Infra Controller (NICo). Th
 <tr><td>carbide_machines_enqueuer_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to enqueue state handling tasks for all carbide_machines in the system</td></tr>
 <tr><td>carbide_machines_handler_latency_in_state_milliseconds</td><td>histogram</td><td>The amount of time it took to invoke the state handler for objects of type carbide_machines in a certain state</td></tr>
 <tr><td>carbide_machines_in_maintenance_count</td><td>gauge</td><td>The total number of machines in the system that are in maintenance.</td></tr>
-<tr><td>carbide_machines_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to handle state for all carbide_machines in the system</td></tr>
+<tr><td>carbide_machines_iteration_latency_milliseconds</td><td>histogram</td><td>The elapsed time in the last state processor iteration to handle objects of type carbide_machines</td></tr>
 <tr><td>carbide_machines_object_tasks_completed_total</td><td>counter</td><td>The amount of object handling tasks that have been completed for objects of type carbide_machines</td></tr>
 <tr><td>carbide_machines_object_tasks_dispatched_total</td><td>counter</td><td>The amount of types that object handling tasks that have been dequeued and dispatched for processing for objects of type carbide_machines</td></tr>
 <tr><td>carbide_machines_object_tasks_enqueued_total</td><td>counter</td><td>The amount of types that object handling tasks that have been freshly enqueued for objects of type carbide_machines</td></tr>
@@ -73,7 +74,7 @@ This file contains a list of metrics exported by NCX Infra Controller (NICo). Th
 <tr><td>carbide_measured_boot_profiles_total</td><td>gauge</td><td>The total number of measured boot profiles.</td></tr>
 <tr><td>carbide_network_segments_enqueuer_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to enqueue state handling tasks for all carbide_network_segments in the system</td></tr>
 <tr><td>carbide_network_segments_handler_latency_in_state_milliseconds</td><td>histogram</td><td>The amount of time it took to invoke the state handler for objects of type carbide_network_segments in a certain state</td></tr>
-<tr><td>carbide_network_segments_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to handle state for all carbide_network_segments in the system</td></tr>
+<tr><td>carbide_network_segments_iteration_latency_milliseconds</td><td>histogram</td><td>The elapsed time in the last state processor iteration to handle objects of type carbide_network_segments</td></tr>
 <tr><td>carbide_network_segments_object_tasks_completed_total</td><td>counter</td><td>The amount of object handling tasks that have been completed for objects of type carbide_network_segments</td></tr>
 <tr><td>carbide_network_segments_object_tasks_dispatched_total</td><td>counter</td><td>The amount of types that object handling tasks that have been dequeued and dispatched for processing for objects of type carbide_network_segments</td></tr>
 <tr><td>carbide_network_segments_object_tasks_enqueued_total</td><td>counter</td><td>The amount of types that object handling tasks that have been freshly enqueued for objects of type carbide_network_segments</td></tr>
@@ -89,7 +90,7 @@ This file contains a list of metrics exported by NCX Infra Controller (NICo). Th
 <tr><td>carbide_pending_dpu_nic_firmware_update_count</td><td>gauge</td><td>The number of machines in the system that need a firmware update.</td></tr>
 <tr><td>carbide_pending_host_firmware_update_count</td><td>gauge</td><td>The number of host machines in the system that need a firmware update.</td></tr>
 <tr><td>carbide_power_shelves_enqueuer_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to enqueue state handling tasks for all carbide_power_shelves in the system</td></tr>
-<tr><td>carbide_power_shelves_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to handle state for all carbide_power_shelves in the system</td></tr>
+<tr><td>carbide_power_shelves_iteration_latency_milliseconds</td><td>histogram</td><td>The elapsed time in the last state processor iteration to handle objects of type carbide_power_shelves</td></tr>
 <tr><td>carbide_power_shelves_object_tasks_enqueued_total</td><td>counter</td><td>The amount of types that object handling tasks that have been freshly enqueued for objects of type carbide_power_shelves</td></tr>
 <tr><td>carbide_power_shelves_total</td><td>gauge</td><td>The total number of carbide_power_shelves in the system</td></tr>
 <tr><td>carbide_preingestion_total</td><td>gauge</td><td>The amount of known machines currently being evaluated prior to ingestion</td></tr>
@@ -97,7 +98,7 @@ This file contains a list of metrics exported by NCX Infra Controller (NICo). Th
 <tr><td>carbide_preingestion_waiting_installation</td><td>gauge</td><td>The amount of machines which have had firmware uploaded to them and are currently in the process of installing that firmware</td></tr>
 <tr><td>carbide_racks_enqueuer_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to enqueue state handling tasks for all carbide_racks in the system</td></tr>
 <tr><td>carbide_racks_handler_latency_in_state_milliseconds</td><td>histogram</td><td>The amount of time it took to invoke the state handler for objects of type carbide_racks in a certain state</td></tr>
-<tr><td>carbide_racks_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to handle state for all carbide_racks in the system</td></tr>
+<tr><td>carbide_racks_iteration_latency_milliseconds</td><td>histogram</td><td>The elapsed time in the last state processor iteration to handle objects of type carbide_racks</td></tr>
 <tr><td>carbide_racks_object_tasks_completed_total</td><td>counter</td><td>The amount of object handling tasks that have been completed for objects of type carbide_racks</td></tr>
 <tr><td>carbide_racks_object_tasks_dispatched_total</td><td>counter</td><td>The amount of types that object handling tasks that have been dequeued and dispatched for processing for objects of type carbide_racks</td></tr>
 <tr><td>carbide_racks_object_tasks_enqueued_total</td><td>counter</td><td>The amount of types that object handling tasks that have been freshly enqueued for objects of type carbide_racks</td></tr>
@@ -118,7 +119,7 @@ This file contains a list of metrics exported by NCX Infra Controller (NICo). Th
 <tr><td>carbide_site_explorer_created_power_shelves_count</td><td>gauge</td><td>The amount of Power Shelves that had been created by Site Explorer after being identified</td></tr>
 <tr><td>carbide_site_explorer_iteration_latency_milliseconds</td><td>histogram</td><td>The time it took to perform one site explorer iteration</td></tr>
 <tr><td>carbide_switches_enqueuer_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to enqueue state handling tasks for all carbide_switches in the system</td></tr>
-<tr><td>carbide_switches_iteration_latency_milliseconds</td><td>histogram</td><td>The overall time it took to handle state for all carbide_switches in the system</td></tr>
+<tr><td>carbide_switches_iteration_latency_milliseconds</td><td>histogram</td><td>The elapsed time in the last state processor iteration to handle objects of type carbide_switches</td></tr>
 <tr><td>carbide_switches_object_tasks_enqueued_total</td><td>counter</td><td>The amount of types that object handling tasks that have been freshly enqueued for objects of type carbide_switches</td></tr>
 <tr><td>carbide_switches_total</td><td>gauge</td><td>The total number of carbide_switches in the system</td></tr>
 <tr><td>carbide_total_ips_count</td><td>gauge</td><td>The total number of ips in the site</td></tr>

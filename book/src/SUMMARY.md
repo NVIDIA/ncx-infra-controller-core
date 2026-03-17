@@ -36,11 +36,7 @@
 - [Release Instance API Enhancements](manuals/breakfix_integration.md)
 - [Managing VPC Peering](manuals/vpc_peering_management.md)
 - [Metrics]()
-    - [Core metrics](manuals/metrics/carbide_core_metrics.md)
-
-# Sites and site access
-
-- [carbide-admin-cli access](sites/forge_admin_cli.md)
+    - [Core metrics](manuals/metrics/core_metrics.md)
 
 # Design
 
