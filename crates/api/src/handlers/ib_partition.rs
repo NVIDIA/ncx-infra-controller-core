@@ -160,10 +160,8 @@ pub(crate) async fn update(
         }
     }
 
-    // Validate the metadata and update the partition
-    let meta = Metadata::try_from(metadata).map_err(CarbideError::from)?;
-    meta.validate(true).map_err(CarbideError::from)?;
-    partition.metadata = meta;
+    // Update the metadata of the partition
+    partition.metadata = metadata.try_into().map_err(CarbideError::from)?;
 
     let resp = db::ib_partition::update(&partition, &mut txn).await?;
     txn.commit().await?;
