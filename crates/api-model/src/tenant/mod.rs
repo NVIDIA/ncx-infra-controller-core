@@ -484,6 +484,15 @@ pub struct TenantIdentityConfig {
     pub token_delegation_created_at: Option<DateTime<Utc>>,
 }
 
+/// Key material for a new or rotated signing key.
+/// Caller generates the key pair, encrypts the private key, and computes key_id = hex(sha256(public_key)).
+#[derive(Clone, Debug)]
+pub struct SigningKeyMaterial {
+    pub key_id: String,
+    pub encrypted_signing_key: String,
+    pub signing_key_public: String,
+}
+
 /// Settable fields for tenant identity config (SPIFFE JWT-SVID).
 /// Used as input to set identity configuration.
 #[derive(Debug, Clone)]

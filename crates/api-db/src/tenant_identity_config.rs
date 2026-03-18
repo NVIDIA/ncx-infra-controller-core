@@ -18,17 +18,21 @@
 //! Tenant identity config for SPIFFE JWT-SVID machine identity.
 //! Stores per-org identity config and signing keys in `tenant_identity_config` table.
 
-use model::tenant::{IdentityConfig, TenantIdentityConfig, TenantOrganizationId, TokenDelegation};
+use model::tenant::{
+    IdentityConfig, SigningKeyMaterial, TenantIdentityConfig, TenantOrganizationId, TokenDelegation,
+};
 use sqlx::PgConnection;
 use sqlx::types::Json;
 
 use crate::{DatabaseError, DatabaseResult};
 
-/// Set identity config for an org. On first create, generates a placeholder key.
+/// Set identity config for an org.
+/// When creating new or rotating key, caller must provide `key_material` (generated key pair, encrypted private key, key_id = sha256(public_key)).
 /// Caller must ensure tenant exists and global machine-identity is enabled.
 pub async fn set(
     org_id: &TenantOrganizationId,
     config: &IdentityConfig,
+    key_material: Option<SigningKeyMaterial>,
     txn: &mut PgConnection,
 ) -> DatabaseResult<TenantIdentityConfig> {
     let allowed: Vec<String> = if config.allowed_audiences.is_empty() {
@@ -54,15 +58,14 @@ pub async fn set(
     // Bounds validation is done by the handler using site config (token_ttl_min_sec, token_ttl_max_sec).
 
     let existing = find(org_id, &mut *txn).await?;
-    let (key_id, encrypted_key, public_key) = match (&existing, config.rotate_key) {
-        (None, _) | (_, true) => {
-            // Generate new key pair (placeholder: use deterministic placeholder for rough impl)
-            let key_id = uuid::Uuid::new_v4().to_string();
-            let encrypted_key = "PLACEHOLDER_ENCRYPTED_KEY".to_string();
-            let public_key = "PLACEHOLDER_PUBLIC_KEY".to_string();
-            (key_id, encrypted_key, public_key)
+    let (key_id, encrypted_key, public_key) = match (&existing, config.rotate_key, key_material) {
+        (None, _, None) | (_, true, None) => {
+            return Err(DatabaseError::InvalidArgument(
+                "key_material is required when creating or rotating signing key".into(),
+            ));
         }
-        (Some(ex), false) => (
+        (_, _, Some(km)) => (km.key_id, km.encrypted_signing_key, km.signing_key_public),
+        (Some(ex), false, None) => (
             ex.key_id.clone(),
             ex.encrypted_signing_key.clone(),
             ex.signing_key_public.clone(),
@@ -247,7 +250,14 @@ mod tests {
             encryption_key_id: "test-master".to_string(),
         };
 
-        let cfg = set(&org_id, &config, &mut txn).await.unwrap();
+        let key_material = SigningKeyMaterial {
+            key_id: "test-key-id".to_string(),
+            encrypted_signing_key: "PLACEHOLDER_ENCRYPTED_KEY".to_string(),
+            signing_key_public: "PLACEHOLDER_PUBLIC_KEY".to_string(),
+        };
+        let cfg = set(&org_id, &config, Some(key_material), &mut txn)
+            .await
+            .unwrap();
         assert_eq!(cfg.issuer, "https://issuer.example.com");
         assert_eq!(cfg.default_audience, "api");
         assert_eq!(cfg.allowed_audiences.0, ["api", "audience2"]);
@@ -293,7 +303,14 @@ mod tests {
             algorithm: "ES256".to_string(),
             encryption_key_id: "test-master".to_string(),
         };
-        set(&org_id, &config, &mut txn).await.unwrap();
+        let key_material = SigningKeyMaterial {
+            key_id: "test-key-id".to_string(),
+            encrypted_signing_key: "PLACEHOLDER_ENCRYPTED_KEY".to_string(),
+            signing_key_public: "PLACEHOLDER_PUBLIC_KEY".to_string(),
+        };
+        set(&org_id, &config, Some(key_material), &mut txn)
+            .await
+            .unwrap();
 
         let token_delegation = TokenDelegation {
             token_endpoint: "https://auth.example.com/token".to_string(),

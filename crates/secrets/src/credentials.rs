@@ -345,6 +345,7 @@ pub enum MqttCredentialType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CredentialKey {
+    DpuSsh { machine_id: MachineId },
     DpuHbn { machine_id: MachineId },
     DpuRedfish { credential_type: CredentialType },
     HostRedfish { credential_type: CredentialType },
@@ -357,11 +358,17 @@ pub enum CredentialKey {
     RackFirmware { firmware_id: String },
     SwitchNvosAdmin { bmc_mac_address: MacAddress },
     MqttAuth { credential_type: MqttCredentialType },
+    /// Machine identity encryption key by key-id (from credential file `machine_identity.encryption_key`).
+    /// Returns `UsernamePassword { username: key_id, password: secret }`.
+    MachineIdentityEncryptionKey { key_id: String },
 }
 
 impl CredentialKey {
     pub fn to_key_str(&self) -> Cow<'_, str> {
         match self {
+            CredentialKey::DpuSsh { machine_id } => {
+                Cow::from(format!("machines/{machine_id}/dpu-ssh"))
+            }
             CredentialKey::DpuHbn { machine_id } => {
                 Cow::from(format!("machines/{machine_id}/dpu-hbn"))
             }
@@ -442,6 +449,9 @@ impl CredentialKey {
                     Cow::from("mqtt/dsx-exchange-consumer/auth")
                 }
             },
+            CredentialKey::MachineIdentityEncryptionKey { key_id } => {
+                Cow::from(format!("machine_identity/encryption_key/{key_id}"))
+            }
         }
     }
 }

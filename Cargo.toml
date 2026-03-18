@@ -87,6 +87,7 @@ axum-template = { version = "3.0" }
 # MARK: - Versions common for the rest of the codebase
 ########
 
+aes-gcm = "0.10"
 anyhow = "1.0"
 arc-swap = "1.6"
 askama = "0.12.1"
