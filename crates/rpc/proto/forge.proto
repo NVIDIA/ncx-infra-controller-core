@@ -3828,6 +3828,7 @@ message ForgeAgentControlResponse {
     LOGERROR = 6; // Log error.
     MACHINE_VALIDATION = 7; // Machine validation.
     MLX_ACTION = 8; // MlxAction for DPA NICs
+    FIRMWARE_UPGRADE = 9; // Firmware upgrade through scout
   }
   Action action = 1;
 
