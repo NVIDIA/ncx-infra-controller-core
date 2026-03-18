@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.90.0-slim-bookworm AS builder
+
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+ENV CARGO_TARGET_DIR=/cargo-target
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  apt-get update && \
+  apt-get install -y --no-install-recommends \
+    build-essential \
+    clang \
+    cmake \
+    curl \
+    git \
+    libaio-dev \
+    libboost-dev \
+    libgrpc++-dev \
+    libgrpc-dev \
+    libopenipmi-dev \
+    libprotobuf-dev \
+    libssh-dev \
+    libssl-dev \
+    libtss2-dev \
+    libudev-dev \
+    lld \
+    openipmi \
+    pkg-config \
+    protobuf-compiler \
+    protobuf-compiler-grpc \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/ld ld /usr/bin/lld 50
+
+WORKDIR /workspace
+
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+  --mount=type=cache,target=/cargo-target,sharing=locked \
+  cargo build -p carbide-api --bin carbide-api --locked && \
+  mkdir -p /artifacts && \
+  cp /cargo-target/debug/carbide-api /artifacts/carbide-api
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ca-certificates \
+  curl \
+  ipmitool \
+  iproute2 \
+  iputils-ping \
+  libudev1 \
+  tpm2-tools \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/carbide /opt/carbide/firmware /mnt/persistence /var/run/kea
+
+COPY --from=builder /artifacts/carbide-api /opt/carbide/carbide-api
+COPY crates/api/casbin-policy.csv /opt/carbide/casbin-policy.csv
+COPY pxe/static/blobs/internal/aarch64/secure-boot-pk.pem /forge-boot-artifacts/blobs/internal/aarch64/secure-boot-pk.pem
+
+ENV CASBIN_POLICY_FILE=/opt/carbide/casbin-policy.csv

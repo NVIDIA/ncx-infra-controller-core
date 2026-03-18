@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.90.0-slim-bookworm AS builder
+
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+ENV CARGO_TARGET_DIR=/cargo-target
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  apt-get update && \
+  apt-get install -y --no-install-recommends \
+    build-essential \
+    clang \
+    cmake \
+    curl \
+    git \
+    libaio-dev \
+    libboost-dev \
+    libgrpc++-dev \
+    libgrpc-dev \
+    libopenipmi-dev \
+    libprotobuf-dev \
+    libssh-dev \
+    libssl-dev \
+    libtss2-dev \
+    libudev-dev \
+    lld \
+    openipmi \
+    pkg-config \
+    protobuf-compiler \
+    protobuf-compiler-grpc \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/ld ld /usr/bin/lld 50
+
+WORKDIR /workspace
+
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+  --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+  --mount=type=cache,target=/cargo-target,sharing=locked \
+  cargo build -p carbide-machine-a-tron --bin machine-a-tron --locked && \
+  mkdir -p /artifacts && \
+  cp /cargo-target/debug/machine-a-tron /artifacts/machine-a-tron
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ca-certificates \
+  iproute2 \
+  iputils-ping \
+  libssl3 \
+  libudev1 \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/machine-a-tron/bin /opt/machine-a-tron/templates /tmp/machine-a-tron-data
+
+COPY --from=builder /artifacts/machine-a-tron /opt/machine-a-tron/bin/machine-a-tron
+COPY crates/machine-a-tron/templates /opt/machine-a-tron/templates
+COPY crates/bmc-mock/dell_poweredge_r750.tar.gz /opt/machine-a-tron/dell_poweredge_r750.tar.gz
+COPY crates/bmc-mock/nvidia_dpu.tar.gz /opt/machine-a-tron/nvidia_dpu.tar.gz

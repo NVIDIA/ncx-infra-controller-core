@@ -1,0 +1,70 @@
+version: v2beta1
+name: ncx-infra-controller-core
+
+vars:
+  LOCAL_DEV_NAMESPACE:
+    source: env
+    default: forge-system
+
+images:
+  carbide-api:
+    image: carbide-api
+    custom:
+      command: |-
+        docker build -t ${runtime.images.carbide-api.image}:${runtime.images.carbide-api.tag} -f dev/deployment/devspace/Dockerfile.api .
+      onChange:
+        - .dockerignore
+        - Cargo.toml
+        - Cargo.lock
+        - rust-toolchain.toml
+        - .cargo
+        - crates
+        - include
+        - dev/deployment/devspace/Dockerfile.api
+        - pxe/templates
+        - pxe/static/blobs/internal/aarch64/secure-boot-pk.pem
+  machine-a-tron:
+    image: machine-a-tron
+    custom:
+      command: |-
+        docker build -t ${runtime.images.machine-a-tron.image}:${runtime.images.machine-a-tron.tag} -f dev/deployment/devspace/Dockerfile.machine-a-tron .
+      onChange:
+        - .dockerignore
+        - Cargo.toml
+        - Cargo.lock
+        - rust-toolchain.toml
+        - .cargo
+        - crates
+        - include
+        - dev/deployment/devspace/Dockerfile.machine-a-tron
+
+deployments:
+  carbide-local:
+    namespace: ${LOCAL_DEV_NAMESPACE}
+    updateImageTags: false
+    helm:
+      chart:
+        path: ./helm
+      values:
+        global:
+          image:
+            repository: ${runtime.images.carbide-api.image}
+            tag: ${runtime.images.carbide-api.tag}
+            pullPolicy: IfNotPresent
+      valuesFiles:
+        - dev/deployment/devspace/values.base.yaml
+        - dev/deployment/devspace/values.generated.yaml
+  machine-a-tron-local:
+    namespace: ${LOCAL_DEV_NAMESPACE}
+    updateImageTags: false
+    helm:
+      chart:
+        path: ./dev/deployment/devspace/charts/machine-a-tron
+      values:
+        image:
+          repository: ${runtime.images.machine-a-tron.image}
+          tag: ${runtime.images.machine-a-tron.tag}
+          pullPolicy: IfNotPresent
+      valuesFiles:
+        - dev/deployment/devspace/values.machine-a-tron.yaml
+        - dev/deployment/devspace/values.generated.yaml
