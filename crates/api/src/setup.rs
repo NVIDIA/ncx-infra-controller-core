@@ -154,6 +154,15 @@ pub fn parse_carbide_config(
     // part_number and psid values. Mismatches are logged as warnings.
     config.validate_supernic_firmware_profiles();
 
+    if config.machine_identity.enabled
+        && config.machine_identity.current_encryption_key_id.is_none()
+    {
+        return Err(eyre::eyre!(
+            "current_encryption_key_id must be set in [machine_identity] when machine identity is enabled"
+        )
+        .wrap_err("Invalid configuration"));
+    }
+
     tracing::trace!("Carbide config: {:#?}", config.redacted());
     Ok(Arc::new(config))
 }

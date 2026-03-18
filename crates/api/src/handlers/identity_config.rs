@@ -26,9 +26,11 @@ use ::rpc::forge::{
     token_delegation,
 };
 use db::{WithTransaction, tenant, tenant_identity_config};
+use forge_secrets::credentials::{CredentialKey, Credentials};
+use forge_secrets::key_encryption;
 use model::tenant::{
-    IdentityConfig, IdentityConfigValidationError, InvalidTenantOrg, TenantOrganizationId,
-    TokenDelegation, TokenDelegationValidationError,
+    IdentityConfig, IdentityConfigValidationError, InvalidTenantOrg, SigningKeyMaterial,
+    TenantOrganizationId, TokenDelegation, TokenDelegationValidationError,
 };
 use tonic::{Request, Response, Status};
 
@@ -210,6 +212,47 @@ pub(crate) async fn set_identity_configuration(
         .map_err(|e: InvalidTenantOrg| CarbideError::InvalidArgument(e.to_string()))?;
     let org_id_str = org_id.as_str().to_string();
 
+    let org_id_for_find = org_id.clone();
+    let existing = api
+        .database_connection
+        .with_txn(|txn| {
+            Box::pin(async move { tenant_identity_config::find(&org_id_for_find, txn).await })
+        })
+        .await??;
+
+    let key_material = match (&existing, config.rotate_key) {
+        (None, _) | (_, true) => {
+            let cred_key = CredentialKey::MachineIdentityEncryptionKey {
+                key_id: config.encryption_key_id.clone(),
+            };
+            let creds = api
+                .credential_manager
+                .get_credentials(&cred_key)
+                .await
+                .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
+                .ok_or_else(|| {
+                    CarbideError::InvalidArgument(format!(
+                        "encryption key '{}' not found in secrets (machine_identity.encryption_key)",
+                        config.encryption_key_id
+                    ))
+                })?;
+            let encryption_key = match &creds {
+                Credentials::UsernamePassword { password, .. } => password.clone(),
+            };
+            let (private_pem, public_pem) = key_encryption::generate_es256_key_pair()
+                .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+            let key_id = key_encryption::key_id_from_public_key(&public_pem);
+            let encrypted_signing_key = key_encryption::encrypt(&private_pem, &encryption_key)
+                .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+            Some(SigningKeyMaterial {
+                key_id,
+                encrypted_signing_key,
+                signing_key_public: public_pem,
+            })
+        }
+        (Some(_), false) => None,
+    };
+
     let cfg = api
         .database_connection
         .with_txn(|txn| {
@@ -221,7 +264,7 @@ pub(crate) async fn set_identity_configuration(
                         id: org_id.as_str().to_string(),
                     });
                 }
-                let cfg = tenant_identity_config::set(&org_id, &config, txn).await?;
+                let cfg = tenant_identity_config::set(&org_id, &config, key_material, txn).await?;
                 tenant::increment_version(org_id.as_str(), txn).await?;
                 Ok(cfg)
             })

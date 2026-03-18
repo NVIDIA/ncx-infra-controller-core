@@ -671,6 +671,9 @@ pub struct MachineIdentityConfig {
     /// Optional HTTP proxy for token endpoint calls (SSRF mitigation).
     #[serde(default)]
     pub token_endpoint_http_proxy: Option<String>,
+    /// Key-id for encryption/decryption of signing keys (selects from secrets machine_identity.encryption_key).
+    #[serde(default)]
+    pub current_encryption_key_id: Option<String>,
 }
 
 fn machine_identity_default_enabled() -> bool {
@@ -694,6 +697,7 @@ impl Default for MachineIdentityConfig {
             token_ttl_min_sec: machine_identity_default_token_ttl_min_sec(),
             token_ttl_max_sec: machine_identity_default_token_ttl_max_sec(),
             token_endpoint_http_proxy: None,
+            current_encryption_key_id: None,
         }
     }
 }
@@ -704,7 +708,10 @@ impl From<MachineIdentityConfig> for model::tenant::IdentityConfigValidationBoun
             token_ttl_min_sec: mi.token_ttl_min_sec,
             token_ttl_max_sec: mi.token_ttl_max_sec,
             algorithm: mi.algorithm,
-            encryption_key_id: "placeholder-encryption-key".to_string(),
+            encryption_key_id: mi.current_encryption_key_id.expect(
+                "current_encryption_key_id is required when machine identity is enabled; \
+                 validation in parse_carbide_config should have caught this",
+            ),
         }
     }
 }
