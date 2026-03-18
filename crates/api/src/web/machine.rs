@@ -401,7 +401,8 @@ pub async fn fetch_machines(
         only_quarantine: false,
         instance_type_id: None,
         mnnvl_only: false,
-        only_leaking_on_hosts: false,
+        only_with_power_state: None,
+        only_with_health_alert: None,
     });
 
     let machine_ids = api

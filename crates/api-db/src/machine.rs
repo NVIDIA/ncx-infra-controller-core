@@ -1658,8 +1658,12 @@ pub async fn find_machine_ids(
     }
 
     // Return only machines that are powered on and have a health override with leak classification
-    if search_config.only_leaking_on_hosts {
-        qb.push(" INNER JOIN power_options po ON po.host_id = machines.id AND po.last_fetched_power_state = 'on'");
+    if let Some(pstate) = &search_config.only_with_power_state {
+        let qstr = format!(
+            " INNER JOIN power_options po ON po.host_id = machines.id AND po.last_fetched_power_state = '{}'",
+            pstate
+        );
+        qb.push(qstr);
     }
 
     qb.push(" WHERE TRUE");
@@ -1704,21 +1708,12 @@ pub async fn find_machine_ids(
         ));
     }
 
-    if search_config.mnnvl_only {
-        qb.push(
-            " AND mt.topology->'discovery_data'->'Info'->'dmi_data'->>'product_name' LIKE '%GB200%'",
+    if let Some(ovrrd_str) = &search_config.only_with_health_alert {
+        let qstr = format!(
+            "AND health_report_overrides->'merges' ? '{}' AND jsonb_array_length( health_report_overrides->'merges'->'{}'->'alerts') > 0",
+            ovrrd_str, ovrrd_str
         );
-    }
-
-    if search_config.only_leaking_on_hosts {
-        qb.push(
-            " AND machines.health_report_overrides->'merges' ? 'hardware-health.tray-leak-detection'
-            AND EXISTS (
-        SELECT 1 FROM jsonb_array_elements(
-            machines.health_report_overrides->'merges'->'hardware-health.tray-leak-detection'->'alerts'
-        ) AS alert
-        WHERE alert->'classifications' ? 'Leak')",
-        );
+        qb.push(qstr);
     }
 
     if let Some(id) = search_config.instance_type_id {
