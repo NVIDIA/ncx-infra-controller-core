@@ -67,6 +67,7 @@ use crate::tests::common::api_fixtures::{
     machine_validation_completed, persist_machine_validation_result, reboot_completed,
     update_machine_validation_run,
 };
+use crate::tests::common::mac_address_pool::EXPECTED_SWITCH_NVOS_MAC_ADDRESS_POOL;
 use crate::tests::common::rpc_builder::DhcpDiscovery;
 
 /// MockExploredHost presents a fluent interface for declaring a mock host and running it through
@@ -1793,6 +1794,7 @@ pub async fn create_expected_switches(
         let switch = ExpectedSwitch {
             expected_switch_id: None,
             bmc_mac_address: EXPECTED_SWITCH_BMC_MAC_ADDRESS_POOL.allocate(),
+            nvos_mac_addresses: vec![EXPECTED_SWITCH_NVOS_MAC_ADDRESS_POOL.allocate()],
             serial_number: format!("SW-SN-{:03}", i + 1),
             bmc_username: "ADMIN".into(),
             bmc_password: "Pwd2023x0x0x0x7".into(),

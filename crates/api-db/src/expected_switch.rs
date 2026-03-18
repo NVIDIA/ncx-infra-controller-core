@@ -165,9 +165,9 @@ pub async fn create(
 ) -> DatabaseResult<ExpectedSwitch> {
     let id = switch.expected_switch_id.unwrap_or_else(Uuid::new_v4);
     let query = "INSERT INTO expected_switches
-             (expected_switch_id, bmc_mac_address, bmc_username, bmc_password, serial_number, metadata_name, metadata_description, rack_id, metadata_labels, nvos_username, nvos_password)
+             (expected_switch_id, bmc_mac_address, bmc_username, bmc_password, serial_number, metadata_name, metadata_description, rack_id, metadata_labels, nvos_username, nvos_password, nvos_mac_address)
              VALUES
-             ($1::uuid, $2::macaddr, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::varchar, $8::varchar, $9::jsonb, $10::varchar, $11::varchar) RETURNING *";
+             ($1::uuid, $2::macaddr, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::varchar, $8::varchar, $9::jsonb, $10::varchar, $11::varchar, $12::macaddr[]) RETURNING *";
 
     sqlx::query_as(query)
         .bind(id)
@@ -181,6 +181,7 @@ pub async fn create(
         .bind(sqlx::types::Json(&switch.metadata.labels))
         .bind(&switch.nvos_username)
         .bind(&switch.nvos_password)
+        .bind(&switch.nvos_mac_addresses)
         .fetch_one(txn)
         .await
         .map_err(|err: sqlx::Error| match err {
