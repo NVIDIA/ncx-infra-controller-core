@@ -69,21 +69,22 @@ pub(crate) async fn get_identity_configuration(
     log_request_data(&request);
 
     if !api.runtime_config.machine_identity.enabled {
-        return Err(Status::from(CarbideError::InvalidArgument(
+        return Err(CarbideError::InvalidArgument(
             "Machine identity must be enabled in site config".to_string(),
-        )));
+        )
+        .into());
     }
 
     let req = request.into_inner();
     let org_id = req.organization_id.trim();
     if org_id.is_empty() {
-        return Err(Status::from(CarbideError::InvalidArgument(
-            "organization_id is required".to_string(),
-        )));
+        return Err(
+            CarbideError::InvalidArgument("organization_id is required".to_string()).into(),
+        );
     }
-    let org_id: TenantOrganizationId = org_id.parse().map_err(|e: InvalidTenantOrg| {
-        Status::from(CarbideError::InvalidArgument(e.to_string()))
-    })?;
+    let org_id: TenantOrganizationId = org_id
+        .parse()
+        .map_err(|e: InvalidTenantOrg| CarbideError::InvalidArgument(e.to_string()))?;
     let org_id_str = org_id.as_str().to_string();
 
     let cfg = api
@@ -94,10 +95,11 @@ pub(crate) async fn get_identity_configuration(
     let cfg = match cfg {
         Some(c) => c,
         None => {
-            return Err(Status::from(CarbideError::NotFoundError {
+            return Err(CarbideError::NotFoundError {
                 kind: "tenant_identity_config",
                 id: org_id_str.clone(),
-            }));
+            }
+            .into());
         }
     };
 
@@ -126,21 +128,22 @@ pub(crate) async fn delete_identity_configuration(
     log_request_data(&request);
 
     if !api.runtime_config.machine_identity.enabled {
-        return Err(Status::from(CarbideError::InvalidArgument(
+        return Err(CarbideError::InvalidArgument(
             "Machine identity must be enabled in site config".to_string(),
-        )));
+        )
+        .into());
     }
 
     let req = request.into_inner();
     let org_id = req.organization_id.trim();
     if org_id.is_empty() {
-        return Err(Status::from(CarbideError::InvalidArgument(
-            "organization_id is required".to_string(),
-        )));
+        return Err(
+            CarbideError::InvalidArgument("organization_id is required".to_string()).into(),
+        );
     }
-    let org_id: TenantOrganizationId = org_id.parse().map_err(|e: InvalidTenantOrg| {
-        Status::from(CarbideError::InvalidArgument(e.to_string()))
-    })?;
+    let org_id: TenantOrganizationId = org_id
+        .parse()
+        .map_err(|e: InvalidTenantOrg| CarbideError::InvalidArgument(e.to_string()))?;
     let org_id_str = org_id.as_str().to_string();
 
     let deleted = api
@@ -157,10 +160,11 @@ pub(crate) async fn delete_identity_configuration(
         .await??;
 
     if !deleted {
-        return Err(Status::from(CarbideError::NotFoundError {
+        return Err(CarbideError::NotFoundError {
             kind: "tenant_identity_config",
             id: org_id_str,
-        }));
+        }
+        .into());
     }
 
     Ok(Response::new(()))
@@ -175,20 +179,17 @@ pub(crate) async fn set_identity_configuration(
     log_request_data(&request);
 
     if !api.runtime_config.machine_identity.enabled {
-        return Err(Status::from(CarbideError::InvalidArgument(
+        return Err(CarbideError::InvalidArgument(
             "Machine identity must be enabled in site config before setting identity configuration"
                 .to_string(),
-        )));
+        )
+        .into());
     }
 
     let req = request.into_inner();
     let config: IdentityConfig = req
         .config
-        .ok_or_else(|| {
-            Status::from(CarbideError::InvalidArgument(
-                "IdentityConfig is required".to_string(),
-            ))
-        })
+        .ok_or_else(|| CarbideError::InvalidArgument("IdentityConfig is required".to_string()))
         .and_then(|c| {
             IdentityConfig::try_from_proto(
                 c,
@@ -196,19 +197,17 @@ pub(crate) async fn set_identity_configuration(
                     api.runtime_config.machine_identity.clone(),
                 ),
             )
-            .map_err(|e: IdentityConfigValidationError| {
-                Status::from(CarbideError::InvalidArgument(e.0))
-            })
+            .map_err(|e: IdentityConfigValidationError| CarbideError::InvalidArgument(e.0))
         })?;
     let org_id = req.organization_id.trim();
     if org_id.is_empty() {
-        return Err(Status::from(CarbideError::InvalidArgument(
-            "organization_id is required".to_string(),
-        )));
+        return Err(
+            CarbideError::InvalidArgument("organization_id is required".to_string()).into(),
+        );
     }
-    let org_id: TenantOrganizationId = org_id.parse().map_err(|e: InvalidTenantOrg| {
-        Status::from(CarbideError::InvalidArgument(e.to_string()))
-    })?;
+    let org_id: TenantOrganizationId = org_id
+        .parse()
+        .map_err(|e: InvalidTenantOrg| CarbideError::InvalidArgument(e.to_string()))?;
     let org_id_str = org_id.as_str().to_string();
 
     let cfg = api
@@ -255,21 +254,22 @@ pub(crate) async fn get_token_delegation(
     log_request_data(&request);
 
     if !api.runtime_config.machine_identity.enabled {
-        return Err(Status::from(CarbideError::InvalidArgument(
+        return Err(CarbideError::InvalidArgument(
             "Machine identity must be enabled in site config".to_string(),
-        )));
+        )
+        .into());
     }
 
     let req = request.into_inner();
     let org_id = req.organization_id.trim();
     if org_id.is_empty() {
-        return Err(Status::from(CarbideError::InvalidArgument(
-            "organization_id is required".to_string(),
-        )));
+        return Err(
+            CarbideError::InvalidArgument("organization_id is required".to_string()).into(),
+        );
     }
-    let org_id: TenantOrganizationId = org_id.parse().map_err(|e: InvalidTenantOrg| {
-        Status::from(CarbideError::InvalidArgument(e.to_string()))
-    })?;
+    let org_id: TenantOrganizationId = org_id
+        .parse()
+        .map_err(|e: InvalidTenantOrg| CarbideError::InvalidArgument(e.to_string()))?;
     let org_id_str = org_id.as_str().to_string();
 
     let cfg = api
@@ -280,10 +280,11 @@ pub(crate) async fn get_token_delegation(
     let cfg = match cfg {
         Some(c) => c,
         None => {
-            return Err(Status::from(CarbideError::NotFoundError {
+            return Err(CarbideError::NotFoundError {
                 kind: "tenant_identity_config",
                 id: org_id_str.clone(),
-            }));
+            }
+            .into());
         }
     };
 
@@ -304,9 +305,10 @@ pub(crate) async fn set_token_delegation(
     log_request_data_redacted(format_token_delegation_request_redacted(request.get_ref()));
 
     if !api.runtime_config.machine_identity.enabled {
-        return Err(Status::from(CarbideError::InvalidArgument(
+        return Err(CarbideError::InvalidArgument(
             "Machine identity must be enabled in site config".to_string(),
-        )));
+        )
+        .into());
     }
 
     let req = request.into_inner();
@@ -314,20 +316,17 @@ pub(crate) async fn set_token_delegation(
         .config
         .as_ref()
         .ok_or_else(|| {
-            Status::from(CarbideError::InvalidArgument(
-                "TokenDelegation config is required".to_string(),
-            ))
+            CarbideError::InvalidArgument("TokenDelegation config is required".to_string())
         })
         .and_then(|c| {
-            TokenDelegation::try_from(c.clone()).map_err(|e: TokenDelegationValidationError| {
-                Status::from(CarbideError::InvalidArgument(e.0))
-            })
+            TokenDelegation::try_from(c.clone())
+                .map_err(|e: TokenDelegationValidationError| CarbideError::InvalidArgument(e.0))
         })?;
     let org_id = req.organization_id.trim();
     if org_id.is_empty() {
-        return Err(Status::from(CarbideError::InvalidArgument(
-            "organization_id is required".to_string(),
-        )));
+        return Err(
+            CarbideError::InvalidArgument("organization_id is required".to_string()).into(),
+        );
     }
     let org_id: TenantOrganizationId = org_id.parse().map_err(|e: InvalidTenantOrg| {
         Status::from(CarbideError::InvalidArgument(e.to_string()))
@@ -362,21 +361,22 @@ pub(crate) async fn delete_token_delegation(
     log_request_data(&request);
 
     if !api.runtime_config.machine_identity.enabled {
-        return Err(Status::from(CarbideError::InvalidArgument(
+        return Err(CarbideError::InvalidArgument(
             "Machine identity must be enabled in site config".to_string(),
-        )));
+        )
+        .into());
     }
 
     let req = request.into_inner();
     let org_id = req.organization_id.trim();
     if org_id.is_empty() {
-        return Err(Status::from(CarbideError::InvalidArgument(
-            "organization_id is required".to_string(),
-        )));
+        return Err(
+            CarbideError::InvalidArgument("organization_id is required".to_string()).into(),
+        );
     }
-    let org_id: TenantOrganizationId = org_id.parse().map_err(|e: InvalidTenantOrg| {
-        Status::from(CarbideError::InvalidArgument(e.to_string()))
-    })?;
+    let org_id: TenantOrganizationId = org_id
+        .parse()
+        .map_err(|e: InvalidTenantOrg| CarbideError::InvalidArgument(e.to_string()))?;
 
     api.database_connection
         .with_txn(|txn| {
