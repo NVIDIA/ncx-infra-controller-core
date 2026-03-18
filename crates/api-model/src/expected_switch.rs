@@ -121,6 +121,8 @@ pub struct LinkedExpectedSwitch {
     pub bmc_mac_address: MacAddress, // from expected_switches table
     pub switch_id: Option<SwitchId>, // The switch
     pub expected_switch_id: Option<Uuid>, // The expected switch ID
+    pub address: Option<String>,     // The explored BMC endpoint IP
+    pub rack_id: Option<RackId>,     // The rack this switch belongs to
 }
 
 /// A request to identify an ExpectedSwitch by either ID or MAC address.
@@ -166,6 +168,8 @@ impl From<LinkedExpectedSwitch> for rpc::forge::LinkedExpectedSwitch {
             expected_switch_id: l.expected_switch_id.map(|id| ::rpc::common::Uuid {
                 value: id.to_string(),
             }),
+            explored_endpoint_address: l.address,
+            rack_id: l.rack_id,
         }
     }
 }

@@ -126,6 +126,8 @@ pub struct LinkedExpectedPowerShelf {
     pub bmc_mac_address: MacAddress, // from expected_power_shelves table
     pub power_shelf_id: Option<PowerShelfId>, // The power shelf
     pub expected_power_shelf_id: Option<Uuid>, // The expected power shelf ID
+    pub address: Option<String>,     // The explored BMC endpoint IP
+    pub rack_id: Option<RackId>,     // The rack this power shelf belongs to
 }
 
 /// A request to identify an ExpectedPowerShelf by either ID or MAC address.
@@ -171,6 +173,8 @@ impl From<LinkedExpectedPowerShelf> for rpc::forge::LinkedExpectedPowerShelf {
             expected_power_shelf_id: l.expected_power_shelf_id.map(|id| ::rpc::common::Uuid {
                 value: id.to_string(),
             }),
+            explored_endpoint_address: l.address,
+            rack_id: l.rack_id,
         }
     }
 }

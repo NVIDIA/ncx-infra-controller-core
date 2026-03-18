@@ -121,9 +121,14 @@ pub async fn find_all_linked(txn: &mut PgConnection) -> DatabaseResult<Vec<Linke
   es.serial_number,
   es.bmc_mac_address,
   s.id AS switch_id,
-  es.expected_switch_id
+  es.expected_switch_id,
+  host(ee.address) AS address,
+  es.rack_id
  FROM expected_switches es
   LEFT JOIN switches s ON es.serial_number = s.config->>'name'
+  LEFT JOIN machine_interfaces mi ON es.bmc_mac_address = mi.mac_address
+  LEFT JOIN machine_interface_addresses mia ON mi.id = mia.interface_id
+  LEFT JOIN explored_endpoints ee ON mia.address = ee.address
   ORDER BY es.bmc_mac_address
   "#;
     sqlx::query_as(sql)

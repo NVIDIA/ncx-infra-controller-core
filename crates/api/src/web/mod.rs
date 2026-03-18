@@ -59,6 +59,9 @@ mod domain;
 mod dpa;
 mod dpu_versions;
 mod expected_machine;
+mod expected_power_shelf;
+mod expected_rack;
+mod expected_switch;
 mod explored_endpoint;
 mod filters;
 mod health;
@@ -418,6 +421,18 @@ pub fn routes(api: Arc<Api>) -> eyre::Result<NormalizePath<Router>> {
             .route(
                 "/expected-machine-definition.json",
                 get(expected_machine::show_expected_machine_raw_json),
+            )
+            .route("/expected-rack", get(expected_rack::show_html))
+            .route("/expected-rack.json", get(expected_rack::show_json))
+            .route("/expected-switch", get(expected_switch::show_html))
+            .route("/expected-switch.json", get(expected_switch::show_json))
+            .route(
+                "/expected-power-shelf",
+                get(expected_power_shelf::show_html),
+            )
+            .route(
+                "/expected-power-shelf.json",
+                get(expected_power_shelf::show_json),
             )
             .route("/network-device", get(network_device::show_html))
             .route("/network-device.json", get(network_device::show_all_json))

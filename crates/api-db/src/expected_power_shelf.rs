@@ -114,9 +114,14 @@ pub async fn find_all_linked(
  eps.serial_number,
  eps.bmc_mac_address,
  ps.id AS power_shelf_id,
- eps.expected_power_shelf_id
+ eps.expected_power_shelf_id,
+ host(ee.address) AS address,
+ eps.rack_id
 FROM expected_power_shelves eps
  LEFT JOIN power_shelves ps ON eps.serial_number = ps.config->>'name'
+ LEFT JOIN machine_interfaces mi ON eps.bmc_mac_address = mi.mac_address
+ LEFT JOIN machine_interface_addresses mia ON mi.id = mia.interface_id
+ LEFT JOIN explored_endpoints ee ON mia.address = ee.address
  ORDER BY eps.bmc_mac_address
  "#;
     sqlx::query_as(sql)

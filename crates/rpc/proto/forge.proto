@@ -1772,6 +1772,8 @@ message LinkedExpectedPowerShelf {
   string bmc_mac_address = 2; // from expected_power_shelves table
   optional common.PowerShelfId power_shelf_id = 3; // The power shelf
   optional common.UUID expected_power_shelf_id = 4;
+  optional string explored_endpoint_address = 5; // The explored BMC IP
+  optional common.RackId rack_id = 6;
 }
 
 // Describe the desired configuration of a Switch
@@ -1898,6 +1900,8 @@ message LinkedExpectedSwitch {
   string bmc_mac_address = 2; // from expected_switches table
   optional common.SwitchId switch_id = 3; // The switch
   optional common.UUID expected_switch_id = 4;
+  optional string explored_endpoint_address = 5; // The explored BMC IP
+  optional common.RackId rack_id = 6;
 }
 
 message ExpectedRack {
