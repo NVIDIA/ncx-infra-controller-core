@@ -1972,60 +1972,6 @@ impl ApiClient {
         Ok(RemediationList { remediations })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn create_extension_service(
-        &self,
-        service_id: Option<String>,
-        service_name: String,
-        tenant_organization_id: String,
-        service_type: i32,
-        description: Option<String>,
-        data: String,
-        credential: Option<rpc::DpuExtensionServiceCredential>,
-        observability: Vec<rpc::DpuExtensionServiceObservabilityConfig>,
-    ) -> CarbideCliResult<rpc::DpuExtensionService> {
-        let request = rpc::CreateDpuExtensionServiceRequest {
-            service_id,
-            service_name,
-            service_type,
-            tenant_organization_id,
-            data,
-            description,
-            credential,
-            observability: Some(rpc::DpuExtensionServiceObservability {
-                configs: observability,
-            }),
-        };
-
-        Ok(self.0.create_dpu_extension_service(request).await?)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn update_extension_service(
-        &self,
-        service_id: String,
-        service_name: Option<String>,
-        description: Option<String>,
-        data: String,
-        credential: Option<rpc::DpuExtensionServiceCredential>,
-        observability: Vec<rpc::DpuExtensionServiceObservabilityConfig>,
-        if_version_ctr_match: Option<i32>,
-    ) -> CarbideCliResult<rpc::DpuExtensionService> {
-        let request = rpc::UpdateDpuExtensionServiceRequest {
-            service_id,
-            service_name,
-            description,
-            data,
-            credential,
-            if_version_ctr_match,
-            observability: Some(rpc::DpuExtensionServiceObservability {
-                configs: observability,
-            }),
-        };
-
-        Ok(self.0.update_dpu_extension_service(request).await?)
-    }
-
     pub async fn find_extension_services(
         &self,
         service_type: Option<i32>,
