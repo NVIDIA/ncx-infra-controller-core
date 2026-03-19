@@ -15,18 +15,6 @@
  * limitations under the License.
  */
 
-//! Rack State Handler - Partition-aware validation state machine
-//!
-//! This handler manages rack lifecycle through discovery and validation phases.
-//! Validation state is derived by aggregating partition status from machine metadata,
-//! which is set by an external validation service (RVS).
-//!
-//! ## Key Design Principles
-//!
-//! 1. NCX core is minimal: It only tracks state, not orchestration
-//! 2. RVS drives validation: External service sets machine metadata labels
-//! 3. Partition-aware: Tracks validation at partition (node group) level
-
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -637,7 +625,6 @@ impl StateHandler for RackStateHandler {
     ) -> Result<StateHandlerOutcome<RackState>, StateHandlerError> {
         let mut config = state.config.clone();
         tracing::info!("Rack {} is in state {}", id, controller_state.to_string());
-        tracing::info!("Rack {} is in state {}", id, controller_state);
 
         // If the rack has been marked as deleted in the DB (via the DeleteRack
         // API), transition to Deleting regardless of current state. This
