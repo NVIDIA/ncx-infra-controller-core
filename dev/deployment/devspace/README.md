@@ -116,10 +116,35 @@ docker build -t "machine-a-tron:<devspace-generated-tag>" -f dev/deployment/devs
 
 DevSpace then deploys the Helm chart with the built `carbide-api` image wired into `global.image.repository` and `global.image.tag`, and deploys the local-only `machine-a-tron` chart with its image wired into `image.repository` and `image.tag`.
 
+## Re-initializing  ncx-infra-controller-core to a clean slate
+
+Once deployed, the `carbide-api` container will run and initialize its database, and the `machine-a-tron` container will run a set of mock machines, which will be discovered and ingested into the database, and run through the state machine until they reach a Ready state.
+
+You can start over again (purging the resources from k8s) by running:
+
+```bash
+devspace purge -n forge-system
+```
+
+and it will delete the carbide-api and machine-a-tron deployments.
+
+To clear out the carbide database to start from scratch again, run the nuke-postgres.sh helper script:
+
+```bash
+dev/deployment/devspace/nuke-postgres.sh
+```
+
+and the postgres database will be reset to an empty state, allowing you to deploy again:
+
+```bash
+devspace deploy -n forge-system
+```
+
 ## Files
 
-- [`local-dev-bootstrap-prereqs.sh`](../../local-dev-bootstrap-prereqs.sh)
+- [`bootstrap-prereqs.sh`](bootstrap-prereqs.sh)
 - [`devspace.yaml`](../../../devspace.yaml)
 - [`values.base.yaml`](values.base.yaml)
 - [`values.generated.yaml`](values.generated.yaml)
 - [`values.machine-a-tron.yaml`](values.machine-a-tron.yaml)
+- [`nuke-postgres.sh`](nuke-postgres.sh)
