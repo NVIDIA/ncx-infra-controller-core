@@ -1,9 +1,11 @@
-# Local Development
+# Local Development with DevSpace
 
-Local development is split into two steps:
+You can use [DevSpace](https://www.devspace.sh) to deploy ncx-infrastructure-core locally using mock hosts.
 
-1. Bootstrap Kubernetes prerequisites.
-2. Build and deploy `ncx-infra-controller-core` with DevSpace.
+The process is broken into two steps:
+
+1. Bootstrap Kubernetes prerequisites. (This only needs to be done once.)
+2. Run `devspace deploy` to deploy code from this repo
 
 The intent is that the app deploy path stays the same whether the prerequisites are:
 
