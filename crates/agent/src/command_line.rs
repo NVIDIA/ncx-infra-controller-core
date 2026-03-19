@@ -311,6 +311,13 @@ pub struct RunOptions {
         env = "HBN_CONFIG_MODE"
     )]
     pub hbn_config_mode: HbnConfigMode,
+    #[clap(
+        long,
+        default_value = "dpu-os",
+        help = "Set the platform type. Specify \"dpu-os\" or \"containerized\".",
+        env = "AGENT_PLATFORM_TYPE"
+    )]
+    pub agent_platform_type: AgentPlatformType,
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -336,6 +343,38 @@ impl FromStr for HbnConfigMode {
             "container-exec" => Ok(ContainerExec),
             "nvue-rest" => Ok(NvueRest),
             unknown_mode => Err(eyre::eyre!("Unknown HBN config mode \"{unknown_mode}\"")),
+        }
+    }
+}
+
+#[derive(Parser, Debug, Clone)]
+pub enum AgentPlatformType {
+    // DpuOs: The old default, where we're running inside the main DPU OS and
+    // are free to poke any files and containers directly through whatever
+    // method we feel like.
+    DpuOs,
+    // Containerized: Something suitable for DPF, where the agent is running
+    // inside a container with no direct access to the OS resources or any of
+    // the other containers.
+    Containerized,
+    // should "fake DPU" be modeled as a variant here?
+}
+
+impl AgentPlatformType {
+    pub fn is_dpu_os(&self) -> bool {
+        matches!(self, AgentPlatformType::DpuOs)
+    }
+}
+
+impl FromStr for AgentPlatformType {
+    type Err = eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use AgentPlatformType::*;
+        match s {
+            "dpu-os" => Ok(DpuOs),
+            "containerized" => Ok(Containerized),
+            unknown_type => Err(eyre::eyre!("Unknown platform type \"{unknown_type}\"")),
         }
     }
 }

@@ -92,7 +92,9 @@ pub async fn setup_and_run(
     // the ATF/UEFI is loaded.
     //
     // Once the fleet is all on 2.9.2, we can remove this ugly hack.
-    hack_dpu_os_to_load_atf_uefi_with_specific_versions().await?;
+    if options.agent_platform_type.is_dpu_os() {
+        hack_dpu_os_to_load_atf_uefi_with_specific_versions().await?;
+    }
 
     let process_start_time = SystemTime::now();
 
@@ -172,7 +174,8 @@ pub async fn setup_and_run(
         }
     }
 
-    if !agent_config.machine.is_fake_dpu
+    if options.agent_platform_type.is_dpu_os()
+        && !agent_config.machine.is_fake_dpu
         && let Err(e) = crate::agent_platform::ensure_doca_containers().await
     {
         // The HBN container health check will notice this problem and
@@ -189,7 +192,9 @@ pub async fn setup_and_run(
         "Unable to convert string: {NVUE_MINIMUM_HBN_VERSION} to Version"
     ))?;
 
-    if let Err(err) = crate::ovs::set_vswitchd_yield().await {
+    if options.agent_platform_type.is_dpu_os()
+        && let Err(err) = crate::ovs::set_vswitchd_yield().await
+    {
         tracing::warn!(%err, "Failed asking ovs_vswitchd to not use 100% of a CPU core. Non-fatal.");
         // We have eight cores. Letting ovs_vswitchd have one is OK.
     };
@@ -239,9 +244,13 @@ pub async fn setup_and_run(
         summary_format: SummaryFormat::PlainText,
     };
 
-    managed_files::main_sync(duppet_options, &machine_id, &host_machine_id);
+    if options.agent_platform_type.is_dpu_os() {
+        managed_files::main_sync(duppet_options, &machine_id, &host_machine_id);
+    }
 
-    if let Err(e) = lldp::set_lldp_system_description(&machine_id) {
+    if options.agent_platform_type.is_dpu_os()
+        && let Err(e) = lldp::set_lldp_system_description(&machine_id)
+    {
         tracing::warn!("Couldn't update LLDP system description: {e}")
     }
 
@@ -290,6 +299,7 @@ pub async fn setup_and_run(
         machine_id,
         forge_api: forge_api_server.clone(),
         forge_client_config: Arc::clone(&forge_client_config),
+        agent_platform_type: options.agent_platform_type.clone(),
     };
 
     // Get all DPU Ip addresses via gRPC call
@@ -341,6 +351,10 @@ pub async fn setup_and_run(
     // used in the event that hbn crashes and can no longer read the actual version of hbn
     let hbn_device_names = HBNDeviceNames::hbn_23();
 
+    let extension_service_manager = extension_services::ExtensionServiceManager::platform_defaults(
+        &options.agent_platform_type,
+    );
+
     let mut main_loop = MainLoop {
         forge_client_config,
         build_version,
@@ -366,7 +380,7 @@ pub async fn setup_and_run(
         service_addrs,
         close_sender,
         network_monitor_handle,
-        extension_service_manager: extension_services::ExtensionServiceManager::default(),
+        extension_service_manager,
         nvue_client,
     };
 
@@ -625,7 +639,9 @@ impl MainLoop {
                     .await;
 
                     let update_result = {
-                        if hbn_version >= self.fmds_minimum_hbn_version {
+                        if self.options.agent_platform_type.is_dpu_os()
+                            && hbn_version >= self.fmds_minimum_hbn_version
+                        {
                             // Apply the interface plan. This is where we actually configure
                             // the FMDS phone home interface on the DPU.
                             Interface::apply(fmds_interface_plan).await?;
@@ -647,11 +663,12 @@ impl MainLoop {
 
                         // We'll update some internal bridging config if bridging config
                         // for traffic_intercept was sent in.
-                        let bridging_result = if conf
-                            .traffic_intercept_config
-                            .as_ref()
-                            .map(|vc| vc.bridging.is_some())
-                            .unwrap_or_default()
+                        let bridging_result = if self.options.agent_platform_type.is_dpu_os()
+                            && conf
+                                .traffic_intercept_config
+                                .as_ref()
+                                .map(|vc| vc.bridging.is_some())
+                                .unwrap_or_default()
                         {
                             ethernet_virtualization::update_traffic_intercept_bridging(
                                 &conf,
@@ -684,7 +701,9 @@ impl MainLoop {
                     match joined_result {
                         Ok(has_changed) => {
                             has_changed_configs = has_changed;
-                            if let Err(err) = mtu::ensure().await {
+                            if self.options.agent_platform_type.is_dpu_os()
+                                && let Err(err) = mtu::ensure().await
+                            {
                                 tracing::error!(error = %err, "Error reading/setting MTU for p0 or p1");
                             }
 
@@ -953,7 +972,7 @@ impl MainLoop {
     }
 
     async fn perform_upgrade_check(&mut self, now: std::time::Instant) -> IterationResult {
-        if self.options.skip_upgrade_check {
+        if self.options.skip_upgrade_check || !self.options.agent_platform_type.is_dpu_os() {
             return IterationResult {
                 stop_agent: false,
                 loop_period: Default::default(),
