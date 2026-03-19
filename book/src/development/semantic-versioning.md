@@ -67,7 +67,6 @@ Within a given major version, the team guarantees:
 3. QA performs full validation against the RC.
 4. Bug fixes found during QA are applied to `main` first, then **cherry-picked** to the release branch.
 5. Once QA signs off, the **final release tag** is created on the release branch.
-6. Release promotion to production requires approval from engineering and product leadership.
 
 ### Pre-Release Tags
 
