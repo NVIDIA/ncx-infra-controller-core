@@ -396,9 +396,11 @@ impl InternalRBACRules {
             "GetMachineValidationExternalConfig",
             vec![ForgeAdminCLI, Scout],
         );
+        // Quick fix: disable external config writes until hardened alongside machine validation.
+        // x.perm("AddUpdateMachineValidationExternalConfig", vec![ForgeAdminCLI]);
         x.perm(
             "AddUpdateMachineValidationExternalConfig",
-            vec![ForgeAdminCLI],
+            vec![],
         );
         x.perm("GetMachineValidationRuns", vec![ForgeAdminCLI]);
         x.perm("AdminBmcReset", vec![ForgeAdminCLI]);
@@ -436,7 +438,7 @@ impl InternalRBACRules {
             vec![ForgeAdminCLI, SiteAgent, Agent, Scout],
         );
         // Quick fix: machine validation test command/args run via shell on the scout; add/update
-        // must stay disabled until input validation and execution are hardened (see Issues).
+        // must stay disabled until input validation and execution are hardened.
         // Previous RBAC (restore only together with a proper fix):
         // x.perm("AddMachineValidationTest", vec![ForgeAdminCLI, SiteAgent]);
         // x.perm("UpdateMachineValidationTest", vec![ForgeAdminCLI, SiteAgent]);
