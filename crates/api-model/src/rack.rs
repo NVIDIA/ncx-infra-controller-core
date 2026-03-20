@@ -150,7 +150,7 @@ impl<'r> FromRow<'r, PgRow> for Rack {
 ///                                                       Ready
 /// ```
 ///
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RackState {
     /// Default DB column value. The rack SM does not transition out of this
@@ -161,6 +161,7 @@ pub enum RackState {
     /// This variant exists solely to deserialize rows that were inserted with
     /// the column default (`{"state":"unknown"}`). Under normal operation no
     /// rack should remain in this state.
+    #[default]
     Unknown,
 
     /// Rack is expected - waiting for machines to be discovered.
@@ -258,12 +259,6 @@ impl Display for RackPowerState {
             RackPowerState::PoweringOff => write!(f, "PoweringOff"),
             RackPowerState::PowerReset => write!(f, "PowerReset"),
         }
-    }
-}
-
-impl Default for RackState {
-    fn default() -> Self {
-        RackState::Unknown
     }
 }
 

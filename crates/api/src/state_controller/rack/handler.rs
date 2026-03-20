@@ -187,7 +187,7 @@ impl RvPartitions {
                 summary.validated += 1;
             } else if states.iter().any(|s| matches!(s, MachineRvState::Fail(_))) {
                 summary.failed += 1;
-            } else if states.iter().any(|s| *s == MachineRvState::Inp) {
+            } else if states.contains(&MachineRvState::Inp) {
                 summary.in_progress += 1;
             } else {
                 summary.pending += 1;
@@ -1226,7 +1226,7 @@ mod tests {
 
     #[test]
     fn test_partitions_from_meta_iter() {
-        let metas = vec![
+        let metas = [
             metadata_with_labels(&[("rv.part-id", "p0"), ("rv.st", "pass")]),
             metadata_with_labels(&[("rv.part-id", "p0"), ("rv.st", "inp")]),
             metadata_with_labels(&[("rv.part-id", "p1"), ("rv.st", "idle")]),
@@ -1246,7 +1246,7 @@ mod tests {
 
     #[test]
     fn test_partitions_run_id_filtering() {
-        let metas = vec![
+        let metas = [
             // Current run -- should be included
             metadata_with_labels(&[
                 ("rv.part-id", "p0"),
@@ -1273,7 +1273,7 @@ mod tests {
 
     #[test]
     fn test_partitions_no_run_id_accepts_all() {
-        let metas = vec![
+        let metas = [
             metadata_with_labels(&[
                 ("rv.part-id", "p0"),
                 ("rv.st", "pass"),
@@ -1290,7 +1290,7 @@ mod tests {
 
     #[test]
     fn test_partitions_summarize() {
-        let metas = vec![
+        let metas = [
             // Partition p0: one node pass, one node fail -> Failed
             metadata_with_labels(&[("rv.part-id", "p0"), ("rv.st", "pass")]),
             metadata_with_labels(&[
