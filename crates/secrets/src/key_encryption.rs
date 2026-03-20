@@ -64,7 +64,11 @@ pub fn aes256_key_from_secret_b64(secret_b64: &str) -> Result<[u8; 32], KeyEncry
     })
 }
 
-fn serialize_envelope_v1(key_id: &str, nonce: &[u8; 12], ciphertext: &[u8]) -> Result<Vec<u8>, KeyEncryptionError> {
+fn serialize_envelope_v1(
+    key_id: &str,
+    nonce: &[u8; 12],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, KeyEncryptionError> {
     let kid = key_id.as_bytes();
     if kid.is_empty() || kid.len() > 255 {
         return Err(KeyEncryptionError::Encrypt(
@@ -90,7 +94,9 @@ fn parse_envelope_v1(data: &[u8]) -> Result<(&str, &[u8], &[u8]), KeyEncryptionE
         return Err(KeyEncryptionError::Decrypt("truncated envelope".into()));
     }
     if data[0] != SCHEME_VERSION_V1 {
-        return Err(KeyEncryptionError::Decrypt("unsupported scheme_version".into()));
+        return Err(KeyEncryptionError::Decrypt(
+            "unsupported scheme_version".into(),
+        ));
     }
     let kid_len = data[1] as usize;
     if data.len() < 2 + kid_len + 12 + 4 {
@@ -103,7 +109,9 @@ fn parse_envelope_v1(data: &[u8]) -> Result<(&str, &[u8], &[u8]), KeyEncryptionE
     let ct_len = u32::from_be_bytes(data[off + 12..off + 16].try_into().unwrap()) as usize;
     let ct_end = off + 16 + ct_len;
     if data.len() != ct_end {
-        return Err(KeyEncryptionError::Decrypt("envelope length mismatch".into()));
+        return Err(KeyEncryptionError::Decrypt(
+            "envelope length mismatch".into(),
+        ));
     }
     let ciphertext = &data[off + 16..ct_end];
     Ok((key_id, nonce, ciphertext))
@@ -122,8 +130,8 @@ pub fn encrypt(
     encryption_key_id: &str,
 ) -> Result<String, KeyEncryptionError> {
     let key = aes256_key_from_secret_b64(encryption_secret_b64)?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|e| KeyEncryptionError::Encrypt(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&key).map_err(|e| KeyEncryptionError::Encrypt(e.to_string()))?;
     let mut nonce = [0u8; 12];
     rand::Rng::fill(&mut rand::rng(), &mut nonce);
     let ciphertext = cipher
@@ -134,7 +142,10 @@ pub fn encrypt(
 }
 
 /// Decrypts a DB value produced by [`encrypt`]: envelope v1 with a 32-byte base64 encryption secret.
-pub fn decrypt(encrypted_base64: &str, encryption_secret: &str) -> Result<Vec<u8>, KeyEncryptionError> {
+pub fn decrypt(
+    encrypted_base64: &str,
+    encryption_secret: &str,
+) -> Result<Vec<u8>, KeyEncryptionError> {
     let combined = BASE64
         .decode(encrypted_base64.trim())
         .map_err(|e| KeyEncryptionError::Decrypt(e.to_string()))?;
@@ -144,8 +155,8 @@ pub fn decrypt(encrypted_base64: &str, encryption_secret: &str) -> Result<Vec<u8
         KeyEncryptionError::Encrypt(msg) => KeyEncryptionError::Decrypt(msg),
         other => other,
     })?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|e| KeyEncryptionError::Decrypt(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&key).map_err(|e| KeyEncryptionError::Decrypt(e.to_string()))?;
     let nonce_ga = aes_gcm::aead::generic_array::GenericArray::from_slice(nonce);
     cipher
         .decrypt(nonce_ga, ciphertext)
@@ -209,5 +220,22 @@ mod tests {
         let short = BASE64.encode([0u8; 16]);
         let err = aes256_key_from_secret_b64(&short).unwrap_err();
         assert!(err.to_string().contains("32"));
+    }
+
+    #[test]
+    fn encrypt_decrypt_token_delegation_json_utf8_roundtrip() {
+        let key_b64 = test_secret_key_b64();
+        let json = r#"{"client_id":"c","client_secret":"s"}"#;
+        let enc = encrypt(json.as_bytes(), &key_b64, "kv1").unwrap();
+        let plain = decrypt(&enc, &key_b64).unwrap();
+        let out = String::from_utf8(plain).unwrap();
+        assert_eq!(out, json);
+    }
+
+    #[test]
+    fn decrypt_rejects_plaintext_token_delegation_json() {
+        let key_b64 = test_secret_key_b64();
+        let plaintext_json = r#"{"client_id":"c","client_secret":"s"}"#;
+        assert!(decrypt(plaintext_json, &key_b64).is_err());
     }
 }

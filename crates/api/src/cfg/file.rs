@@ -47,6 +47,7 @@ use model::network_security_group::NetworkSecurityGroupRule;
 use model::network_segment::NetworkDefinition;
 use model::resource_pool::define::ResourcePoolDef;
 use model::site_explorer::{EndpointExplorationReport, ExploredEndpoint};
+use model::tenant::TENANT_IDENTITY_SIGNING_JWT_ALG;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utils::HostPortPair;
@@ -680,7 +681,7 @@ fn machine_identity_default_enabled() -> bool {
     true
 }
 fn machine_identity_default_algorithm() -> String {
-    "ES256".to_string()
+    TENANT_IDENTITY_SIGNING_JWT_ALG.to_string()
 }
 fn machine_identity_default_token_ttl_min_sec() -> u32 {
     60
@@ -710,7 +711,7 @@ impl From<MachineIdentityConfig> for model::tenant::IdentityConfigValidationBoun
             algorithm: mi.algorithm,
             encryption_key_id: mi.current_encryption_key_id.expect(
                 "current_encryption_key_id is required when machine identity is enabled; \
-                 validation in parse_carbide_config should have caught this",
+                 statup validation in parse_carbide_config failed",
             ),
         }
     }

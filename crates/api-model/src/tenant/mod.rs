@@ -517,6 +517,9 @@ pub struct IdentityConfigValidationBounds {
     pub encryption_key_id: String,
 }
 
+/// JWT `alg` for per-tenant signing keys. Only ES256 (ECDSA P-256) is implemented end-to-end.
+pub const TENANT_IDENTITY_SIGNING_JWT_ALG: &str = "ES256";
+
 #[derive(thiserror::Error, Debug)]
 #[error("{0}")]
 pub struct IdentityConfigValidationError(pub String);
@@ -527,6 +530,12 @@ impl IdentityConfig {
         value: rpc_forge::IdentityConfig,
         bounds: &IdentityConfigValidationBounds,
     ) -> Result<Self, IdentityConfigValidationError> {
+        if bounds.algorithm != TENANT_IDENTITY_SIGNING_JWT_ALG {
+            return Err(IdentityConfigValidationError(format!(
+                "machine_identity.algorithm must be {TENANT_IDENTITY_SIGNING_JWT_ALG} (got {:?})",
+                bounds.algorithm
+            )));
+        }
         if value.issuer.is_empty() {
             return Err(IdentityConfigValidationError(
                 "issuer is required".to_string(),
@@ -982,6 +991,28 @@ mod tests {
         assert!(!config.rotate_key);
         assert_eq!(config.algorithm, "ES256");
         assert_eq!(config.encryption_key_id, "test-master");
+    }
+
+    #[test]
+    fn identity_config_try_from_proto_rejects_unsupported_algorithm() {
+        let proto = rpc_forge::IdentityConfig {
+            enabled: true,
+            issuer: "https://issuer.example.com".to_string(),
+            default_audience: "api".to_string(),
+            allowed_audiences: vec!["api".to_string()],
+            token_ttl_sec: 3600,
+            subject_prefix: "example.com".to_string(),
+            rotate_key: false,
+        };
+        let bounds = IdentityConfigValidationBounds {
+            token_ttl_min_sec: 60,
+            token_ttl_max_sec: 86400,
+            algorithm: "RS256".to_string(),
+            encryption_key_id: "test".to_string(),
+        };
+        let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
+        assert!(err.0.contains("machine_identity.algorithm"));
+        assert!(err.0.contains("RS256"));
     }
 
     #[test]

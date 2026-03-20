@@ -19,7 +19,8 @@
 //! Stores per-org identity config and signing keys in `tenant_identity_config` table.
 
 use model::tenant::{
-    IdentityConfig, SigningKeyMaterial, TenantIdentityConfig, TenantOrganizationId, TokenDelegation,
+    IdentityConfig, SigningKeyMaterial, TenantIdentityConfig, TenantOrganizationId,
+    TokenDelegation, TokenDelegationAuthMethod,
 };
 use sqlx::PgConnection;
 use sqlx::types::Json;
@@ -131,12 +132,15 @@ pub async fn find(
 }
 
 /// Set token delegation for an org. Identity config must exist first.
+/// `encrypted_auth_method_config` must be standard base64 envelope v1 from `key_encryption::encrypt`
+/// over the UTF-8 JSON produced by [`TokenDelegation::to_db_format`].
 pub async fn set_token_delegation(
     org_id: &TenantOrganizationId,
     config: &TokenDelegation,
+    auth_method: TokenDelegationAuthMethod,
+    encrypted_auth_method_config: &str,
     txn: &mut PgConnection,
 ) -> DatabaseResult<TenantIdentityConfig> {
-    let (auth_method, config_json) = config.to_db_format();
     let query = r#"
         UPDATE tenant_identity_config
         SET token_endpoint = $2, auth_method = $3, encrypted_auth_method_config = $4,
@@ -152,7 +156,7 @@ pub async fn set_token_delegation(
         .bind(org_id.as_str())
         .bind(&config.token_endpoint)
         .bind(auth_method)
-        .bind(&config_json)
+        .bind(encrypted_auth_method_config)
         .bind(Some(config.subject_token_audience.as_str()))
         .fetch_optional(txn)
         .await
@@ -199,6 +203,8 @@ pub async fn delete_token_delegation(
 mod tests {
     use std::collections::HashMap;
 
+    use base64::Engine;
+    use forge_secrets::key_encryption;
     use model::metadata::Metadata;
     use model::tenant::{
         IdentityConfig, TokenDelegation, TokenDelegationAuthMethod, TokenDelegationAuthMethodConfig,
@@ -206,6 +212,11 @@ mod tests {
 
     use super::*;
     use crate::tenant;
+
+    /// 32 zero bytes, standard base64 — matches `key_encryption` tests.
+    fn test_encryption_secret_b64() -> String {
+        base64::engine::general_purpose::STANDARD.encode([0u8; 32])
+    }
 
     fn test_org_id() -> TenantOrganizationId {
         "IdentityConfigTestOrg".parse().unwrap()
@@ -320,7 +331,11 @@ mod tests {
                 client_secret: "test-secret".to_string(),
             },
         };
-        let cfg = set_token_delegation(&org_id, &token_delegation, &mut txn)
+        let (auth_method, plaintext_json) = token_delegation.to_db_format();
+        let secret_b64 = test_encryption_secret_b64();
+        let enc =
+            key_encryption::encrypt(plaintext_json.as_bytes(), &secret_b64, "test-master").unwrap();
+        let cfg = set_token_delegation(&org_id, &token_delegation, auth_method, &enc, &mut txn)
             .await
             .unwrap();
         assert_eq!(

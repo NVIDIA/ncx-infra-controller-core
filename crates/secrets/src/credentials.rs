@@ -345,22 +345,51 @@ pub enum MqttCredentialType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CredentialKey {
-    DpuSsh { machine_id: MachineId },
-    DpuHbn { machine_id: MachineId },
-    DpuRedfish { credential_type: CredentialType },
-    HostRedfish { credential_type: CredentialType },
-    UfmAuth { fabric: String },
-    DpuUefi { credential_type: CredentialType },
-    HostUefi { credential_type: CredentialType },
-    BmcCredentials { credential_type: BmcCredentialType },
-    ExtensionService { service_id: String, version: String },
-    NmxM { nmxm_id: String },
-    RackFirmware { firmware_id: String },
-    SwitchNvosAdmin { bmc_mac_address: MacAddress },
-    MqttAuth { credential_type: MqttCredentialType },
+    DpuSsh {
+        machine_id: MachineId,
+    },
+    DpuHbn {
+        machine_id: MachineId,
+    },
+    DpuRedfish {
+        credential_type: CredentialType,
+    },
+    HostRedfish {
+        credential_type: CredentialType,
+    },
+    UfmAuth {
+        fabric: String,
+    },
+    DpuUefi {
+        credential_type: CredentialType,
+    },
+    HostUefi {
+        credential_type: CredentialType,
+    },
+    BmcCredentials {
+        credential_type: BmcCredentialType,
+    },
+    ExtensionService {
+        service_id: String,
+        version: String,
+    },
+    NmxM {
+        nmxm_id: String,
+    },
+    RackFirmware {
+        firmware_id: String,
+    },
+    SwitchNvosAdmin {
+        bmc_mac_address: MacAddress,
+    },
+    MqttAuth {
+        credential_type: MqttCredentialType,
+    },
     /// Machine identity encryption key by key-id (from credential file `machine_identity.encryption_keys`).
     /// Returns `UsernamePassword { username: key_id, password: secret }`.
-    MachineIdentityEncryptionKey { key_id: String },
+    MachineIdentityEncryptionKey {
+        key_id: String,
+    },
 }
 
 impl CredentialKey {

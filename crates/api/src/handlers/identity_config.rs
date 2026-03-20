@@ -30,12 +30,50 @@ use forge_secrets::credentials::{CredentialKey, Credentials};
 use forge_secrets::key_encryption;
 use model::tenant::{
     IdentityConfig, IdentityConfigValidationError, InvalidTenantOrg, SigningKeyMaterial,
-    TenantOrganizationId, TokenDelegation, TokenDelegationValidationError,
+    TenantIdentityConfig, TenantOrganizationId, TokenDelegation, TokenDelegationValidationError,
 };
 use tonic::{Request, Response, Status};
 
 use crate::CarbideError;
 use crate::api::{Api, log_request_data, log_request_data_redacted};
+
+async fn machine_identity_encryption_secret_b64(
+    api: &Api,
+    encryption_key_id: &str,
+) -> Result<String, Status> {
+    let cred_key = CredentialKey::MachineIdentityEncryptionKey {
+        key_id: encryption_key_id.to_string(),
+    };
+    let creds = api
+        .credential_manager
+        .get_credentials(&cred_key)
+        .await
+        .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
+        .ok_or_else(|| {
+            CarbideError::InvalidArgument(format!(
+                "encryption key '{encryption_key_id}' not found in secrets (machine_identity.encryption_keys)"
+            ))
+        })?;
+    match &creds {
+        Credentials::UsernamePassword { password, .. } => Ok(password.clone()),
+    }
+}
+
+/// Decrypts `encrypted_auth_method_config` in-memory for gRPC conversion (envelope v1).
+async fn tenant_identity_with_decrypted_token_delegation(
+    api: &Api,
+    mut cfg: TenantIdentityConfig,
+) -> Result<TenantIdentityConfig, Status> {
+    if let Some(ref enc) = cfg.encrypted_auth_method_config {
+        let secret = machine_identity_encryption_secret_b64(api, &cfg.encryption_key_id).await?;
+        let plain = key_encryption::decrypt(enc, &secret)
+            .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+        cfg.encrypted_auth_method_config = Some(
+            String::from_utf8(plain).map_err(|e| CarbideError::InvalidArgument(e.to_string()))?,
+        );
+    }
+    Ok(cfg)
+}
 
 /// Formats TokenDelegationRequest for logging with client_secret redacted.
 fn format_token_delegation_request_redacted(req: &TokenDelegationRequest) -> String {
@@ -222,32 +260,14 @@ pub(crate) async fn set_identity_configuration(
 
     let key_material = match (&existing, config.rotate_key) {
         (None, _) | (_, true) => {
-            let cred_key = CredentialKey::MachineIdentityEncryptionKey {
-                key_id: config.encryption_key_id.clone(),
-            };
-            let creds = api
-                .credential_manager
-                .get_credentials(&cred_key)
-                .await
-                .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
-                .ok_or_else(|| {
-                    CarbideError::InvalidArgument(format!(
-                        "encryption key '{}' not found in secrets (machine_identity.encryption_keys)",
-                        config.encryption_key_id
-                    ))
-                })?;
-            let encryption_key = match &creds {
-                Credentials::UsernamePassword { password, .. } => password.clone(),
-            };
+            let encryption_key =
+                machine_identity_encryption_secret_b64(api, &config.encryption_key_id).await?;
             let (private_pem, public_pem) = key_encryption::generate_es256_key_pair()
                 .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
             let key_id = key_encryption::key_id_from_public_key(&public_pem);
-            let encrypted_signing_key = key_encryption::encrypt(
-                &private_pem,
-                &encryption_key,
-                &config.encryption_key_id,
-            )
-            .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+            let encrypted_signing_key =
+                key_encryption::encrypt(&private_pem, &encryption_key, &config.encryption_key_id)
+                    .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
             Some(SigningKeyMaterial {
                 key_id,
                 encrypted_signing_key,
@@ -342,6 +362,7 @@ pub(crate) async fn get_token_delegation(
         }));
     }
 
+    let cfg = tenant_identity_with_decrypted_token_delegation(api, cfg).await?;
     Ok(Response::new(cfg.try_into().map_err(CarbideError::from)?))
 }
 
@@ -379,6 +400,27 @@ pub(crate) async fn set_token_delegation(
         Status::from(CarbideError::InvalidArgument(e.to_string()))
     })?;
 
+    let org_id_for_find = org_id.clone();
+    let id_row = api
+        .database_connection
+        .with_txn(|txn| {
+            Box::pin(async move { tenant_identity_config::find(&org_id_for_find, txn).await })
+        })
+        .await??
+        .ok_or_else(|| CarbideError::NotFoundError {
+            kind: "tenant_identity_config",
+            id: org_id.as_str().to_string(),
+        })?;
+
+    let (auth_method, plaintext_json) = config.to_db_format();
+    let secret = machine_identity_encryption_secret_b64(api, &id_row.encryption_key_id).await?;
+    let encrypted_blob = key_encryption::encrypt(
+        plaintext_json.as_bytes(),
+        &secret,
+        &id_row.encryption_key_id,
+    )
+    .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+
     let cfg = api
         .database_connection
         .with_txn(|txn| {
@@ -390,14 +432,21 @@ pub(crate) async fn set_token_delegation(
                         id: org_id.as_str().to_string(),
                     });
                 }
-                let cfg =
-                    tenant_identity_config::set_token_delegation(&org_id, &config, txn).await?;
+                let cfg = tenant_identity_config::set_token_delegation(
+                    &org_id,
+                    &config,
+                    auth_method,
+                    &encrypted_blob,
+                    txn,
+                )
+                .await?;
                 tenant::increment_version(org_id.as_str(), txn).await?;
                 Ok(cfg)
             })
         })
         .await??;
 
+    let cfg = tenant_identity_with_decrypted_token_delegation(api, cfg).await?;
     Ok(Response::new(cfg.try_into().map_err(CarbideError::from)?))
 }
 
