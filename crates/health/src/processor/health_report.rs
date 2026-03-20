@@ -174,7 +174,7 @@ impl HealthReportProcessor {
                 };
 
                 let message = format!(
-                    "{} '{}': {} - reading {:.2}{} ({}), valid range: {}, caution: {}, critical: {}",
+                    "{} '{}': {} - reading {:.2}{} ({}), valid range: {}, caution: {}, critical: {}, fatal: {}",
                     health.entity_type,
                     health.sensor_id,
                     status,
@@ -184,6 +184,7 @@ impl HealthReportProcessor {
                     Self::fmt_range(health.range_min, health.range_max),
                     Self::fmt_range(health.lower_caution, health.upper_caution),
                     Self::fmt_range(health.lower_critical, health.upper_critical),
+                    Self::fmt_range(health.lower_fatal, health.upper_fatal),
                 );
 
                 SensorHealthResult::Alert(HealthReportAlert {
