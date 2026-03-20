@@ -173,7 +173,7 @@ pub(crate) async fn delete_identity_configuration(
 }
 
 /// Handles SetIdentityConfiguration: upserts per-org identity config into tenant_identity_config.
-/// Requires auth. Tenant must exist. Key generation is placeholder until Vault integration.
+/// Requires auth. Tenant must exist. Key generation is placeholder until credential-backed key provisioning.
 pub(crate) async fn set_identity_configuration(
     api: &Api,
     request: Request<IdentityConfigRequest>,
@@ -232,7 +232,7 @@ pub(crate) async fn set_identity_configuration(
                 .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
                 .ok_or_else(|| {
                     CarbideError::InvalidArgument(format!(
-                        "encryption key '{}' not found in secrets (machine_identity.encryption_key)",
+                        "encryption key '{}' not found in secrets (machine_identity.encryption_keys)",
                         config.encryption_key_id
                     ))
                 })?;
@@ -242,8 +242,12 @@ pub(crate) async fn set_identity_configuration(
             let (private_pem, public_pem) = key_encryption::generate_es256_key_pair()
                 .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
             let key_id = key_encryption::key_id_from_public_key(&public_pem);
-            let encrypted_signing_key = key_encryption::encrypt(&private_pem, &encryption_key)
-                .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+            let encrypted_signing_key = key_encryption::encrypt(
+                &private_pem,
+                &encryption_key,
+                &config.encryption_key_id,
+            )
+            .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
             Some(SigningKeyMaterial {
                 key_id,
                 encrypted_signing_key,

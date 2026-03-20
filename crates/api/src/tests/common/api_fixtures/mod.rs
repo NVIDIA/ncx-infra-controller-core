@@ -1911,9 +1911,11 @@ pub async fn populate_network_security_groups(api: Arc<Api>) {
 }
 
 fn test_static_credential_snapshot() -> CredentialSnapshot {
+    use base64::Engine;
     use std::collections::HashMap;
-    let mut encryption_key = HashMap::new();
-    encryption_key.insert("test".to_string(), "test-encryption-key-secret".to_string());
+    let test_key_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+    let mut encryption_keys = HashMap::new();
+    encryption_keys.insert("test".to_string(), test_key_b64);
     CredentialSnapshot {
         dpu_redfish_factory_default: Some(UsernamePassword {
             username: "root".to_string(),
@@ -1927,7 +1929,7 @@ fn test_static_credential_snapshot() -> CredentialSnapshot {
             username: "root".to_string(),
             password: "hostredfish_sitedefault".to_string(),
         }),
-        machine_identity: Some(forge_secrets::MachineIdentityConfig { encryption_key }),
+        machine_identity: Some(forge_secrets::MachineIdentityConfig { encryption_keys }),
         ..Default::default()
     }
 }

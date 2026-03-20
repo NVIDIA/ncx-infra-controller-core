@@ -671,7 +671,7 @@ pub struct MachineIdentityConfig {
     /// Optional HTTP proxy for token endpoint calls (SSRF mitigation).
     #[serde(default)]
     pub token_endpoint_http_proxy: Option<String>,
-    /// Key-id for encryption/decryption of signing keys (selects from secrets machine_identity.encryption_key).
+    /// Key-id for encryption/decryption of signing keys (selects from secrets `machine_identity.encryption_keys`).
     #[serde(default)]
     pub current_encryption_key_id: Option<String>,
 }

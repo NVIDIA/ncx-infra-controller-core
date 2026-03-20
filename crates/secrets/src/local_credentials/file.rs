@@ -305,13 +305,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loads_machine_identity_encryption_key_yaml_format() {
+    async fn loads_machine_identity_encryption_keys_yaml_format() {
         let dir = tempdir().expect("create temp dir");
         let file_path = dir.path().join("credentials.yaml");
         tokio::fs::write(
             &file_path,
             r#"machine_identity:
-  encryption_key:
+  encryption_keys:
     v1: secret-1
     v2: secret-2
 "#,

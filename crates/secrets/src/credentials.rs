@@ -358,7 +358,7 @@ pub enum CredentialKey {
     RackFirmware { firmware_id: String },
     SwitchNvosAdmin { bmc_mac_address: MacAddress },
     MqttAuth { credential_type: MqttCredentialType },
-    /// Machine identity encryption key by key-id (from credential file `machine_identity.encryption_key`).
+    /// Machine identity encryption key by key-id (from credential file `machine_identity.encryption_keys`).
     /// Returns `UsernamePassword { username: key_id, password: secret }`.
     MachineIdentityEncryptionKey { key_id: String },
 }
@@ -450,7 +450,7 @@ impl CredentialKey {
                 }
             },
             CredentialKey::MachineIdentityEncryptionKey { key_id } => {
-                Cow::from(format!("machine_identity/encryption_key/{key_id}"))
+                Cow::from(format!("machine_identity/encryption_keys/{key_id}"))
             }
         }
     }

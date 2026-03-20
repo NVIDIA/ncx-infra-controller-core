@@ -62,8 +62,8 @@ impl From<Credentials> for UsernamePassword {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct MachineIdentityConfig {
-    /// Versioned encryption keys. Keys are key-ids (e.g. "v1", "v2"); values are secret material.
-    pub encryption_key: HashMap<String, String>,
+    /// Map of encryption key id (e.g. `kv1`) to base64-encoded 32-byte AES key material (`openssl rand -base64 32`).
+    pub encryption_keys: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -129,7 +129,7 @@ impl CredentialSnapshot {
             CredentialKey::MachineIdentityEncryptionKey { key_id } => self
                 .machine_identity
                 .as_ref()
-                .and_then(|mi| mi.encryption_key.get(key_id).cloned())
+                .and_then(|mi| mi.encryption_keys.get(key_id).cloned())
                 .map(|secret| Credentials::UsernamePassword {
                     username: key_id.clone(),
                     password: secret,
@@ -359,11 +359,11 @@ mod tests {
 
     #[test]
     fn snapshot_machine_identity_encryption_key() {
-        let mut encryption_key = HashMap::new();
-        encryption_key.insert("v1".to_string(), "secret-1".to_string());
-        encryption_key.insert("v2".to_string(), "secret-2".to_string());
+        let mut encryption_keys = HashMap::new();
+        encryption_keys.insert("v1".to_string(), "secret-1".to_string());
+        encryption_keys.insert("v2".to_string(), "secret-2".to_string());
         let snap = CredentialSnapshot {
-            machine_identity: Some(MachineIdentityConfig { encryption_key }),
+            machine_identity: Some(MachineIdentityConfig { encryption_keys }),
             ..Default::default()
         };
 
