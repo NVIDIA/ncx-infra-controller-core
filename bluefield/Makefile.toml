@@ -524,6 +524,15 @@ script = '''
     helm package ${REPO_ROOT}/bluefield/charts/carbide-dpu-otel-agent -d ${REPO_ROOT}/target/charts/
 '''
 
+[tasks.helm-package-doca-hbn]
+category = "Build"
+description = "Package the doca-hbn Helm chart"
+workspace = false
+script = '''
+    mkdir -p ${REPO_ROOT}/target/charts/
+    helm package ${REPO_ROOT}/bluefield/charts/doca-hbn -d ${REPO_ROOT}/target/charts/
+'''
+
 [tasks.helm-package-all]
 category = "Build"
 description = "Package all Carbide DPF Helm charts"
@@ -533,6 +542,7 @@ dependencies = [
     "helm-package-carbide-dpu-agent",
     "helm-package-carbide-dhcp-server",
     "helm-package-carbide-dpu-otel-agent",
+    "helm-package-doca-hbn",
 ]
 
 [tasks.docker-build-otelcol]
