@@ -17,11 +17,13 @@
 
 //! Rack Validation helper types
 
-use crate::state_controller::state_handler::StateHandlerError;
+use std::collections::HashMap;
+
 use model::machine::Machine;
 use model::metadata::Metadata;
 use model::rack::MachineRvLabels;
-use std::collections::HashMap;
+
+use crate::state_controller::state_handler::StateHandlerError;
 
 //------------------------------------------------------------------------------
 

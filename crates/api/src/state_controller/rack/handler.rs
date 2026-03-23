@@ -28,18 +28,17 @@ use model::machine::{LoadSnapshotOptions, ManagedHostState};
 use model::power_shelf::PowerShelfControllerState;
 use model::rack::{
     Rack, RackConfig, RackFirmwareUpgradeState, RackMaintenanceState, RackPowerState, RackState,
+    RackValidationState,
 };
 use model::rack_type::RackCapabilitiesSet;
 use model::switch::SwitchControllerState;
 use sqlx::{PgPool, PgTransaction};
 
 use crate::state_controller::rack::context::RackStateHandlerContextObjects;
-use crate::state_controller::rack::rv::RackPartitionSummary;
-use crate::state_controller::rack::rv::RvPartitions;
+use crate::state_controller::rack::rv::{RackPartitionSummary, RvPartitions};
 use crate::state_controller::state_handler::{
     StateHandler, StateHandlerContext, StateHandlerError, StateHandlerOutcome,
 };
-use model::rack::RackValidationState;
 //------------------------------------------------------------------------------
 
 /// Loads the aggregated partition validation summary for a rack.
