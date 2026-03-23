@@ -45,6 +45,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 fn expect_provisioning(mock: &mut MockDpfOperations) {
     mock.expect_register_dpu_device().returning(|_| Ok(()));
     mock.expect_register_dpu_node().returning(|_| Ok(()));
+    mock.expect_verify_node_labels().returning(|_| Ok(true));
 }
 
 fn dpf_config() -> crate::cfg::file::DpfConfig {

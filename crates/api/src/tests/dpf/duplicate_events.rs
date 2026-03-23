@@ -56,6 +56,7 @@ fn dpf_config() -> crate::cfg::file::DpfConfig {
 fn expect_provisioning(mock: &mut MockDpfOperations) {
     mock.expect_register_dpu_device().returning(|_| Ok(()));
     mock.expect_register_dpu_node().returning(|_| Ok(()));
+    mock.expect_verify_node_labels().returning(|_| Ok(true));
 }
 
 async fn reset_host_to_waiting_for_ready(

@@ -39,6 +39,7 @@ fn default_mock() -> MockDpfOperations {
     mock.expect_is_reboot_required().returning(|_| Ok(false));
     mock.expect_get_dpu_phase()
         .returning(|_, _| Ok(DpuPhase::Ready));
+    mock.expect_verify_node_labels().returning(|_| Ok(true));
     mock
 }
 

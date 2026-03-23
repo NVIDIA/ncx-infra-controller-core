@@ -388,7 +388,7 @@ pub async fn start_api(
         let provider = crate::dpf::CarbideBmcPasswordProvider::new(credential_manager.clone());
 
         let services = vec![carbide_dpf::services::dts_service(
-            &carbide_dpf::ServiceRegistryConfig::default(),
+            &carbide_dpf::services::ServiceRegistryConfig::default(),
         )];
 
         let rendered_bfcfg = crate::dpf::render_bfcfg(&carbide_config)?;
@@ -405,7 +405,8 @@ pub async fn start_api(
                 .dpf
                 .deployment_name
                 .clone()
-                .unwrap_or_else(|| "carbide-deployment".to_string()),
+                .unwrap_or_else(|| "carbide-deployment-v2".to_string()),
+            flavor_name: "carbide-dpu-flavor-v2".to_string(),
             services,
             bfcfg_template: Some(rendered_bfcfg),
         };
