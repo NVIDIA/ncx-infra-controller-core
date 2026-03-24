@@ -480,7 +480,8 @@ pub struct TenantIdentityConfig {
     // Token delegation (optional)
     pub token_endpoint: Option<String>,
     pub auth_method: Option<TokenDelegationAuthMethod>,
-    /// Auth method config blob (TEXT). Stores JSON; not yet encrypted at rest.
+    /// Token delegation auth method secrets, **encrypted at rest**: standard base64 envelope v1
+    /// (`key_encryption::encrypt`) over JSON (e.g. client_id and client_secret). Not plaintext; do not log.
     pub encrypted_auth_method_config: Option<String>,
     pub subject_token_audience: Option<String>,
     pub token_delegation_created_at: Option<DateTime<Utc>>,

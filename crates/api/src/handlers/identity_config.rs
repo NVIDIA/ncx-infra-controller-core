@@ -68,11 +68,18 @@ async fn tenant_identity_with_decrypted_token_delegation(
 ) -> Result<TenantIdentityConfig, Status> {
     if let Some(ref enc) = cfg.encrypted_auth_method_config {
         let secret = machine_identity_encryption_secret_b64(api, &cfg.encryption_key_id).await?;
-        let plain = key_encryption::decrypt(enc, &secret)
-            .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
-        cfg.encrypted_auth_method_config = Some(
-            String::from_utf8(plain).map_err(|e| CarbideError::InvalidArgument(e.to_string()))?,
-        );
+        let plain = key_encryption::decrypt(enc, &secret).map_err(|e| {
+            tracing::error!(error = %e, org_id = %cfg.organization_id.as_str(), "token delegation auth config decrypt failed");
+            CarbideError::internal(
+                "stored token delegation configuration could not be decrypted".to_string(),
+            )
+        })?;
+        cfg.encrypted_auth_method_config = Some(String::from_utf8(plain).map_err(|e| {
+            tracing::error!(error = %e, org_id = %cfg.organization_id.as_str(), "token delegation auth config plaintext was not UTF-8");
+            CarbideError::internal(
+                "stored token delegation configuration could not be decrypted".to_string(),
+            )
+        })?);
     }
     Ok(cfg)
 }

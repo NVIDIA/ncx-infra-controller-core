@@ -33,6 +33,8 @@ use aes_gcm::Aes256Gcm;
 use aes_gcm::aead::{Aead, KeyInit};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use rand::TryRngCore;
+use rand::rngs::OsRng;
 use rcgen::KeyPair;
 use sha2::{Digest, Sha256};
 
@@ -133,7 +135,9 @@ pub fn encrypt(
     let cipher =
         Aes256Gcm::new_from_slice(&key).map_err(|e| KeyEncryptionError::Encrypt(e.to_string()))?;
     let mut nonce = [0u8; 12];
-    rand::Rng::fill(&mut rand::rng(), &mut nonce);
+    OsRng.try_fill_bytes(&mut nonce).map_err(|e| {
+        KeyEncryptionError::Encrypt(format!("OS RNG failed while generating AES-GCM nonce: {e}"))
+    })?;
     let ciphertext = cipher
         .encrypt(&nonce.into(), plaintext)
         .map_err(|e| KeyEncryptionError::Encrypt(e.to_string()))?;
