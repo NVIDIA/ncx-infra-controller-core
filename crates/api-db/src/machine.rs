@@ -16,7 +16,6 @@
  */
 //!
 //! Machine - represents a database-backed Machine object
-//!
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -83,7 +82,6 @@ lazy_static! {
 ///
 /// * `txn` - A reference to a currently open database transaction
 /// * `interface` - Network interface of the machine
-///
 pub async fn get_or_create(
     txn: &mut PgConnection,
     common_pools: Option<&CommonPools>,
@@ -185,7 +183,6 @@ pub async fn find_existing_machine(
 ///
 /// * `txn` - A reference to a currently open database transaction
 /// * `state` - A reference to a MachineState enum
-///
 // TODO: abhi, Make it private.
 pub async fn advance(
     machine: &Machine,
@@ -1658,6 +1655,14 @@ pub async fn find_machine_ids(
         qb.push(" INNER JOIN machine_topologies mt ON machines.id = mt.machine_id");
     }
 
+    // Return only machines that are powered on and have a health override with leak classification
+    if let Some(pstate) = &search_config.only_with_power_state {
+        let pstate_normalized = pstate.to_lowercase();
+        qb.push(" INNER JOIN power_options po ON po.host_id = machines.id AND po.last_fetched_power_state = ");
+        qb.push_bind(pstate_normalized);
+        qb.push("::host_power_state_t");
+    }
+
     qb.push(" WHERE TRUE");
 
     if search_config.only_maintenance {
@@ -1700,6 +1705,13 @@ pub async fn find_machine_ids(
         ));
     }
 
+    if let Some(ovrrd_str) = &search_config.only_with_health_alert {
+        qb.push(" AND health_report_overrides->'merges' ? ");
+        qb.push_bind(ovrrd_str.clone());
+        qb.push(" AND jsonb_array_length(health_report_overrides->'merges'->");
+        qb.push_bind(ovrrd_str);
+        qb.push("->'alerts') > 0");
+    }
     if search_config.mnnvl_only {
         qb.push(
             " AND mt.topology->'discovery_data'->'Info'->'dmi_data'->>'product_name' LIKE '%GB200%'",
@@ -1716,6 +1728,7 @@ pub async fn find_machine_ids(
     }
 
     let q = qb.build_query_as();
+
     let machine_ids: Vec<MachineId> = q
         .fetch_all(txn)
         .await
@@ -1804,7 +1817,6 @@ pub async fn update_failure_details_by_machine_id(
 /// Arguments
 ///
 /// * `txn` - A reference to currently open database transaction
-///
 pub async fn find_dpu_ids_and_loopback_ips(
     txn: &mut PgConnection,
 ) -> Result<Vec<DpuInfo>, DatabaseError> {
