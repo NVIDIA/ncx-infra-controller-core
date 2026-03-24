@@ -57,7 +57,7 @@ pub async fn list_health_report_overrides(
     }))
 }
 
-async fn remove_by_source(
+pub async fn remove_by_source(
     txn: &mut PgConnection,
     machine_id: MachineId,
     source: String,

@@ -16,6 +16,7 @@
  */
 
 use ::rpc::forge as rpc;
+use health_report::HealthReport;
 use model::machine::network::ManagedHostQuarantineState;
 use tonic::{Request, Response, Status};
 
@@ -39,12 +40,35 @@ pub(crate) async fn set_managed_host_quarantine_state(
     let quarantine_state: ManagedHostQuarantineState =
         quarantine_state.try_into().map_err(CarbideError::from)?;
 
+    let message = quarantine_state.reason.clone().unwrap_or_default();
+
     let mut txn = api.txn_begin().await?;
 
     let prior_quarantine_state =
         db::machine::set_quarantine_state(&mut txn, &machine_id, quarantine_state)
             .await?
             .map(Into::into);
+
+    match super::health::remove_by_source(
+        &mut txn,
+        machine_id,
+        HealthReport::QUARANTINE_SOURCE.to_string(),
+    )
+    .await
+    {
+        Ok(_) | Err(CarbideError::NotFoundError { .. }) => {}
+        Err(e) => return Err(e.into()),
+    };
+
+    let report = HealthReport::quarantine_report(message);
+    db::machine::insert_health_report_override(
+        &mut txn,
+        &machine_id,
+        health_report::OverrideMode::Merge,
+        &report,
+        false,
+    )
+    .await?;
 
     txn.commit().await?;
 
@@ -76,14 +100,18 @@ pub(crate) async fn clear_managed_host_quarantine_state(
 ) -> Result<Response<rpc::ClearManagedHostQuarantineStateResponse>, Status> {
     log_request_data(&request);
 
-    let rpc::ClearManagedHostQuarantineStateRequest { machine_id } = request.into_inner();
-    let machine_id = convert_and_log_machine_id(machine_id.as_ref())?;
+    let rpc::ClearManagedHostQuarantineStateRequest {
+        machine_id: machine_id_proto,
+    } = request.into_inner();
+    let machine_id = convert_and_log_machine_id(machine_id_proto.as_ref())?;
 
     let mut txn = api.txn_begin().await?;
 
     let prior_quarantine_state = db::machine::clear_quarantine_state(&mut txn, &machine_id)
         .await?
         .map(Into::into);
+
+    super::health::remove_by_source(&mut txn, machine_id, "quarantine".to_string()).await?;
 
     txn.commit().await?;
 
