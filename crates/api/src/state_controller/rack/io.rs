@@ -103,7 +103,8 @@ impl StateControllerIO for RackStateControllerIO {
         old_version: ConfigVersion,
         new_state: &Self::ControllerState,
     ) -> Result<(), DatabaseError> {
-        db::rack_state_history::persist(txn, rack_id, new_state, old_version).await?;
+        let next_version = old_version.increment();
+        db::rack_state_history::persist(txn, rack_id, new_state, next_version).await?;
         Ok(())
     }
 

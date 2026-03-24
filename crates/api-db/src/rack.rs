@@ -194,11 +194,12 @@ pub async fn try_update_controller_state(
     expected_version: ConfigVersion,
     new_state: &RackState,
 ) -> DatabaseResult<bool> {
+    let next_version = expected_version.increment();
     let query_result = sqlx::query_as::<_, Rack>(
             "UPDATE racks SET controller_state = $1, controller_state_version = $2 WHERE id = $3 AND controller_state_version = $4 RETURNING *",
         )
             .bind(sqlx::types::Json(new_state))
-            .bind(expected_version)
+            .bind(next_version)
             .bind(rack_id)
             .bind(expected_version)
             .fetch_optional(txn)

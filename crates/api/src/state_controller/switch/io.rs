@@ -110,7 +110,8 @@ impl StateControllerIO for SwitchStateControllerIO {
         old_version: ConfigVersion,
         new_state: &Self::ControllerState,
     ) -> Result<(), DatabaseError> {
-        db::switch_state_history::persist(txn, object_id, new_state, old_version).await?;
+        let next_version = old_version.increment();
+        db::switch_state_history::persist(txn, object_id, new_state, next_version).await?;
         Ok(())
     }
 
