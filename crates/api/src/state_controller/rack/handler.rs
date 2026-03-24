@@ -17,7 +17,6 @@
 
 use std::cmp::Ordering;
 
-use carbide_uuid::machine::MachineId;
 use carbide_uuid::rack::RackId;
 use db::{
     self, expected_machine as db_expected_machine, expected_power_shelf as db_expected_power_shelf,
@@ -27,18 +26,52 @@ use model::machine::machine_search_config::MachineSearchConfig;
 use model::machine::{LoadSnapshotOptions, ManagedHostState};
 use model::power_shelf::PowerShelfControllerState;
 use model::rack::{
-    Rack, RackConfig, RackFirmwareUpgradeState, RackMaintenanceState, RackPowerState, RackState,
-    RackValidationState,
+    MachineRvLabels, Rack, RackConfig, RackFirmwareUpgradeState, RackMaintenanceState,
+    RackPowerState, RackState, RackValidationState,
 };
 use model::rack_type::RackCapabilitiesSet;
 use model::switch::SwitchControllerState;
 use sqlx::{PgPool, PgTransaction};
 
 use crate::state_controller::rack::context::RackStateHandlerContextObjects;
-use crate::state_controller::rack::rv::{RackPartitionSummary, RvPartitions};
+use crate::state_controller::rack::rv::{RackPartitionSummary, RvPartitions, strip_rv_labels};
 use crate::state_controller::state_handler::{
     StateHandler, StateHandlerContext, StateHandlerError, StateHandlerOutcome,
 };
+
+/// Strips all `rv.*` metadata labels from every compute tray in the rack.
+///
+/// Called on `Maintenance(Completed)` to ensure machines enter the next
+/// validation cycle with a clean slate. RVS is expected to re-populate these
+/// labels when it starts a new run.
+async fn clear_rv_labels(
+    rack: &Rack,
+    ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
+) -> Result<(), StateHandlerError> {
+    let machine_ids = &rack.config.compute_trays;
+    if machine_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut txn = ctx.services.db_pool.begin().await?;
+    let machines = db_machine::find(
+        &mut *txn,
+        db::ObjectFilter::List(machine_ids),
+        MachineSearchConfig::default(),
+    )
+    .await?;
+
+    for machine in machines {
+        let mut metadata = machine.metadata.clone();
+        if strip_rv_labels(&mut metadata) {
+            db_machine::update_metadata(&mut *txn, &machine.id, machine.version, metadata).await?;
+        }
+    }
+
+    txn.commit().await?;
+    Ok(())
+}
+
 //------------------------------------------------------------------------------
 
 /// Loads the aggregated partition validation summary for a rack.
@@ -56,9 +89,10 @@ use crate::state_controller::state_handler::{
 async fn load_partition_summary(
     rack_id: &RackId,
     rack: &Rack,
+    run_id: &str,
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<RackPartitionSummary, StateHandlerError> {
-    let machine_ids: Vec<MachineId> = rack.config.compute_trays.to_vec();
+    let machine_ids = &rack.config.compute_trays;
 
     if machine_ids.is_empty() {
         tracing::debug!(
@@ -71,7 +105,7 @@ async fn load_partition_summary(
     let mut txn = ctx.services.db_pool.begin().await?;
     let machines = db_machine::find(
         &mut *txn,
-        db::ObjectFilter::List(&machine_ids),
+        db::ObjectFilter::List(machine_ids),
         MachineSearchConfig::default(),
     )
     .await?;
@@ -84,9 +118,39 @@ async fn load_partition_summary(
         machine_ids.len(),
     );
 
-    let validation_run_id = &rack.config.validation_run_id;
-    let partitions = RvPartitions::from_machines(machines, validation_run_id.clone())?;
+    let partitions = RvPartitions::from_machines(machines, run_id)?;
     Ok(partitions.summarize())
+}
+
+/// Scans the rack's compute tray machines for an `rv.run-id` label set by RVS.
+/// Returns the first run ID found, or `None` if RVS has not started a run yet.
+async fn find_rv_run_id(
+    rack_id: &RackId,
+    rack: &Rack,
+    ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
+) -> Result<Option<String>, StateHandlerError> {
+    let machine_ids = &rack.config.compute_trays;
+    if machine_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut txn = ctx.services.db_pool.begin().await?;
+    let machines = db_machine::find(
+        &mut *txn,
+        db::ObjectFilter::List(machine_ids),
+        MachineSearchConfig::default(),
+    )
+    .await?;
+    txn.commit().await?;
+
+    let run_label = MachineRvLabels::RunId.as_str();
+    let found = machines
+        .into_iter()
+        .find_map(|m| m.metadata.labels.get(run_label).cloned());
+
+    tracing::debug!("Rack {} rv.run-id scan: {:?}", rack_id, found);
+
+    Ok(found)
 }
 
 //------------------------------------------------------------------------------
@@ -108,48 +172,54 @@ fn compute_validation_transition(
     summary: &RackPartitionSummary,
 ) -> Option<RackValidationState> {
     match current {
-        RackValidationState::Pending => {
-            // Transition when at least one partition starts validation
-            if summary.in_progress > 0 || summary.validated > 0 || summary.failed > 0 {
-                Some(RackValidationState::InProgress)
-            } else {
-                None
-            }
-        }
-        RackValidationState::InProgress => {
+        RackValidationState::InProgress { run_id } => {
             // Check for failures first (higher priority)
             if summary.failed > 0 {
-                Some(RackValidationState::FailedPartial)
+                Some(RackValidationState::FailedPartial {
+                    run_id: run_id.clone(),
+                })
             } else if summary.validated > 0 {
-                Some(RackValidationState::Partial)
+                Some(RackValidationState::Partial {
+                    run_id: run_id.clone(),
+                })
             } else {
                 None
             }
         }
-        RackValidationState::Partial => {
+        RackValidationState::Partial { run_id } => {
             // Check if all done, or if any failed
             if summary.validated == summary.total_partitions {
-                Some(RackValidationState::Validated)
+                Some(RackValidationState::Validated {
+                    run_id: run_id.clone(),
+                })
             } else if summary.failed > 0 {
-                Some(RackValidationState::FailedPartial)
+                Some(RackValidationState::FailedPartial {
+                    run_id: run_id.clone(),
+                })
             } else {
                 None
             }
         }
-        RackValidationState::FailedPartial => {
+        RackValidationState::FailedPartial { run_id } => {
             if summary.total_partitions == 0 {
                 // No partitions currently observed. Treat this as a reset to
                 // Pending so racks don't enter terminal failure just because
                 // validation instances/labels are temporarily absent.
                 Some(RackValidationState::Pending)
             } else if summary.failed == summary.total_partitions {
-                Some(RackValidationState::Failed)
+                Some(RackValidationState::Failed {
+                    run_id: run_id.clone(),
+                })
             } else if summary.failed == 0 {
                 // All failures resolved -- figure out where to go next
                 if summary.validated > 0 {
-                    Some(RackValidationState::Partial)
+                    Some(RackValidationState::Partial {
+                        run_id: run_id.clone(),
+                    })
                 } else if summary.in_progress > 0 {
-                    Some(RackValidationState::InProgress)
+                    Some(RackValidationState::InProgress {
+                        run_id: run_id.clone(),
+                    })
                 } else {
                     // All partitions back to idle/pending (e.g. RVS reset
                     // instances before a re-run). Transition to Pending so
@@ -160,19 +230,22 @@ fn compute_validation_transition(
                 None
             }
         }
-        RackValidationState::Failed => {
+        RackValidationState::Failed { run_id } => {
             // Can recover if at least one partition is no longer failed
             if summary.failed != summary.total_partitions {
-                Some(RackValidationState::FailedPartial)
+                Some(RackValidationState::FailedPartial {
+                    run_id: run_id.clone(),
+                })
             } else {
                 None
             }
         }
-        RackValidationState::Validated => {
+        RackValidationState::Validated { .. } => {
             // Terminal success sub-state. The handler promotes this to
             // RackState::Ready; no further validation transition needed.
             None
         }
+        _ => None,
     }
 }
 
@@ -623,7 +696,7 @@ impl StateHandler for RackStateHandler {
                     } => {
                         match rack_firmware_upgrade {
                             RackFirmwareUpgradeState::Compute => {
-                                // TODO[#416]: Implement compute firmware upgrade
+                                // TODO: Implement compute firmware upgrade
                                 // orchestration via Rack Manager Service.
                                 // For now, skip straight to Completed.
                                 tracing::info!(
@@ -635,12 +708,12 @@ impl StateHandler for RackStateHandler {
                                 }))
                             }
                             RackFirmwareUpgradeState::Switch => {
-                                // TODO[#416]: Implement switch firmware upgrade
+                                // TODO: Implement switch firmware upgrade
                                 tracing::info!("Rack {} firmware upgrade (switch) - stubbed", id);
                                 Ok(StateHandlerOutcome::do_nothing())
                             }
                             RackFirmwareUpgradeState::PowerShelf => {
-                                // TODO[#416]: Implement power shelf firmware upgrade
+                                // TODO: Implement power shelf firmware upgrade
                                 tracing::info!(
                                     "Rack {} firmware upgrade (power shelf) - stubbed",
                                     id
@@ -648,7 +721,7 @@ impl StateHandler for RackStateHandler {
                                 Ok(StateHandlerOutcome::do_nothing())
                             }
                             RackFirmwareUpgradeState::All => {
-                                // TODO[#416]: Implement full-rack firmware upgrade
+                                // TODO: Implement full-rack firmware upgrade
                                 // (likely delegated to Rack Manager for the entire rack)
                                 tracing::info!("Rack {} firmware upgrade (all) - stubbed", id);
                                 Ok(StateHandlerOutcome::do_nothing())
@@ -658,125 +731,125 @@ impl StateHandler for RackStateHandler {
                     RackMaintenanceState::PowerSequence { rack_power } => {
                         match rack_power {
                             RackPowerState::PoweringOn => {
-                                // TODO[#416]: Implement power-on sequencing
+                                // TODO: Implement power-on sequencing
                                 tracing::info!("Rack {} power sequence (on) - stubbed", id);
                                 Ok(StateHandlerOutcome::do_nothing())
                             }
                             RackPowerState::PoweringOff => {
-                                // TODO[#416]: Implement power-off sequencing
+                                // TODO: Implement power-off sequencing
                                 tracing::info!("Rack {} power sequence (off) - stubbed", id);
                                 Ok(StateHandlerOutcome::do_nothing())
                             }
                             RackPowerState::PowerReset => {
-                                // TODO[#416]: Implement power reset sequencing
+                                // TODO: Implement power reset sequencing
                                 tracing::info!("Rack {} power sequence (reset) - stubbed", id);
                                 Ok(StateHandlerOutcome::do_nothing())
                             }
                         }
                     }
                     RackMaintenanceState::Completed => {
-                        // Maintenance is done -- enter the validation phase.
-                        // Bump the run ID so stale labels from prior runs are
-                        // ignored.
-                        let run_id =
-                            format!("run-{}-{}", id, chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+                        // Maintenance is done. Clear any stale rv.* labels left
+                        // over from a previous validation run, then enter
+                        // Validation(Pending). Carbide will stay in Pending
+                        // until RVS sets rv.run-id on a rack machine.
                         tracing::info!(
-                            "Rack {} maintenance completed, entering validation (run_id={})",
-                            id,
-                            run_id
+                            "Rack {} maintenance completed, clearing rv.* labels and entering Validation(Pending)",
+                            id
                         );
-                        state.config.validation_run_id = Some(run_id);
-                        let mut txn = ctx.services.db_pool.begin().await?;
-                        db_rack::update(&mut txn, id, &state.config).await?;
+                        clear_rv_labels(state, ctx).await?;
                         Ok(StateHandlerOutcome::transition(RackState::Validation {
                             rack_validation: RackValidationState::Pending,
-                        })
-                        .with_txn(txn))
+                        }))
                     }
                 }
             }
 
-            // VALIDATION PHASE -- state derived from partition metadata.
-            // All validation sub-states are handled uniformly: load the
-            // partition summary, compute the next sub-state, and wrap it
-            // back into RackState::Validation. The special case is
-            // Validated, which promotes to RackState::Ready.
+            // VALIDATION PHASE -- state derived from partition metadata labels
+            // written by RVS onto rack machines.
+            //
+            // Pending is a special gate: Carbide waits here until RVS signals
+            // that a run has started by writing rv.run-id onto any rack machine.
+            // The run_id is then stored inside the non-Pending substates and
+            // used to filter labels when reading partition state.
             RackState::Validation { rack_validation } => {
-                let summary = load_partition_summary(id, state, ctx).await?;
+                match rack_validation {
+                    RackValidationState::Pending => {
+                        // Stay in Pending until RVS sets rv.run-id on at least
+                        // one rack machine.
+                        if let Some(found_run_id) = find_rv_run_id(id, state, ctx).await? {
+                            tracing::info!(
+                                "Rack {} validation run started (run_id={}), entering InProgress",
+                                id,
+                                found_run_id
+                            );
+                            Ok(StateHandlerOutcome::transition(RackState::Validation {
+                                rack_validation: RackValidationState::InProgress {
+                                    run_id: found_run_id,
+                                },
+                            }))
+                        } else {
+                            tracing::debug!(
+                                "Rack {} in Validation(Pending), waiting for RVS to set rv.run-id",
+                                id
+                            );
+                            Ok(StateHandlerOutcome::do_nothing())
+                        }
+                    }
+                    other => {
+                        let run_id =
+                            other
+                                .run_id()
+                                .ok_or(StateHandlerError::GenericError(eyre::eyre!(
+                                    "RV substates must carry the active run_id"
+                                )))?;
+                        let summary = load_partition_summary(id, state, run_id, ctx).await?;
 
-                tracing::debug!(
-                    "Rack {} partition summary: total={}, pending={}, in_progress={}, validated={}, failed={}",
-                    id,
-                    summary.total_partitions,
-                    summary.pending,
-                    summary.in_progress,
-                    summary.validated,
-                    summary.failed
-                );
+                        tracing::debug!(
+                            "Rack {} partition summary: total={}, pending={}, in_progress={}, validated={}, failed={}",
+                            id,
+                            summary.total_partitions,
+                            summary.pending,
+                            summary.in_progress,
+                            summary.validated,
+                            summary.failed
+                        );
 
-                if let Some(next_vs) = compute_validation_transition(rack_validation, &summary) {
-                    tracing::info!(
-                        "Rack {} validation transitioning from {} to {}",
-                        id,
-                        rack_validation,
-                        next_vs
-                    );
-                    Ok(StateHandlerOutcome::transition(RackState::Validation {
-                        rack_validation: next_vs,
-                    }))
-                } else if matches!(rack_validation, RackValidationState::Validated) {
-                    // Validated is the terminal validation sub-state --
-                    // promote to the top-level Ready state.
-                    tracing::info!("Rack {} fully validated, transitioning to Ready", id);
-                    Ok(StateHandlerOutcome::transition(RackState::Ready))
-                } else if matches!(rack_validation, RackValidationState::Failed) {
-                    // All partitions failed -- stay here and wait for
-                    // recovery or manual intervention.
-                    tracing::warn!(
-                        "Rack {} is in Validation(Failed) state, requires intervention",
-                        id
-                    );
-                    Ok(StateHandlerOutcome::do_nothing())
-                } else {
-                    Ok(StateHandlerOutcome::do_nothing())
+                        if let Some(next_vs) = compute_validation_transition(other, &summary) {
+                            tracing::info!(
+                                "Rack {} validation transitioning from {} to {}",
+                                id,
+                                other,
+                                next_vs
+                            );
+                            Ok(StateHandlerOutcome::transition(RackState::Validation {
+                                rack_validation: next_vs,
+                            }))
+                        } else if matches!(other, RackValidationState::Validated { .. }) {
+                            // Terminal success sub-state -- promote to Ready.
+                            tracing::info!("Rack {} fully validated, transitioning to Ready", id);
+                            Ok(StateHandlerOutcome::transition(RackState::Ready))
+                        } else if matches!(other, RackValidationState::Failed { .. }) {
+                            // All partitions failed -- wait for intervention.
+                            tracing::warn!(
+                                "Rack {} is in Validation(Failed) state, requires intervention",
+                                id
+                            );
+                            Ok(StateHandlerOutcome::do_nothing())
+                        } else {
+                            Ok(StateHandlerOutcome::do_nothing())
+                        }
+                    }
                 }
             }
 
             RackState::Ready => {
-                // Rack is ready for production workloads, but check if
-                // a new validation run has been kicked off.
+                // Rack is ready for production workloads.
                 // TODO[#416]: Ready should also be able to transition into
                 // Maintenance (e.g. firmware upgrade triggered on a live
                 // rack). The mechanism for that is TBD -- it may come from
                 // an external API call or a config change rather than being
                 // polled here.
-                let summary = load_partition_summary(id, state, ctx).await?;
-
-                // Stay in Ready when all partitions are still validated, or
-                // when there are no validation partitions at all (vacuously
-                // true -- e.g. tenant instances replaced the validation ones).
-                if summary.validated == summary.total_partitions {
-                    Ok(StateHandlerOutcome::do_nothing())
-                }
-                // A new validation run has failures -- re-enter validation.
-                else if summary.failed > 0 {
-                    tracing::info!(
-                        "Rack {} re-entering validation from Ready (failures detected)",
-                        id
-                    );
-                    Ok(StateHandlerOutcome::transition(RackState::Validation {
-                        rack_validation: RackValidationState::FailedPartial,
-                    }))
-                }
-                // A new validation run is underway -- re-enter validation.
-                else if summary.in_progress > 0 || summary.validated > 0 || summary.failed > 0 {
-                    tracing::info!("Rack {} re-entering validation from Ready", id);
-                    Ok(StateHandlerOutcome::transition(RackState::Validation {
-                        rack_validation: RackValidationState::InProgress,
-                    }))
-                } else {
-                    Ok(StateHandlerOutcome::do_nothing())
-                }
+                Ok(StateHandlerOutcome::do_nothing())
             }
 
             RackState::Error { cause } => {
@@ -806,33 +879,10 @@ mod tests {
     // State transitions test
 
     #[test]
-    fn test_compute_validation_transition_from_pending() {
-        let state = RackValidationState::Pending;
-
-        // No partitions started yet
-        let summary = RackPartitionSummary {
-            total_partitions: 4,
-            pending: 4,
-            ..Default::default()
-        };
-        assert_eq!(compute_validation_transition(&state, &summary), None);
-
-        // One partition in progress
-        let summary = RackPartitionSummary {
-            total_partitions: 4,
-            pending: 3,
-            in_progress: 1,
-            ..Default::default()
-        };
-        assert_eq!(
-            compute_validation_transition(&state, &summary),
-            Some(RackValidationState::InProgress)
-        );
-    }
-
-    #[test]
     fn test_compute_validation_transition_from_in_progress() {
-        let state = RackValidationState::InProgress;
+        let state = RackValidationState::InProgress {
+            run_id: "run-001".to_string(),
+        };
 
         // Still in progress
         let summary = RackPartitionSummary {
@@ -853,7 +903,9 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::Partial)
+            Some(RackValidationState::Partial {
+                run_id: "run-001".to_string()
+            })
         );
 
         // One failed (higher priority than validated)
@@ -866,13 +918,17 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::FailedPartial)
+            Some(RackValidationState::FailedPartial {
+                run_id: "run-001".to_string()
+            })
         );
     }
 
     #[test]
     fn test_compute_validation_transition_from_partial() {
-        let state = RackValidationState::Partial;
+        let state = RackValidationState::Partial {
+            run_id: "run-001".to_string(),
+        };
 
         // More in progress
         let summary = RackPartitionSummary {
@@ -891,7 +947,9 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::Validated)
+            Some(RackValidationState::Validated {
+                run_id: "run-001".to_string()
+            })
         );
 
         // One failed
@@ -903,13 +961,17 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::FailedPartial)
+            Some(RackValidationState::FailedPartial {
+                run_id: "run-001".to_string()
+            })
         );
     }
 
     #[test]
     fn test_compute_validation_transition_from_failed_partial() {
-        let state = RackValidationState::FailedPartial;
+        let state = RackValidationState::FailedPartial {
+            run_id: "run-001".to_string(),
+        };
 
         // All failed -> Failed
         let summary = RackPartitionSummary {
@@ -919,7 +981,9 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::Failed)
+            Some(RackValidationState::Failed {
+                run_id: "run-001".to_string()
+            })
         );
 
         // Recovery: no failures, some validated
@@ -931,7 +995,9 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::Partial)
+            Some(RackValidationState::Partial {
+                run_id: "run-001".to_string()
+            })
         );
 
         // Recovery: no failures, none validated yet
@@ -943,7 +1009,9 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::InProgress)
+            Some(RackValidationState::InProgress {
+                run_id: "run-001".to_string()
+            })
         );
 
         // Still some failed, some validated
@@ -969,7 +1037,9 @@ mod tests {
 
     #[test]
     fn test_compute_validation_transition_from_failed() {
-        let state = RackValidationState::Failed;
+        let state = RackValidationState::Failed {
+            run_id: "run-001".to_string(),
+        };
 
         // Still all failed
         let summary = RackPartitionSummary {
@@ -988,13 +1058,17 @@ mod tests {
         };
         assert_eq!(
             compute_validation_transition(&state, &summary),
-            Some(RackValidationState::FailedPartial)
+            Some(RackValidationState::FailedPartial {
+                run_id: "run-001".to_string()
+            })
         );
     }
 
     #[test]
     fn test_compute_validation_transition_from_validated() {
-        let state = RackValidationState::Validated;
+        let state = RackValidationState::Validated {
+            run_id: "run-001".to_string(),
+        };
 
         // Terminal sub-state -- always returns None.
         // The handler is responsible for promoting to RackState::Ready.

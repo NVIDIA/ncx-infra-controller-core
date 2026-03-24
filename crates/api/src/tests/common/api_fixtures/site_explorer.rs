@@ -1547,6 +1547,8 @@ pub struct TestRackDbBuilder {
     expected_compute_trays: Vec<MacAddress>,
     expected_power_shelves: Vec<MacAddress>,
     expected_switches: Vec<MacAddress>,
+    compute_trays: Vec<MachineId>,
+    power_shelves: Vec<PowerShelfId>,
     rack_id: RackId,
     rack_type: Option<String>,
 }
@@ -1557,6 +1559,8 @@ impl Default for TestRackDbBuilder {
             expected_compute_trays: vec![],
             expected_power_shelves: vec![],
             expected_switches: vec![],
+            compute_trays: vec![],
+            power_shelves: vec![],
             rack_id: RackId::new(uuid::Uuid::new_v4().to_string()),
             rack_type: None,
         }
@@ -1596,6 +1600,17 @@ impl TestRackDbBuilder {
         self
     }
 
+    pub fn with_compute_trays(mut self, compute_trays: Vec<MachineId>) -> Self {
+        self.compute_trays = compute_trays;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_power_shelves(mut self, power_shelves: Vec<PowerShelfId>) -> Self {
+        self.power_shelves = power_shelves;
+        self
+    }
+
     pub fn with_rack_type(mut self, rack_type: impl Into<String>) -> Self {
         self.rack_type = Some(rack_type.into());
         self
@@ -1612,14 +1627,12 @@ impl TestRackDbBuilder {
         .await?;
 
         let cfg = RackConfig {
-            // TODO: represent compute_trays and power_shelves in builder.
-            compute_trays: vec![],
-            power_shelves: vec![],
+            compute_trays: self.compute_trays.clone(),
+            power_shelves: self.power_shelves.clone(),
             expected_compute_trays: self.expected_compute_trays.clone(),
             expected_switches: self.expected_switches.clone(),
             expected_power_shelves: self.expected_power_shelves.clone(),
             rack_type: self.rack_type.clone(),
-            validation_run_id: None,
         };
 
         db_rack::update(txn, &self.rack_id, &cfg).await?;

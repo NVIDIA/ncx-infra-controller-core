@@ -27,6 +27,27 @@ use crate::state_controller::state_handler::StateHandlerError;
 
 //------------------------------------------------------------------------------
 
+/// Removes all `rv.*` labels from the given metadata in-place.
+///
+/// Returns `true` if any labels were removed, `false` if the metadata was
+/// already clean.
+pub fn strip_rv_labels(metadata: &mut Metadata) -> bool {
+    let rv_keys: Vec<String> = metadata
+        .labels
+        .keys()
+        .filter(|k| k.starts_with("rv."))
+        .cloned()
+        .collect();
+
+    let changed = !rv_keys.is_empty();
+    for key in rv_keys {
+        metadata.labels.remove(&key);
+    }
+    changed
+}
+
+//------------------------------------------------------------------------------
+
 /// Aggregated summary of all partition validation statuses in a rack.
 /// Used by the state handler to determine state transitions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -90,19 +111,16 @@ impl TryFrom<Metadata> for MachineRvState {
 ///
 /// Only machines that carry the `rv.part-id` label are considered
 /// validation participants. Machines without it are silently skipped.
-/// When a `validation_run_id` is provided, machines whose `rv.run-id`
-/// doesn't match are also skipped (stale labels from previous runs).
+/// When a `run_id` is provided, machines whose `rv.run-id` label doesn't
+/// match are also skipped (stale labels from previous runs).
 pub struct RvPartitions {
     inner: HashMap<String, Vec<MachineRvState>>,
 }
 
 impl RvPartitions {
     /// Build from a vec of machines, optionally filtering by run ID.
-    pub fn from_machines(
-        machines: Vec<Machine>,
-        validation_run_id: Option<String>,
-    ) -> Result<Self, StateHandlerError> {
-        Self::from_meta_iter(machines.into_iter().map(|m| m.metadata), validation_run_id)
+    pub fn from_machines(machines: Vec<Machine>, run_id: &str) -> Result<Self, StateHandlerError> {
+        Self::from_meta_iter(machines.into_iter().map(|m| m.metadata), run_id)
     }
 
     /// Core grouping logic over any iterator of Metadata.
@@ -110,7 +128,7 @@ impl RvPartitions {
     /// full Machine values.
     pub fn from_meta_iter(
         iter: impl Iterator<Item = Metadata>,
-        validation_run_id: Option<String>,
+        run_id: &str,
     ) -> Result<Self, StateHandlerError> {
         let mut inner: HashMap<String, Vec<MachineRvState>> = HashMap::new();
         let part_label = MachineRvLabels::PartitionId.as_str();
@@ -124,24 +142,13 @@ impl RvPartitions {
 
             // Skip machines whose run ID doesn't match the current run
 
-            let run_id = meta.labels.remove(run_label);
-            let run_id_curr = validation_run_id.as_ref();
+            let machine_run_id = meta.labels.remove(run_label);
+            let Some(fetched) = machine_run_id else {
+                continue;
+            };
 
-            if let Some(expected) = run_id_curr {
-                // In case we are expecting run-id, we need to reject nodes that
-                // aren't fitting in.
-
-                let Some(fetched) = run_id else {
-                    // No need to grab nodes if they don't have run-id set in the
-                    // machine metadata.
-                    continue;
-                };
-
-                if *expected != fetched {
-                    // No need to grab nodes if their run-id is not what we
-                    // expect here.
-                    continue;
-                }
+            if run_id != fetched {
+                continue;
             }
 
             let rv_state = meta.try_into()?;
@@ -251,14 +258,28 @@ mod tests {
     #[test]
     fn test_partitions_from_meta_iter() {
         let metas = [
-            metadata_with_labels(&[("rv.part-id", "p0"), ("rv.st", "pass")]),
-            metadata_with_labels(&[("rv.part-id", "p0"), ("rv.st", "inp")]),
-            metadata_with_labels(&[("rv.part-id", "p1"), ("rv.st", "idle")]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p0"),
+                ("rv.st", "pass"),
+                ("rv.run-id", "run-005"),
+            ]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p0"),
+                ("rv.st", "inp"),
+                ("rv.run-id", "run-005"),
+            ]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p1"),
+                ("rv.st", "idle"),
+                ("rv.run-id", "run-005"),
+            ]),
             // No rv.part-id -> should be skipped
-            metadata_with_labels(&[("some-other", "label")]),
+            metadata_with_labels(&[("some-other", "label"), ("rv.run-id", "run-005")]),
+            // No rv.run-id -> should be skipped
+            metadata_with_labels(&[("rv.part-id", "p2"), ("rv.st", "pass")]),
         ];
 
-        let parts = RvPartitions::from_meta_iter(metas.iter().cloned(), None).unwrap();
+        let parts = RvPartitions::from_meta_iter(metas.iter().cloned(), "run-005").unwrap();
 
         assert_eq!(parts.inner.len(), 2);
         assert_eq!(parts.inner["p0"].len(), 2);
@@ -283,12 +304,11 @@ mod tests {
                 ("rv.st", "pass"),
                 ("rv.run-id", "run-004"),
             ]),
-            // No run ID -- should be skipped when filtering is active
+            // No run ID -- should be skipped
             metadata_with_labels(&[("rv.part-id", "p1"), ("rv.st", "idle")]),
         ];
 
-        let parts =
-            RvPartitions::from_meta_iter(metas.iter().cloned(), Some("run-005".into())).unwrap();
+        let parts = RvPartitions::from_meta_iter(metas.iter().cloned(), "run-005").unwrap();
 
         assert_eq!(parts.inner.len(), 1);
         assert_eq!(parts.inner["p0"].len(), 1);
@@ -296,43 +316,51 @@ mod tests {
     }
 
     #[test]
-    fn test_partitions_no_run_id_accepts_all() {
-        let metas = [
-            metadata_with_labels(&[
-                ("rv.part-id", "p0"),
-                ("rv.st", "pass"),
-                ("rv.run-id", "run-004"),
-            ]),
-            metadata_with_labels(&[("rv.part-id", "p1"), ("rv.st", "idle")]),
-        ];
-
-        // No run ID filtering -- all partitions included
-        let parts = RvPartitions::from_meta_iter(metas.iter().cloned(), None).unwrap();
-
-        assert_eq!(parts.inner.len(), 2);
-    }
-
-    #[test]
     fn test_partitions_summarize() {
         let metas = [
             // Partition p0: one node pass, one node fail -> Failed
-            metadata_with_labels(&[("rv.part-id", "p0"), ("rv.st", "pass")]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p0"),
+                ("rv.st", "pass"),
+                ("rv.run-id", "run-005"),
+            ]),
             metadata_with_labels(&[
                 ("rv.part-id", "p0"),
                 ("rv.st", "fail"),
                 ("rv.fail-desc", "nccl"),
+                ("rv.run-id", "run-005"),
             ]),
             // Partition p1: all nodes pass -> Validated
-            metadata_with_labels(&[("rv.part-id", "p1"), ("rv.st", "pass")]),
-            metadata_with_labels(&[("rv.part-id", "p1"), ("rv.st", "pass")]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p1"),
+                ("rv.st", "pass"),
+                ("rv.run-id", "run-005"),
+            ]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p1"),
+                ("rv.st", "pass"),
+                ("rv.run-id", "run-005"),
+            ]),
             // Partition p2: one node is idle, one is inp -> InProgress
-            metadata_with_labels(&[("rv.part-id", "p2"), ("rv.st", "idle")]),
-            metadata_with_labels(&[("rv.part-id", "p2"), ("rv.st", "inp")]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p2"),
+                ("rv.st", "idle"),
+                ("rv.run-id", "run-005"),
+            ]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p2"),
+                ("rv.st", "inp"),
+                ("rv.run-id", "run-005"),
+            ]),
             // Partition p3: all nodes idle -> Pending
-            metadata_with_labels(&[("rv.part-id", "p3"), ("rv.st", "idle")]),
+            metadata_with_labels(&[
+                ("rv.part-id", "p3"),
+                ("rv.st", "idle"),
+                ("rv.run-id", "run-005"),
+            ]),
         ];
 
-        let parts = RvPartitions::from_meta_iter(metas.iter().cloned(), None).unwrap();
+        let parts = RvPartitions::from_meta_iter(metas.iter().cloned(), "run-005").unwrap();
         let summary = parts.summarize();
 
         assert_eq!(summary.total_partitions, 4);
