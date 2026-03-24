@@ -1212,6 +1212,103 @@ async fn test_create_dual_stack_tenant_segment(pool: sqlx::PgPool) -> Result<(),
     Ok(())
 }
 
+/// Verify that allocating an instance on a dual-stack segment allocates both
+/// IPv4 and IPv6 addresses, and that count_by_segment_id returns the correct
+/// count (not double-counted due to multiple prefixes).
+#[crate::sqlx_test]
+async fn test_dual_stack_instance_allocation(pool: sqlx::PgPool) -> Result<(), eyre::Report> {
+    let mut site_prefixes = TEST_SITE_PREFIXES.to_vec();
+    site_prefixes.push("2001:db8::/32".parse().unwrap());
+
+    let env = create_test_env_with_overrides(
+        pool,
+        TestEnvOverrides {
+            site_prefixes: Some(site_prefixes),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // Create an FNN VPC (IPv6 requires FNN)
+    let vpc = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder("dual-stack vpc", "2829bbe3-c169-4cd9-8b2a-19a8b1618a93")
+                .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
+                .tonic_request(),
+        )
+        .await?
+        .into_inner();
+
+    // Create a dual-stack network segment
+    let segment = env
+        .api
+        .create_network_segment(Request::new(rpc::forge::NetworkSegmentCreationRequest {
+            id: None,
+            mtu: Some(1500),
+            name: "DUAL_STACK_SEGMENT".to_string(),
+            prefixes: vec![
+                rpc::forge::NetworkPrefix {
+                    id: None,
+                    prefix: "192.9.4.0/24".to_string(),
+                    gateway: Some("192.9.4.1".to_string()),
+                    reserve_first: 3,
+                    free_ip_count: 0,
+                    svi_ip: None,
+                },
+                rpc::forge::NetworkPrefix {
+                    id: None,
+                    prefix: "2001:db8:abcd::/112".to_string(),
+                    gateway: None,
+                    reserve_first: 0,
+                    free_ip_count: 0,
+                    svi_ip: None,
+                },
+            ],
+            subdomain_id: None,
+            vpc_id: vpc.id,
+            segment_type: rpc::forge::NetworkSegmentType::Tenant as i32,
+        }))
+        .await?
+        .into_inner();
+    let segment_id: NetworkSegmentId = segment.id.unwrap();
+
+    // Run the network segment controller to transition to Ready
+    env.run_network_segment_controller_iteration().await;
+    env.run_network_segment_controller_iteration().await;
+
+    // Verify count starts at 0
+    let mut txn = env.pool.begin().await?;
+    assert_eq!(
+        db::instance_address::count_by_segment_id(&mut txn, &segment_id)
+            .await
+            .unwrap(),
+        0
+    );
+    txn.commit().await?;
+
+    // Create a managed host and allocate an instance on the dual-stack segment
+    let mh = common::api_fixtures::create_managed_host(&env).await;
+    mh.instance_builer(&env)
+        .single_interface_network_config(segment_id)
+        .build()
+        .await;
+
+    // Verify count is correct — should be 2 (one IPv4 + one IPv6), not 4
+    // (which would happen if the old JOIN-based query double-counted)
+    let mut txn = env.pool.begin().await?;
+    let count = db::instance_address::count_by_segment_id(&mut txn, &segment_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 2,
+        "dual-stack segment should have exactly 2 allocated addresses (one IPv4, one IPv6)"
+    );
+    txn.commit().await?;
+
+    Ok(())
+}
+
 /// Verify that an IPv6 tenant segment prefix that is NOT contained in the site
 /// fabric prefixes is correctly rejected, just like an uncontained IPv4 prefix would be.
 #[crate::sqlx_test]
@@ -1275,6 +1372,69 @@ async fn test_ipv6_tenant_prefix_rejected_when_not_in_site_fabric(
             .message()
             .contains("not contained within the configured site fabric prefixes"),
         "Error message should mention site fabric prefix containment, got: {}",
+        status.message()
+    );
+
+    Ok(())
+}
+
+/// Verify that IPv6 network segments are rejected for non-FNN VPCs, even when the
+/// prefix IS contained in site fabric prefixes.
+#[crate::sqlx_test]
+async fn test_ipv6_segment_rejected_for_non_fnn_vpc(
+    pool: sqlx::PgPool,
+) -> Result<(), eyre::Report> {
+    let mut site_prefixes = TEST_SITE_PREFIXES.to_vec();
+    site_prefixes.push("2001:db8::/32".parse().unwrap());
+
+    let env = create_test_env_with_overrides(
+        pool,
+        TestEnvOverrides {
+            create_network_segments: Some(false),
+            site_prefixes: Some(site_prefixes),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // Create a non-FNN VPC (default is EthernetVirtualizer)
+    let vpc = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder("non-fnn-vpc", "2829bbe3-c169-4cd9-8b2a-19a8b1618a93")
+                .tonic_request(),
+        )
+        .await?
+        .into_inner();
+
+    // 2001:db8:1::/48 IS contained in site fabric prefixes, but the VPC is not FNN
+    let request = rpc::forge::NetworkSegmentCreationRequest {
+        id: None,
+        mtu: Some(1500),
+        name: "IPV6_ON_NON_FNN".to_string(),
+        prefixes: vec![rpc::forge::NetworkPrefix {
+            id: None,
+            prefix: "2001:db8:1::/48".to_string(),
+            gateway: None,
+            reserve_first: 0,
+            free_ip_count: 0,
+            svi_ip: None,
+        }],
+        subdomain_id: None,
+        vpc_id: vpc.id,
+        segment_type: rpc::forge::NetworkSegmentType::Tenant as i32,
+    };
+
+    let result = env.api.create_network_segment(Request::new(request)).await;
+
+    assert!(
+        result.is_err(),
+        "Expected rejection of IPv6 segment on non-FNN VPC"
+    );
+    let status = result.unwrap_err();
+    assert!(
+        status.message().contains("only supported for FNN VPCs"),
+        "Error should mention FNN requirement, got: {}",
         status.message()
     );
 

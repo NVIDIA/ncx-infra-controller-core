@@ -22,7 +22,11 @@ use rpc::forge::{
 use sqlx::PgPool;
 use tonic::Request;
 
-use crate::tests::common::api_fixtures::{create_test_env, get_vpc_fixture_id};
+use crate::tests::common::api_fixtures::{
+    TEST_SITE_PREFIXES, TestEnvOverrides, create_test_env, create_test_env_with_overrides,
+    get_vpc_fixture_id,
+};
+use crate::tests::common::rpc_builder::VpcCreationRequest;
 
 #[crate::sqlx_test]
 async fn test_create_and_delete_vpc_prefix_deprecated_fields(
@@ -369,6 +373,104 @@ async fn test_vpc_prefix_search(pool: PgPool) -> Result<(), Box<dyn std::error::
             "We expected to find the VPC prefix id {expected_id} for prefix {expected_prefix} in the search results ({returned_vpc_prefix_ids:?}), but it was absent"
         );
     }
+
+    Ok(())
+}
+
+/// Verify that IPv6 VPC prefix creation is rejected for non-FNN VPCs.
+#[crate::sqlx_test]
+async fn test_ipv6_vpc_prefix_rejected_for_non_fnn_vpc(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut site_prefixes = TEST_SITE_PREFIXES.to_vec();
+    site_prefixes.push("2001:db8::/32".parse().unwrap());
+
+    let env = create_test_env_with_overrides(
+        pool,
+        TestEnvOverrides {
+            site_prefixes: Some(site_prefixes),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // Create a non-FNN VPC (default type is EthernetVirtualizer)
+    let vpc = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder("non-fnn-vpc", "2829bbe3-c169-4cd9-8b2a-19a8b1618a93")
+                .tonic_request(),
+        )
+        .await?
+        .into_inner();
+
+    let result = env
+        .api
+        .create_vpc_prefix(Request::new(VpcPrefixCreationRequest {
+            name: "ipv6-prefix".to_string(),
+            vpc_id: vpc.id,
+            prefix: "2001:db8:1::/48".to_string(),
+            ..Default::default()
+        }))
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Expected rejection of IPv6 VPC prefix on non-FNN VPC"
+    );
+    let status = result.unwrap_err();
+    assert!(
+        status.message().contains("only supported for FNN VPCs"),
+        "Error should mention FNN requirement, got: {}",
+        status.message()
+    );
+
+    Ok(())
+}
+
+/// Verify that IPv6 VPC prefix creation succeeds for FNN VPCs.
+#[crate::sqlx_test]
+async fn test_ipv6_vpc_prefix_allowed_for_fnn_vpc(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut site_prefixes = TEST_SITE_PREFIXES.to_vec();
+    site_prefixes.push("2001:db8::/32".parse().unwrap());
+
+    let env = create_test_env_with_overrides(
+        pool,
+        TestEnvOverrides {
+            site_prefixes: Some(site_prefixes),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // Create an FNN VPC
+    let vpc = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder("fnn-vpc", "2829bbe3-c169-4cd9-8b2a-19a8b1618a93")
+                .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
+                .tonic_request(),
+        )
+        .await?
+        .into_inner();
+
+    let result = env
+        .api
+        .create_vpc_prefix(Request::new(VpcPrefixCreationRequest {
+            name: "ipv6-prefix".to_string(),
+            vpc_id: vpc.id,
+            prefix: "2001:db8:1::/48".to_string(),
+            ..Default::default()
+        }))
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "IPv6 VPC prefix should be allowed for FNN VPC, got: {:?}",
+        result.err()
+    );
 
     Ok(())
 }

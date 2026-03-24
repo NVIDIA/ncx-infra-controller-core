@@ -3590,6 +3590,11 @@ message FlatInterfaceConfig {
   // MTU size
   optional uint32 mtu = 18;
 
+  // IPv6 address for this interface, if dual-stack.
+  // TODO(chet): Consider formalizing this as an ip_allocations
+  // map of <address, address_family> later.
+  optional string ip6 = 19;
+
   // The details of the network security group associated with
   // either the instance or its parent VPC.
   // Currently, source would either be INSTANCE or VPC.

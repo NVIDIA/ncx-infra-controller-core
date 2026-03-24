@@ -218,6 +218,7 @@ pub async fn admin_network(
         vpc_vni,
         gateway: prefix.gateway_cidr().unwrap_or_default(),
         ip: address.address.to_string(),
+        ip6: None,
         interface_prefix: address_prefix.to_string(),
         vpc_prefixes: if fnn_enabled_on_admin {
             vec![format!("{}/32", address.address.to_string())]
@@ -439,6 +440,14 @@ pub async fn tenant_network(
         _ => None,
     };
 
+    // Look for an IPv6 prefix and address if available.
+    let ip6 = segment
+        .prefixes
+        .iter()
+        .find(|prefix| prefix.prefix.is_ipv6())
+        .and_then(|v6_prefix| iface.ip_addrs.get(&v6_prefix.id))
+        .map(|addr| addr.to_string());
+
     Ok(rpc::FlatInterfaceConfig {
         function_type: rpc_ft.into(),
         virtual_function_id: match iface.function_id {
@@ -450,6 +459,7 @@ pub async fn tenant_network(
         vpc_vni,
         gateway: v4_prefix.gateway_cidr().unwrap_or_default(),
         ip: address.to_string(),
+        ip6,
         interface_prefix: interface_prefix.to_string(),
         vpc_prefixes,
         prefix: v4_prefix.prefix.to_string(),

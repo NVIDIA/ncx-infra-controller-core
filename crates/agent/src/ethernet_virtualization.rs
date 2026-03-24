@@ -972,11 +972,15 @@ pub async fn interfaces(
         let Some(iface) = network_config.admin_interface.as_ref() else {
             eyre::bail!("use_admin_network is true but admin interface is missing");
         };
+        let addresses: Vec<String> = std::iter::once(&iface.ip)
+            .chain(iface.ip6.as_ref())
+            .cloned()
+            .collect();
         interfaces.push(rpc::InstanceInterfaceStatusObservation {
             function_type: iface.function_type,
             virtual_function_id: None,
             mac_address: Some(factory_mac_address.to_string()),
-            addresses: vec![iface.ip.clone()],
+            addresses,
             prefixes: vec![iface.interface_prefix.clone()],
             gateways: vec![iface.gateway.clone()],
             network_security_group: None,
@@ -1036,11 +1040,15 @@ pub async fn interfaces(
                         version: nsg.version.clone(),
                     });
 
+            let addresses: Vec<String> = std::iter::once(&iface.ip)
+                .chain(iface.ip6.as_ref())
+                .cloned()
+                .collect();
             interfaces.push(rpc::InstanceInterfaceStatusObservation {
                 function_type: iface.function_type,
                 virtual_function_id: iface.virtual_function_id,
                 mac_address: mac,
-                addresses: vec![iface.ip.clone()],
+                addresses,
                 prefixes: vec![iface.interface_prefix.clone()],
                 gateways: vec![iface.gateway.clone()],
                 network_security_group,
@@ -1811,6 +1819,7 @@ mod tests {
     use carbide_network::virtualization::{VpcVirtualizationType, get_svi_ip};
     use eyre::WrapErr;
     use ipnetwork::IpNetwork;
+    use mac_address::MacAddress;
     use utils::models::dhcp::{DhcpConfig, HostConfig};
 
     use super::FPath;
@@ -2316,6 +2325,7 @@ mod tests {
             vpc_vni: 1002,
             gateway: "10.217.5.123/28".to_string(),
             ip: "10.217.5.123".to_string(),
+            ip6: None,
             interface_prefix: admin_interface_prefix.to_string(),
             vpc_prefixes: vec![],
             vpc_peer_prefixes: vec![],
@@ -2360,6 +2370,7 @@ mod tests {
                 vpc_vni: 1025197,
                 gateway: "10.217.5.169/29".to_string(),
                 ip: "10.217.5.170".to_string(),
+                ip6: None,
                 interface_prefix: interface_prefix_1.to_string(),
                 vpc_prefixes: vec!["10.217.5.160/30".to_string(), "10.217.5.168/29".to_string()],
                 vpc_peer_prefixes: vec!["10.217.6.176/29".to_string()],
@@ -2389,6 +2400,7 @@ mod tests {
                 vpc_vni: 1025186,
                 gateway: "10.217.5.161/30".to_string(),
                 ip: "10.217.5.162".to_string(),
+                ip6: None,
                 interface_prefix: interface_prefix_2.to_string(),
                 vpc_prefixes: vec!["10.217.5.160/30".to_string(), "10.217.5.168/29".to_string()],
                 vpc_peer_prefixes: vec!["10.217.6.176/29".to_string()],
@@ -2969,6 +2981,7 @@ mod tests {
             vpc_vni: 1002,
             gateway: "10.217.5.123".to_string(),
             ip: "10.217.5.123".to_string(),
+            ip6: None,
             interface_prefix: admin_interface_prefix.to_string(),
             vpc_prefixes: vec![],
             vpc_peer_prefixes: vec![],
@@ -3002,6 +3015,7 @@ mod tests {
                 vpc_vni: 1025197,
                 gateway: "10.217.5.169".to_string(),
                 ip: "10.217.5.170".to_string(),
+                ip6: None,
                 interface_prefix: interface_prefix_1.to_string(),
                 vpc_prefixes: vec!["10.217.5.160/30".to_string(), "10.217.5.168/29".to_string()],
                 vpc_peer_prefixes: vec!["10.217.6.176/29".to_string()],
@@ -3026,6 +3040,7 @@ mod tests {
                 vpc_vni: 1025186,
                 gateway: "10.217.5.161".to_string(),
                 ip: "10.217.5.162".to_string(),
+                ip6: None,
                 interface_prefix: interface_prefix_2.to_string(),
                 vpc_prefixes: vec!["10.217.5.160/30".to_string(), "10.217.5.168/29".to_string()],
                 vpc_peer_prefixes: vec!["10.217.6.176/29".to_string()],
@@ -3377,5 +3392,125 @@ mod tests {
 
         // Secondary dpu tenant network
         assert_eq!(needed_interface_state(false, false), InterfaceState::Up);
+    }
+
+    #[tokio::test]
+    async fn test_interfaces_admin_dual_stack() {
+        let mac: MacAddress = "00:11:22:33:44:55".parse().unwrap();
+        let network_config = rpc::ManagedHostNetworkConfigResponse {
+            use_admin_network: true,
+            admin_interface: Some(rpc::FlatInterfaceConfig {
+                function_type: rpc::InterfaceFunctionType::Physical.into(),
+                virtual_function_id: None,
+                vlan_id: 1,
+                vni: 1001,
+                vpc_vni: 0,
+                gateway: "10.0.1.1/24".to_string(),
+                ip: "10.0.1.2".to_string(),
+                ip6: Some("2001:db8::2".to_string()),
+                interface_prefix: "10.0.1.2/32".to_string(),
+                vpc_prefixes: vec![],
+                prefix: "10.0.1.0/24".to_string(),
+                fqdn: "test.local".to_string(),
+                booturl: None,
+                svi_ip: None,
+                tenant_vrf_loopback_ip: None,
+                is_l2_segment: true,
+                vpc_peer_prefixes: vec![],
+                vpc_peer_vnis: vec![],
+                network_security_group: None,
+                internal_uuid: None,
+                mtu: None,
+            }),
+            ..Default::default()
+        };
+
+        let result = super::interfaces(&network_config, mac).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].addresses,
+            vec!["10.0.1.2".to_string(), "2001:db8::2".to_string()],
+            "admin interface should report both IPv4 and IPv6 addresses"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_interfaces_tenant_dual_stack() {
+        let mac: MacAddress = "00:11:22:33:44:55".parse().unwrap();
+        let network_config = rpc::ManagedHostNetworkConfigResponse {
+            use_admin_network: false,
+            tenant_interfaces: vec![rpc::FlatInterfaceConfig {
+                function_type: rpc::InterfaceFunctionType::Physical.into(),
+                virtual_function_id: None,
+                vlan_id: 100,
+                vni: 1000,
+                vpc_vni: 2000,
+                gateway: "10.0.1.1/24".to_string(),
+                ip: "10.0.1.5".to_string(),
+                ip6: Some("2001:db8::5".to_string()),
+                interface_prefix: "10.0.1.5/32".to_string(),
+                vpc_prefixes: vec!["10.0.1.0/24".to_string()],
+                prefix: "10.0.1.0/24".to_string(),
+                fqdn: "test.local".to_string(),
+                booturl: None,
+                svi_ip: None,
+                tenant_vrf_loopback_ip: None,
+                is_l2_segment: false,
+                vpc_peer_prefixes: vec![],
+                vpc_peer_vnis: vec![],
+                network_security_group: None,
+                internal_uuid: None,
+                mtu: None,
+            }],
+            ..Default::default()
+        };
+
+        let result = super::interfaces(&network_config, mac).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].addresses,
+            vec!["10.0.1.5".to_string(), "2001:db8::5".to_string()],
+            "tenant interface should report both IPv4 and IPv6 addresses"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_interfaces_ipv4_only_no_ip6() {
+        let mac: MacAddress = "00:11:22:33:44:55".parse().unwrap();
+        let network_config = rpc::ManagedHostNetworkConfigResponse {
+            use_admin_network: true,
+            admin_interface: Some(rpc::FlatInterfaceConfig {
+                function_type: rpc::InterfaceFunctionType::Physical.into(),
+                virtual_function_id: None,
+                vlan_id: 1,
+                vni: 1001,
+                vpc_vni: 0,
+                gateway: "10.0.1.1/24".to_string(),
+                ip: "10.0.1.2".to_string(),
+                ip6: None,
+                interface_prefix: "10.0.1.2/32".to_string(),
+                vpc_prefixes: vec![],
+                prefix: "10.0.1.0/24".to_string(),
+                fqdn: "test.local".to_string(),
+                booturl: None,
+                svi_ip: None,
+                tenant_vrf_loopback_ip: None,
+                is_l2_segment: true,
+                vpc_peer_prefixes: vec![],
+                vpc_peer_vnis: vec![],
+                network_security_group: None,
+                internal_uuid: None,
+                mtu: None,
+            }),
+            ..Default::default()
+        };
+
+        let result = super::interfaces(&network_config, mac).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].addresses,
+            vec!["10.0.1.2".to_string()],
+            "IPv4-only interface should report only one address"
+        );
     }
 }

@@ -473,6 +473,7 @@ async fn handle_netconf(AxumState(state): AxumState<Arc<Mutex<State>>>) -> impl 
         vpc_vni: 10101,
         gateway: "192.168.0.0/16".to_string(),
         ip: "192.168.0.12".to_string(),
+        ip6: None,
         interface_prefix: admin_interface_prefix.to_string(),
         virtual_function_id: None,
         vpc_prefixes: vec![],
@@ -494,6 +495,10 @@ async fn handle_netconf(AxumState(state): AxumState<Arc<Mutex<State>>>) -> impl 
 
     let tenant_interface_prefix: IpNetwork = "192.168.1.12/32".parse().unwrap();
 
+    let tenant_ip6 = match virtualization_type {
+        VpcVirtualizationType::Fnn => Some("2001:db8::12".to_string()),
+        _ => None,
+    };
     let tenant_interface = rpc::forge::FlatInterfaceConfig {
         function_type: rpc::forge::InterfaceFunctionType::Physical.into(),
         vlan_id: 10,
@@ -501,6 +506,7 @@ async fn handle_netconf(AxumState(state): AxumState<Arc<Mutex<State>>>) -> impl 
         vpc_vni: 10101,
         gateway: "192.168.1.0/16".to_string(),
         ip: "192.168.1.12".to_string(),
+        ip6: tenant_ip6,
         interface_prefix: tenant_interface_prefix.to_string(),
         virtual_function_id: None,
         vpc_prefixes: vec![],

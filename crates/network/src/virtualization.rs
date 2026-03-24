@@ -147,8 +147,18 @@ impl FromStr for VpcVirtualizationType {
 /// a wider refactor + intro of Carbide IP Prefix Management.
 pub fn get_host_ip(network: &IpNetwork) -> eyre::Result<std::net::IpAddr> {
     match network.prefix() {
-        32 => Ok(network.ip()),
+        // IPv4 single-host (/32) or IPv6 single-host (/128)
+        32 | 128 => Ok(network.ip()),
+        // IPv4 point-to-point (/30): host IP is the 4th address
         30 => match network.iter().nth(3) {
+            Some(ip_addr) => Ok(ip_addr),
+            None => Err(eyre::eyre!(format!(
+                "no viable host IP found in network: {}",
+                network
+            ))),
+        },
+        // IPv6 point-to-point (/127): host IP is the 2nd address
+        127 => match network.iter().nth(1) {
             Some(ip_addr) => Ok(ip_addr),
             None => Err(eyre::eyre!(format!(
                 "no viable host IP found in network: {}",
@@ -179,4 +189,52 @@ pub fn get_svi_ip(
         return Ok(Some(IpNetwork::new(*svi_ip, prefix)?));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::IpAddr;
+
+    use ipnetwork::IpNetwork;
+
+    use super::*;
+
+    #[test]
+    fn test_get_host_ip_ipv4_single_host() {
+        let network: IpNetwork = "10.0.1.5/32".parse().unwrap();
+        let ip = get_host_ip(&network).unwrap();
+        assert_eq!(ip, "10.0.1.5".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_get_host_ip_ipv4_point_to_point() {
+        // /30 has 4 addresses: .0 (network), .1 (gateway), .2 (svi), .3 (host)
+        let network: IpNetwork = "10.0.1.0/30".parse().unwrap();
+        let ip = get_host_ip(&network).unwrap();
+        assert_eq!(ip, "10.0.1.3".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_get_host_ip_ipv6_single_host() {
+        let network: IpNetwork = "2001:db8::1/128".parse().unwrap();
+        let ip = get_host_ip(&network).unwrap();
+        assert_eq!(ip, "2001:db8::1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_get_host_ip_ipv6_point_to_point() {
+        // /127 has 2 addresses: ::0 (first/gateway), ::1 (second/host)
+        let network: IpNetwork = "2001:db8::0/127".parse().unwrap();
+        let ip = get_host_ip(&network).unwrap();
+        assert_eq!(ip, "2001:db8::1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_get_host_ip_unsupported_prefix_rejected() {
+        let network: IpNetwork = "10.0.0.0/24".parse().unwrap();
+        assert!(get_host_ip(&network).is_err());
+
+        let network: IpNetwork = "2001:db8::/64".parse().unwrap();
+        assert!(get_host_ip(&network).is_err());
+    }
 }
