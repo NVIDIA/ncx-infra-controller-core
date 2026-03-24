@@ -625,6 +625,8 @@ https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/.well-known/jwks.j
 
 #### **3.5.1.5 OIDC Discovery URL**
 
+Discovery reuses common OpenID Provider field names where helpful, but **Carbide does not issue OIDC `id_token`s**—only **JWT bearer** access tokens (machine identity). Verifiers should use `jwks_uri` (or `spiffe_jwks_uri` for SPIFFE-style `use`) and `jwt_bearer_signing_alg_values_supported`, not `id_token_signing_alg_values_supported` (always empty).
+
 ```bash
 GET
 https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/.well-known/openid-configuration
@@ -634,18 +636,13 @@ https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/.well-known/openid
   "jwks_uri": "https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/.well-known/jwks.json",
   "spiffe_jwks_uri": "https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/.well-known/spiffe/jwks.json",
   "response_types_supported": [
-    "id_token"
+    "token"
   ],
   "subject_types_supported": [
     "public"
   ],
-  "id_token_signing_alg_values_supported": [
-    "ES256",
-    "ES384",
-    "ES512",
-    "EdDSA"
-  ]
-}
+  "id_token_signing_alg_values_supported": []
+ }
 ```
 
 #### **3.5.1.6 HTTP Response Statuses**
@@ -791,9 +788,9 @@ message JWKS {
 message OpenIDConfiguration {
   string issuer = 1;
   string jwks_uri = 2;
-  repeated string response_types_supported = 3;
+  repeated string response_types_supported = 3; // e.g. "token" (bearer JWT only; no id_token)
   repeated string subject_types_supported = 4;
-  repeated string id_token_signing_alg_values_supported = 5;
+  repeated string id_token_signing_alg_values_supported = 5; // always empty (no OIDC id_token)
   uint32 version = 6; // Optional config version
   string spiffe_jwks_uri = 7; // `/.well-known/spiffe/jwks.json` (GetJWKS with Spiffe kind)
 }

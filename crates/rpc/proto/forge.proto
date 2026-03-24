@@ -907,6 +907,8 @@ message GetIdentityConfigRequest {
 
 message IdentityConfig {
   bool enabled = 1;
+  // JWT `iss` / OIDC issuer string: `https://` or `http://` URL (trust domain = host),
+  // `spiffe://<trust-domain>/...` (scheme ASCII case-insensitive), or bare DNS hostname / IP.
   string issuer = 2;
   string default_audience = 3;
   repeated string allowed_audiences = 4;
@@ -997,12 +999,17 @@ message Jwks {
 message OpenIdConfiguration {
   string issuer = 1;
   string jwks_uri = 2;
+  // OAuth-style access token (JWT bearer) only; no OIDC `id_token` is issued.
   repeated string response_types_supported = 3;
   repeated string subject_types_supported = 4;
+  // Always empty: OIDC ID tokens are not supported. Use `jwt_bearer_signing_alg_values_supported`
+  // and `jwks_uri` for machine-identity JWT bearer signature verification.
   repeated string id_token_signing_alg_values_supported = 5;
   uint32 version = 6;
   // SPIFFE trust-domain style JWKS URL: `{issuer}/.well-known/spiffe/jwks.json` (GetJWKS with Spiffe kind).
   string spiffe_jwks_uri = 7;
+  // JWS `alg` values for JWT **bearer** access tokens from this issuer (e.g. ES256), not `id_token`.
+  repeated string jwt_bearer_signing_alg_values_supported = 8;
 }
 
 // Which JWKS document GetJWKS should return.
