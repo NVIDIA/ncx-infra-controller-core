@@ -955,7 +955,6 @@ impl EndpointExplorationReport {
             .unwrap();
         let serial_number = chassis.serial_number.clone();
         let manufacturer = chassis.manufacturer.clone().unwrap_or("NVIDIA".to_string());
-        // let model = chassis.model.clone().unwrap_or("Switch".to_string());
         let model = "Switch".to_string();
 
         if let Some(serial_number) = serial_number.as_ref() {

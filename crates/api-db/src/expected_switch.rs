@@ -39,6 +39,18 @@ pub async fn find_by_bmc_mac_address(
         .map_err(|err| DatabaseError::query(sql, err))
 }
 
+pub async fn find_by_serial_number(
+    txn: &mut PgConnection,
+    serial_number: &str,
+) -> Result<Option<ExpectedSwitch>, DatabaseError> {
+    let sql = "SELECT * FROM expected_switches WHERE serial_number=$1";
+    sqlx::query_as(sql)
+        .bind(serial_number)
+        .fetch_optional(txn)
+        .await
+        .map_err(|err| DatabaseError::query(sql, err))
+}
+
 pub async fn find_by_id(
     txn: &mut PgConnection,
     id: Uuid,
@@ -165,7 +177,7 @@ pub async fn create(
 ) -> DatabaseResult<ExpectedSwitch> {
     let id = switch.expected_switch_id.unwrap_or_else(Uuid::new_v4);
     let query = "INSERT INTO expected_switches
-             (expected_switch_id, bmc_mac_address, bmc_username, bmc_password, serial_number, metadata_name, metadata_description, rack_id, metadata_labels, nvos_username, nvos_password, nvos_mac_address)
+             (expected_switch_id, bmc_mac_address, bmc_username, bmc_password, serial_number, metadata_name, metadata_description, rack_id, metadata_labels, nvos_username, nvos_password, nvos_mac_addresses)
              VALUES
              ($1::uuid, $2::macaddr, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::varchar, $8::varchar, $9::jsonb, $10::varchar, $11::varchar, $12::macaddr[]) RETURNING *";
 
@@ -260,6 +272,21 @@ pub async fn delete_by_id(txn: &mut PgConnection, id: Uuid) -> DatabaseResult<()
         });
     }
     Ok(())
+}
+
+pub async fn update_nvos_mac_addresses(
+    txn: &mut PgConnection,
+    bmc_mac_address: MacAddress,
+    nvos_mac_addresses: &[MacAddress],
+) -> DatabaseResult<()> {
+    let query = "UPDATE expected_switches SET nvos_mac_addresses = $1 WHERE bmc_mac_address = $2";
+    sqlx::query(query)
+        .bind(nvos_mac_addresses)
+        .bind(bmc_mac_address)
+        .execute(txn)
+        .await
+        .map(|_| ())
+        .map_err(|err| DatabaseError::query(query, err))
 }
 
 pub async fn clear(txn: &mut PgConnection) -> Result<(), DatabaseError> {

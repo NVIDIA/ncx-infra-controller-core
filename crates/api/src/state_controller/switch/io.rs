@@ -127,7 +127,8 @@ impl StateControllerIO for SwitchStateControllerIO {
 
     fn metric_state_names(state: &SwitchControllerState) -> (&'static str, &'static str) {
         match state {
-            SwitchControllerState::Initializing => ("initializing", ""),
+            SwitchControllerState::Created => ("created", ""),
+            SwitchControllerState::Initializing { .. } => ("initializing", ""),
             SwitchControllerState::Configuring { .. } => ("configuring", ""),
             SwitchControllerState::Validating { .. } => ("validating", ""),
             SwitchControllerState::BomValidating { .. } => ("bomvalidating", ""),

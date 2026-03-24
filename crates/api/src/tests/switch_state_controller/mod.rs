@@ -84,7 +84,7 @@ async fn test_switch_state_transitions(
     // Create a switch
     let switch_id = common::api_fixtures::site_explorer::new_switch(
         &env,
-        Some("State Transition Test Switch".to_string()),
+        Some("Switch1".to_string()),
         Some("Data Center A, Rack 1".to_string()),
     )
     .await?;
@@ -96,7 +96,7 @@ async fn test_switch_state_transitions(
     let switch = switch.unwrap();
     assert!(matches!(
         switch.controller_state.value,
-        SwitchControllerState::Initializing
+        SwitchControllerState::Created
     ));
 
     // Start the state controller
@@ -160,7 +160,7 @@ async fn test_switch_deletion_flow(pool: sqlx::PgPool) -> Result<(), Box<dyn std
     // Create a switch
     let switch_id = common::api_fixtures::site_explorer::new_switch(
         &env,
-        Some("Deletion Test Switch".to_string()),
+        Some("Switch1".to_string()),
         Some("Data Center A, Rack 1".to_string()),
     )
     .await?;
@@ -250,7 +250,7 @@ async fn test_switch_error_state_handling(
     // Create a switch
     let switch_id = common::api_fixtures::site_explorer::new_switch(
         &env,
-        Some("Error State Test Switch".to_string()),
+        Some("Switch1".to_string()),
         Some("Data Center A, Rack 1".to_string()),
     )
     .await?;
@@ -329,7 +329,7 @@ async fn test_switch_state_transition_validation(
     // Create a switch
     let switch_id = common::api_fixtures::site_explorer::new_switch(
         &env,
-        Some("State Transition Validation Test Switch".to_string()),
+        Some("Switch2".to_string()),
         Some("Data Center A, Rack 1".to_string()),
     )
     .await?;
@@ -341,7 +341,7 @@ async fn test_switch_state_transition_validation(
     let switch = switch.unwrap();
     assert!(matches!(
         switch.controller_state.value,
-        SwitchControllerState::Initializing
+        SwitchControllerState::Created
     ));
 
     // Test state transitions by manually setting different states
@@ -381,7 +381,7 @@ async fn test_switch_deletion_with_state_controller(
     // Create a switch
     let switch_id = common::api_fixtures::site_explorer::new_switch(
         &env,
-        Some("Deletion with State Controller Test Switch".to_string()),
+        Some("Switch1".to_string()),
         Some("Data Center A, Rack 1".to_string()),
     )
     .await?;
@@ -464,7 +464,7 @@ async fn test_switch_entire_state_transition_flow(
 
     let switch_id = common::api_fixtures::site_explorer::new_switch(
         &env,
-        Some("Entire State Transition Test Switch".to_string()),
+        Some("Switch3".to_string()),
         Some("Data Center A, Rack 1".to_string()),
     )
     .await?;
@@ -477,9 +477,9 @@ async fn test_switch_entire_state_transition_flow(
         assert!(
             matches!(
                 switch.controller_state.value,
-                SwitchControllerState::Initializing
+                SwitchControllerState::Created
             ),
-            "initial state should be Initializing, got {:?}",
+            "initial state should be Created, got {:?}",
             switch.controller_state.value
         );
     }
@@ -505,6 +505,8 @@ async fn test_switch_entire_state_transition_flow(
         .unwrap();
 
     // iterate a few times
+    controller.run_single_iteration().await;
+    controller.run_single_iteration().await;
     controller.run_single_iteration().await;
     controller.run_single_iteration().await;
     controller.run_single_iteration().await;

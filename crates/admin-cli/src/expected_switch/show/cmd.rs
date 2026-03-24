@@ -100,7 +100,7 @@ fn convert_and_print_into_nice_table(
     table.set_titles(row![
         "Serial Number",
         "BMC Mac",
-        "NVOS Mac",
+        "MAC addresses",
         "Interface IP",
         "Associated Machine",
         "Name",

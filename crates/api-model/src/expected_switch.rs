@@ -56,7 +56,7 @@ impl<'r> FromRow<'r, PgRow> for ExpectedSwitch {
         };
 
         let nvos_mac_addresses: Vec<MacAddress> =
-            row.try_get("nvos_mac_address").unwrap_or_default();
+            row.try_get("nvos_mac_addresses").unwrap_or_default();
 
         Ok(ExpectedSwitch {
             expected_switch_id: row.try_get("expected_switch_id")?,

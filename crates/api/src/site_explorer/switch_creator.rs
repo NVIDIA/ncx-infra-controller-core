@@ -17,9 +17,7 @@
 
 use carbide_uuid::switch::SwitchId;
 use db::DatabaseError;
-use mac_address::MacAddress;
 use model::expected_switch::ExpectedSwitch;
-use model::machine_interface_address::MachineInterfaceAssociation;
 use model::site_explorer::ExploredManagedSwitch;
 use sqlx::{PgConnection, PgPool};
 
@@ -113,21 +111,15 @@ impl SwitchCreator {
         explored_managed_switch: &ExploredManagedSwitch,
         expected_switch: &ExpectedSwitch,
     ) -> CarbideResult<Option<SwitchId>> {
-        let nv_os_mac_addresses = if explored_managed_switch.nv_os_mac_addresses.is_empty() {
-            expected_switch.nvos_mac_addresses.clone()
-        } else {
-            explored_managed_switch.nv_os_mac_addresses.clone()
-        };
-        for mac_address in &nv_os_mac_addresses {
-            let mi = db::machine_interface::find_by_mac_address(&mut *txn, *mac_address).await?;
-            if let Some(interface) = mi.first()
-                && interface.switch_id.is_some()
-            {
-                tracing::warn!(
-                    "Switch already exists, {} for nv os mac address",
-                    mac_address.to_string()
-                );
-                return Ok(None);
+        if !explored_managed_switch.nv_os_mac_addresses.is_empty() {
+            let explored_macs = explored_managed_switch.nv_os_mac_addresses.clone();
+            if *explored_macs != expected_switch.nvos_mac_addresses {
+                db::expected_switch::update_nvos_mac_addresses(
+                    &mut *txn,
+                    expected_switch.bmc_mac_address,
+                    &explored_macs,
+                )
+                .await?;
             }
         }
         let switch_id = explored_managed_switch
@@ -148,29 +140,22 @@ impl SwitchCreator {
             );
             return Ok(None);
         }
-        self.create_switch_from_explored_switch(
-            txn,
-            explored_managed_switch,
-            expected_switch,
-            switch_id,
-            &nv_os_mac_addresses,
-        )
-        .await?;
+        self.create_switch_from_explored_switch(txn, expected_switch, switch_id)
+            .await?;
         Ok(Some(switch_id))
     }
 
     async fn create_switch_from_explored_switch(
         &self,
         txn: &mut PgConnection,
-        _explored_switch: &ExploredManagedSwitch,
         expected_switch: &ExpectedSwitch,
         switch_id: SwitchId,
-        nv_os_mac_addresses: &[MacAddress],
     ) -> CarbideResult<()> {
         let name = match expected_switch.metadata.name.is_empty() {
             true => expected_switch.serial_number.to_string(),
             false => expected_switch.metadata.name.to_string(),
         };
+
         let config = model::switch::SwitchConfig {
             name,
             enable_nmxc: false,
@@ -180,24 +165,10 @@ impl SwitchCreator {
         let new_switch = model::switch::NewSwitch {
             id: switch_id,
             config,
+            bmc_mac_address: Some(expected_switch.bmc_mac_address),
         };
 
         _ = db::switch::create(txn, &new_switch).await?;
-
-        for mac_address in nv_os_mac_addresses {
-            let mi = db::machine_interface::find_by_mac_address(&mut *txn, *mac_address).await?;
-            if let Some(interface) = mi.first()
-                && interface.switch_id.is_none()
-            {
-                db::machine_interface::associate_interface_with_machine(
-                    &interface.id,
-                    MachineInterfaceAssociation::Switch(switch_id),
-                    txn,
-                )
-                .await?;
-                break;
-            }
-        }
 
         Ok(())
     }

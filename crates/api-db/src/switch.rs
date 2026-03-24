@@ -57,11 +57,11 @@ pub struct SwitchSearchConfig {
     // pub include_history: bool, // unused
 }
 pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseResult<Switch> {
-    let state = SwitchControllerState::Initializing;
+    let state = SwitchControllerState::Created;
     let version = ConfigVersion::initial();
 
     let query = sqlx::query_as::<_, SwitchId>(
-        "INSERT INTO switches (id, name, config, controller_state, controller_state_version) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        "INSERT INTO switches (id, name, config, controller_state, controller_state_version, bmc_mac_address) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     );
     let id = query
         .bind(new_switch.id)
@@ -69,6 +69,7 @@ pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseR
         .bind(sqlx::types::Json(&new_switch.config))
         .bind(sqlx::types::Json(&state))
         .bind(version)
+        .bind(new_switch.bmc_mac_address)
         .fetch_one(txn)
         .await
         .map_err(|e| DatabaseError::new("create switch", e))?;
@@ -78,6 +79,7 @@ pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseR
         config: new_switch.config.clone(),
         status: None,
         deleted: None,
+        bmc_mac_address: new_switch.bmc_mac_address,
         controller_state: Versioned {
             value: state,
             version,
@@ -366,7 +368,7 @@ pub async fn find_bmc_ips_by_switch_ids(
 
 /// Full endpoint info for a switch: BMC MAC/IP and optionally NVOS MAC/IP.
 ///
-/// NVOS fields are nullable because `nvos_mac_address` may not be set on the
+/// NVOS fields are nullable because `nvos_mac_addresses` may not be set on the
 /// expected switch, or the corresponding `machine_interfaces` / addresses may
 /// not exist yet.
 #[derive(Debug, sqlx::FromRow)]
@@ -388,7 +390,7 @@ pub struct SwitchEndpointRow {
 ///   switches.id -> switches.config->>'name' (serial)
 ///   -> expected_switches.serial_number -> bmc_mac_address (BMC MAC)
 ///   -> machine_interfaces (by bmc_mac) -> machine_interface_addresses (underlay) -> BMC IP
-///   -> expected_switches.nvos_mac_address (NVOS MAC, nullable)
+///   -> expected_switches.nvos_mac_addresses (NVOS MAC, nullable)
 ///   -> machine_interfaces (by nvos_mac) -> machine_interface_addresses -> NVOS IP
 pub async fn find_switch_endpoints_by_ids(
     db: impl crate::db_read::DbReader<'_>,
@@ -411,8 +413,8 @@ pub async fn find_switch_endpoints_by_ids(
         JOIN network_segments bmc_ns
             ON bmc_ns.id = bmc_mi.segment_id
         LEFT JOIN machine_interfaces nvos_mi
-            ON es.nvos_mac_address IS NOT NULL
-           AND nvos_mi.mac_address = ANY(es.nvos_mac_address)
+            ON es.nvos_mac_addresses IS NOT NULL
+           AND nvos_mi.mac_address = ANY(es.nvos_mac_addresses)
         LEFT JOIN machine_interface_addresses nvos_mia
             ON nvos_mia.interface_id = nvos_mi.id
         WHERE s.id = ANY($1)

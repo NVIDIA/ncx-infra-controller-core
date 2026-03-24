@@ -22,6 +22,7 @@ use ::rpc::forge as rpc;
 use carbide_uuid::switch::SwitchId;
 use chrono::prelude::*;
 use config_version::{ConfigVersion, Versioned};
+use mac_address::MacAddress;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, Row};
@@ -36,6 +37,7 @@ pub mod switch_id;
 pub struct NewSwitch {
     pub id: SwitchId,
     pub config: SwitchConfig,
+    pub bmc_mac_address: Option<MacAddress>,
 }
 
 impl TryFrom<rpc::SwitchCreationRequest> for NewSwitch {
@@ -68,6 +70,7 @@ impl TryFrom<rpc::SwitchCreationRequest> for NewSwitch {
         Ok(NewSwitch {
             id,
             config: SwitchConfig::try_from(conf)?,
+            bmc_mac_address: None,
         })
     }
 }
@@ -120,6 +123,8 @@ pub struct Switch {
 
     pub deleted: Option<DateTime<Utc>>,
 
+    pub bmc_mac_address: Option<MacAddress>,
+
     pub controller_state: Versioned<SwitchControllerState>,
 
     /// The result of the last attempt to change state
@@ -154,6 +159,7 @@ impl<'r> FromRow<'r, PgRow> for Switch {
             config: config.0,
             status: status.map(|s| s.0),
             deleted: row.try_get("deleted")?,
+            bmc_mac_address: row.try_get("bmc_mac_address").ok().flatten(),
             controller_state: Versioned {
                 value: controller_state.0,
                 version: row.try_get("controller_state_version")?,
@@ -225,6 +231,12 @@ impl TryFrom<Switch> for rpc::Switch {
     }
 }
 
+/// Sub-state for SwitchControllerState::Initializing
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InitializingState {
+    WaitForOsMachineInterface,
+}
+
 /// Sub-state for SwitchControllerState::Configuring
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfiguringState {
@@ -257,8 +269,12 @@ pub enum ReProvisioningState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum SwitchControllerState {
-    /// The Switch is created in Carbide, waiting for initialization.
-    Initializing,
+    /// The Switch has been created in Carbide.
+    Created,
+    /// The Switch is initializing.
+    Initializing {
+        initializing_state: InitializingState,
+    },
     /// The Switch is configuring.
     Configuring { config_state: ConfiguringState },
     /// The Switch is validating.
@@ -287,7 +303,11 @@ pub fn state_sla(state: &SwitchControllerState, state_version: &ConfigVersion) -
         .unwrap_or(std::time::Duration::from_secs(60 * 60 * 24));
 
     match state {
-        SwitchControllerState::Initializing => StateSla::with_sla(
+        SwitchControllerState::Created => StateSla::with_sla(
+            std::time::Duration::from_secs(slas::INITIALIZING),
+            time_in_state,
+        ),
+        SwitchControllerState::Initializing { .. } => StateSla::with_sla(
             std::time::Duration::from_secs(slas::INITIALIZING),
             time_in_state,
         ),
@@ -347,9 +367,21 @@ mod tests {
 
     #[test]
     fn serialize_controller_state() {
-        let state = SwitchControllerState::Initializing;
+        let state = SwitchControllerState::Created;
         let serialized = serde_json::to_string(&state).unwrap();
-        assert_eq!(serialized, "{\"state\":\"initializing\"}");
+        assert_eq!(serialized, "{\"state\":\"created\"}");
+        assert_eq!(
+            serde_json::from_str::<SwitchControllerState>(&serialized).unwrap(),
+            state
+        );
+        let state = SwitchControllerState::Initializing {
+            initializing_state: InitializingState::WaitForOsMachineInterface,
+        };
+        let serialized = serde_json::to_string(&state).unwrap();
+        assert_eq!(
+            serialized,
+            "{\"state\":\"initializing\",\"initializing_state\":\"WaitForOsMachineInterface\"}"
+        );
         assert_eq!(
             serde_json::from_str::<SwitchControllerState>(&serialized).unwrap(),
             state

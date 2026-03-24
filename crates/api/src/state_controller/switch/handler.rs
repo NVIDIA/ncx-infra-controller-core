@@ -27,6 +27,7 @@ use crate::state_controller::state_handler::{
 use crate::state_controller::switch::bom_validating::handle_bom_validating;
 use crate::state_controller::switch::configuring::handle_configuring;
 use crate::state_controller::switch::context::SwitchStateHandlerContextObjects;
+use crate::state_controller::switch::created::handle_created;
 use crate::state_controller::switch::deleting::handle_deleting;
 use crate::state_controller::switch::error_state::handle_error;
 use crate::state_controller::switch::initializing::handle_initializing;
@@ -58,7 +59,10 @@ impl SwitchStateHandler {
         let controller_state = &state.controller_state.value;
 
         match controller_state {
-            SwitchControllerState::Initializing => handle_initializing(switch_id, state, ctx).await,
+            SwitchControllerState::Created => handle_created(switch_id, state, ctx).await,
+            SwitchControllerState::Initializing { .. } => {
+                handle_initializing(switch_id, state, ctx).await
+            }
             SwitchControllerState::Configuring { .. } => {
                 handle_configuring(switch_id, state, ctx).await
             }
