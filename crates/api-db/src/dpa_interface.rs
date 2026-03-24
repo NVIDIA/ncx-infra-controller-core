@@ -395,13 +395,12 @@ pub async fn try_update_controller_state(
     txn: &mut PgConnection,
     id: DpaInterfaceId,
     expected_version: ConfigVersion,
+    new_version: ConfigVersion,
     new_state: &DpaInterfaceControllerState,
 ) -> Result<bool, DatabaseError> {
-    let next_version = expected_version.increment();
-
     let query = "UPDATE dpa_interfaces SET controller_state_version=$1, controller_state=$2::json where id=$3::uuid AND controller_state_version=$4 returning id";
     let result = sqlx::query_as::<_, DpaInterfaceId>(query)
-        .bind(next_version)
+        .bind(new_version)
         .bind(sqlx::types::Json(new_state))
         .bind(id)
         .bind(expected_version)

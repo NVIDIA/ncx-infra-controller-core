@@ -123,6 +123,7 @@ impl StateControllerIO for MachineStateControllerIO {
         txn: &mut PgConnection,
         object_id: &Self::ObjectId,
         _old_version: ConfigVersion,
+        _new_version: ConfigVersion,
         new_state: &Self::ControllerState,
     ) -> Result<bool, DatabaseError> {
         db::machine::update_state(txn, object_id, new_state).await?;
@@ -137,7 +138,7 @@ impl StateControllerIO for MachineStateControllerIO {
         &self,
         _txn: &mut PgConnection,
         _object_id: &Self::ObjectId,
-        _old_version: ConfigVersion,
+        _new_version: ConfigVersion,
         _new_state: &Self::ControllerState,
     ) -> Result<(), DatabaseError> {
         Ok(())

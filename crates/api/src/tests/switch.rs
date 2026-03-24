@@ -315,9 +315,15 @@ async fn test_switch_controller_state_transitions(
     let new_state = SwitchControllerState::Ready;
     let current_version = switch.controller_state.version;
 
-    let updated =
-        db_switch::try_update_controller_state(&mut txn, switch_id, current_version, &new_state)
-            .await?;
+    let next_version = current_version.increment();
+    let updated = db_switch::try_update_controller_state(
+        &mut txn,
+        switch_id,
+        current_version,
+        next_version,
+        &new_state,
+    )
+    .await?;
     assert!(updated, "update with correct version should succeed");
 
     // Verify the state was updated
@@ -347,6 +353,7 @@ async fn test_switch_controller_state_transitions(
         &mut txn,
         switch_id,
         current_version,
+        current_version.increment(),
         &SwitchControllerState::Initializing,
     )
     .await?;
@@ -361,6 +368,7 @@ async fn test_switch_controller_state_transitions(
         &mut txn,
         switch_id,
         new_version,
+        new_version.increment(),
         &SwitchControllerState::Initializing,
     )
     .await?;

@@ -98,20 +98,21 @@ impl StateControllerIO for SwitchStateControllerIO {
         txn: &mut PgConnection,
         object_id: &Self::ObjectId,
         old_version: ConfigVersion,
+        new_version: ConfigVersion,
         new_state: &Self::ControllerState,
     ) -> Result<bool, DatabaseError> {
-        db_switch::try_update_controller_state(txn, *object_id, old_version, new_state).await
+        db_switch::try_update_controller_state(txn, *object_id, old_version, new_version, new_state)
+            .await
     }
 
     async fn persist_state_history(
         &self,
         txn: &mut PgConnection,
         object_id: &Self::ObjectId,
-        old_version: ConfigVersion,
+        new_version: ConfigVersion,
         new_state: &Self::ControllerState,
     ) -> Result<(), DatabaseError> {
-        let next_version = old_version.increment();
-        db::switch_state_history::persist(txn, object_id, new_state, next_version).await?;
+        db::switch_state_history::persist(txn, object_id, new_state, new_version).await?;
         Ok(())
     }
 

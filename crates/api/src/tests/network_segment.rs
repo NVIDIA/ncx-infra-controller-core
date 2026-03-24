@@ -319,17 +319,18 @@ async fn test_network_segment_max_history_length(
         let state = NetworkSegmentControllerState::Deleting {
             deletion_state: NetworkSegmentDeletionState::DBDelete,
         };
+        let next_version = version.increment();
         assert!(
             db::network_segment::try_update_controller_state(
                 &mut txn,
                 segment_id,
                 version,
+                next_version,
                 &state,
             )
             .await
             .unwrap()
         );
-        let next_version = version.increment();
         db::network_segment_state_history::persist(&mut txn, segment_id, &state, next_version)
             .await
             .unwrap();

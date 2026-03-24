@@ -348,10 +348,12 @@ async fn test_power_shelf_controller_state_transitions(
     let new_state = model::power_shelf::PowerShelfControllerState::Ready;
     let current_version = power_shelf.controller_state.version;
 
+    let next_version = current_version.increment();
     let updated = db_power_shelf::try_update_controller_state(
         &mut txn,
         power_shelf_id,
         current_version,
+        next_version,
         &new_state,
     )
     .await?;
@@ -384,6 +386,7 @@ async fn test_power_shelf_controller_state_transitions(
         &mut txn,
         power_shelf_id,
         current_version,
+        current_version.increment(),
         &model::power_shelf::PowerShelfControllerState::Initializing,
     )
     .await?;
@@ -398,6 +401,7 @@ async fn test_power_shelf_controller_state_transitions(
         &mut txn,
         power_shelf_id,
         new_version,
+        new_version.increment(),
         &model::power_shelf::PowerShelfControllerState::Initializing,
     )
     .await?;
