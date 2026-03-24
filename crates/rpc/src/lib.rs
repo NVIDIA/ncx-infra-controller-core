@@ -18,7 +18,6 @@
 //!
 //! This module contains the gRPC and protocol buffer definitions to generate a client or server to
 //! interact with the API Service
-//!
 
 extern crate core;
 
@@ -58,7 +57,7 @@ pub use crate::protos::machine_discovery::{
     self, BlockDevice, Cpu, DiscoveryInfo, DmiData, NetworkInterface, NvmeDevice,
     PciDeviceProperties,
 };
-pub use crate::protos::{health, site_explorer};
+pub use crate::protos::{fmds, health, site_explorer};
 
 pub mod errors;
 pub mod forge_tls_client;

@@ -20,7 +20,6 @@
 /// last byte of the MAC address sent in the DISCOVERY packet.
 ///
 /// Module only included if #cfg(test)
-///
 use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::str::FromStr;
@@ -212,6 +211,9 @@ impl MockAPIServer {
                     ))
                 }
             }
+            "/forge.Forge/Echo" => respond(rpc::EchoResponse {
+                message: "dhcp_echo".into(),
+            }),
             "/forge.Forge/Version" => respond(rpc::BuildInfo::default()),
             _ => panic!("DHCP -> API wrong uri: {}", req.uri().path()),
         }

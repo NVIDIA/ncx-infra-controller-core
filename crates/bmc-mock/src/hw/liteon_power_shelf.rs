@@ -41,7 +41,7 @@ impl LiteOnPowerShelf<'_> {
         redfish::manager::Config {
             managers: vec![redfish::manager::SingleConfig {
                 id: "bmc",
-                eth_interfaces: vec![
+                eth_interfaces: Some(vec![
                     redfish::ethernet_interface::builder(
                         &redfish::ethernet_interface::manager_resource("bmc", "can0"),
                     )
@@ -54,8 +54,8 @@ impl LiteOnPowerShelf<'_> {
                     .mac_address(self.bmc_mac_address)
                     .interface_enabled(true)
                     .build(),
-                ],
-                firmware_version: "r1.3.9",
+                ]),
+                firmware_version: Some("r1.3.9"),
                 oem: None,
             }],
         }
@@ -82,6 +82,7 @@ impl LiteOnPowerShelf<'_> {
                 base_bios: Some(
                     redfish::bios::builder(&redfish::bios::resource(system_id)).build(),
                 ),
+                secure_boot_available: false,
             }],
         }
     }

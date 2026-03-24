@@ -359,7 +359,7 @@ impl<'a> MockExploredHost<'a> {
                                 (
                                     machine_id,
                                     DpuInitState::DpfStates {
-                                        state: DpfState::WaitingForOsInstallToComplete,
+                                        state: DpfState::WaitingForReady { phase_detail: None },
                                     },
                                 )
                             })
@@ -371,7 +371,7 @@ impl<'a> MockExploredHost<'a> {
 
         //run scout discovery for dpu(s)
         for dpu in self.managed_host.dpus.clone() {
-            let machine_interfaces = find_by_mac_address(&mut txn, dpu.oob_mac_address)
+            let machine_interfaces = find_by_mac_address(txn.as_mut(), dpu.oob_mac_address)
                 .await
                 .unwrap();
             let primary_interface = machine_interfaces
@@ -401,65 +401,12 @@ impl<'a> MockExploredHost<'a> {
             discovery_completed(self.test_env, *machine_id).await;
         }
 
-        self.test_env
-            .run_machine_state_controller_iteration_until_state_matches(
-                &host_machine_id,
-                10 + (10 * self.dpu_machine_ids.len() as u32),
-                ManagedHostState::DPUInit {
-                    dpu_states: model::machine::DpuInitStates {
-                        states: self
-                            .dpu_machine_ids
-                            .clone()
-                            .into_values()
-                            .map(|machine_id| {
-                                (
-                                    machine_id,
-                                    DpuInitState::DpfStates {
-                                        state: DpfState::WaitForNetworkConfigAndRemoveAnnotation,
-                                    },
-                                )
-                            })
-                            .collect::<HashMap<MachineId, DpuInitState>>(),
-                    },
-                },
-            )
-            .await;
-
-        network_configured(
-            self.test_env,
-            &self.dpu_machine_ids.values().copied().collect(),
-        )
-        .await;
-
-        self.test_env
-            .run_machine_state_controller_iteration_until_state_matches(
-                &host_machine_id,
-                35,
-                ManagedHostState::DPUInit {
-                    dpu_states: model::machine::DpuInitStates {
-                        states: self
-                            .dpu_machine_ids
-                            .clone()
-                            .into_values()
-                            .map(|machine_id| (machine_id, DpuInitState::WaitingForNetworkConfig))
-                            .collect::<HashMap<MachineId, DpuInitState>>(),
-                    },
-                },
-            )
-            .await;
-
         txn.commit().await.unwrap();
 
-        network_configured(
-            self.test_env,
-            &self.dpu_machine_ids.values().copied().collect(),
-        )
-        .await;
-
         self.test_env
             .run_machine_state_controller_iteration_until_state_matches(
                 &host_machine_id,
-                4,
+                10,
                 ManagedHostState::HostInit {
                     machine_state: MachineState::EnableIpmiOverLan,
                 },
@@ -506,7 +453,7 @@ impl<'a> MockExploredHost<'a> {
 
         //run scout discovery for dpu(s)
         for dpu in self.managed_host.dpus.clone() {
-            let machine_interfaces = find_by_mac_address(&mut txn, dpu.oob_mac_address)
+            let machine_interfaces = find_by_mac_address(txn.as_mut(), dpu.oob_mac_address)
                 .await
                 .unwrap();
             let primary_interface = machine_interfaces
@@ -610,7 +557,7 @@ impl<'a> MockExploredHost<'a> {
 
         //run scout discovery for dpu(s)
         for dpu in self.managed_host.dpus.clone() {
-            let machine_interfaces = find_by_mac_address(&mut txn, dpu.oob_mac_address)
+            let machine_interfaces = find_by_mac_address(txn.as_mut(), dpu.oob_mac_address)
                 .await
                 .unwrap();
             let primary_interface = machine_interfaces
@@ -1043,7 +990,7 @@ impl<'a> MockExploredHost<'a> {
 
                 let mut txn = self.test_env.pool.begin().await.unwrap();
                 let machine = db::machine::find_one(
-                    &mut txn,
+                    txn.as_mut(),
                     &self.dpu_machine_ids[&0],
                     model::machine::machine_search_config::MachineSearchConfig::default(),
                 )
@@ -1566,6 +1513,7 @@ pub struct TestRackDbBuilder {
     expected_power_shelves: Vec<MacAddress>,
     expected_switches: Vec<MacAddress>,
     rack_id: RackId,
+    rack_type: Option<String>,
 }
 
 impl Default for TestRackDbBuilder {
@@ -1574,7 +1522,8 @@ impl Default for TestRackDbBuilder {
             expected_compute_trays: vec![],
             expected_power_shelves: vec![],
             expected_switches: vec![],
-            rack_id: RackId::from(uuid::Uuid::new_v4()),
+            rack_id: RackId::new(uuid::Uuid::new_v4().to_string()),
+            rack_type: None,
         }
     }
 }
@@ -1607,10 +1556,20 @@ impl TestRackDbBuilder {
         self
     }
 
+    pub fn with_expected_switches(mut self, expected_switches: Vec<[u8; 6]>) -> Self {
+        self.expected_switches = expected_switches.into_iter().map(MacAddress::new).collect();
+        self
+    }
+
+    pub fn with_rack_type(mut self, rack_type: impl Into<String>) -> Self {
+        self.rack_type = Some(rack_type.into());
+        self
+    }
+
     pub async fn persist(&self, txn: &mut PgConnection) -> Result<RackId, DatabaseError> {
         db_rack::create(
             txn,
-            self.rack_id,
+            &self.rack_id,
             self.expected_compute_trays.clone(),
             self.expected_switches.clone(),
             self.expected_power_shelves.clone(),
@@ -1622,12 +1581,15 @@ impl TestRackDbBuilder {
             compute_trays: vec![],
             power_shelves: vec![],
             expected_compute_trays: self.expected_compute_trays.clone(),
+            expected_switches: self.expected_switches.clone(),
             expected_power_shelves: self.expected_power_shelves.clone(),
+            rack_type: self.rack_type.clone(),
+            validation_run_id: None,
         };
 
-        db_rack::update(txn, self.rack_id, &cfg).await?;
+        db_rack::update(txn, &self.rack_id, &cfg).await?;
 
-        Ok(self.rack_id)
+        Ok(self.rack_id.clone())
     }
 }
 
@@ -1777,4 +1739,77 @@ pub async fn new_mock_host_with_dpf(
         })
         .boxed()
         .await
+}
+
+/// create_expected_switches seeds 6 expected switches into the database,
+/// replacing the create_expected_switch.sql fixture.
+pub async fn create_expected_switches(
+    txn: &mut sqlx::PgConnection,
+) -> Vec<model::expected_switch::ExpectedSwitch> {
+    use model::expected_switch::ExpectedSwitch;
+    use model::metadata::Metadata;
+
+    use crate::tests::common::mac_address_pool::EXPECTED_SWITCH_BMC_MAC_ADDRESS_POOL;
+
+    let mut created = Vec::new();
+    for i in 0..6 {
+        let switch = ExpectedSwitch {
+            expected_switch_id: None,
+            bmc_mac_address: EXPECTED_SWITCH_BMC_MAC_ADDRESS_POOL.allocate(),
+            serial_number: format!("SW-SN-{:03}", i + 1),
+            bmc_username: "ADMIN".into(),
+            bmc_password: "Pwd2023x0x0x0x7".into(),
+            nvos_username: if (3..=4).contains(&i) {
+                Some(format!("nvos_admin{}", i - 2))
+            } else {
+                None
+            },
+            nvos_password: if (3..=4).contains(&i) {
+                Some(format!("nvos_pass{}", i - 2))
+            } else {
+                None
+            },
+            metadata: Metadata::default(),
+            rack_id: None,
+        };
+        let result = db::expected_switch::create(txn, switch)
+            .await
+            .expect("unable to create expected switch");
+        created.push(result);
+    }
+    created
+}
+
+/// create_expected_power_shelves seeds 6 expected power shelves into the
+/// database, replacing the create_expected_power_shelf.sql fixture.
+pub async fn create_expected_power_shelves(
+    txn: &mut sqlx::PgConnection,
+) -> Vec<model::expected_power_shelf::ExpectedPowerShelf> {
+    use model::expected_power_shelf::ExpectedPowerShelf;
+    use model::metadata::Metadata;
+
+    use crate::tests::common::mac_address_pool::EXPECTED_POWER_SHELF_BMC_MAC_ADDRESS_POOL;
+
+    let mut created = Vec::new();
+    for i in 0..6 {
+        let power_shelf = ExpectedPowerShelf {
+            expected_power_shelf_id: None,
+            bmc_mac_address: EXPECTED_POWER_SHELF_BMC_MAC_ADDRESS_POOL.allocate(),
+            serial_number: format!("PS-SN-{:03}", i + 1),
+            bmc_username: "ADMIN".into(),
+            bmc_password: "Pwd2023x0x0x0x0x7".into(),
+            ip_address: if (3..=4).contains(&i) {
+                Some(format!("192.168.1.{}", 100 + i - 3).parse().unwrap())
+            } else {
+                None
+            },
+            metadata: Metadata::default(),
+            rack_id: None,
+        };
+        let result = db::expected_power_shelf::create(txn, power_shelf)
+            .await
+            .expect("unable to create expected power shelf");
+        created.push(result);
+    }
+    created
 }

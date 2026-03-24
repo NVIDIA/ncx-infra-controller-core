@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "forge.AdminForceDeleteMachineResponse",
             "#[derive(serde::Serialize)]",
         )
-        .type_attribute("forge.CredentialResponse", "#[derive(serde::Serialize)]")
+        .type_attribute("forge.ClientSecretBasic", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute(".dns", "#[derive(serde::Serialize)]")
         .type_attribute("forge.FlatInterfaceConfig", "#[derive(serde::Serialize)]")
         .type_attribute(
@@ -436,9 +436,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ExpectedMachine", "#[derive(serde::Serialize)]")
         .type_attribute("ExpectedPowerShelf", "#[derive(serde::Serialize)]")
         .type_attribute("ExpectedSwitch", "#[derive(serde::Serialize)]")
+        .type_attribute("ExpectedRack", "#[derive(serde::Serialize)]")
         .type_attribute("ExpectedMachineList", "#[derive(serde::Serialize)]")
         .type_attribute("ExpectedPowerShelfList", "#[derive(serde::Serialize)]")
         .type_attribute("ExpectedSwitchList", "#[derive(serde::Serialize)]")
+        .type_attribute("ExpectedRackList", "#[derive(serde::Serialize)]")
         .type_attribute(
             "TpmCaCertDetail",
             "#[derive(serde::Deserialize, serde::Serialize)]",
@@ -758,6 +760,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "forge.ComputeAllocationAttributes",
             "#[derive(serde::Serialize)]",
         )
+        .type_attribute(
+            "forge.GetBmcCredentialsRequest",
+            "#[derive(serde::Serialize)]",
+        )
         .build_server(true)
         .build_client(true)
         .protoc_arg("--experimental_allow_proto3_optional")
@@ -772,6 +778,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/nmx_c.proto",
                 "proto/site_explorer.proto",
                 "proto/dns.proto",
+                "proto/fmds.proto",
             ],
             &["proto"],
         )

@@ -23,7 +23,7 @@ use db::rack::IdColumn;
 use db::{DatabaseError, ObjectColumnFilter, rack as db_rack};
 use model::StateSla;
 use model::controller_outcome::PersistentStateHandlerOutcome;
-use model::rack::{Rack, RackState, state_sla};
+use model::rack::{Rack, RackState, RackValidationState, state_sla};
 use sqlx::PgConnection;
 
 use crate::state_controller::io::StateControllerIO;
@@ -94,11 +94,11 @@ impl StateControllerIO for RackStateControllerIO {
         new_state: &Self::ControllerState,
     ) -> Result<(), DatabaseError> {
         let _updated =
-            db_rack::try_update_controller_state(txn, *rack_id, old_version, new_state).await?;
+            db_rack::try_update_controller_state(txn, rack_id, old_version, new_state).await?;
 
         // Persist state history for debugging purposes
         let _history =
-            db::rack_state_history::persist(txn, *rack_id, new_state, old_version).await?;
+            db::rack_state_history::persist(txn, rack_id, new_state, old_version).await?;
 
         Ok(())
     }
@@ -109,22 +109,33 @@ impl StateControllerIO for RackStateControllerIO {
         rack_id: &Self::ObjectId,
         outcome: PersistentStateHandlerOutcome,
     ) -> Result<(), DatabaseError> {
-        db_rack::update_controller_state_outcome(txn, *rack_id, outcome).await
+        db_rack::update_controller_state_outcome(txn, rack_id, outcome).await
     }
 
     fn metric_state_names(state: &RackState) -> (&'static str, &'static str) {
         match state {
+            RackState::Unknown => ("unknown", ""),
             RackState::Expected => ("expected", ""),
             RackState::Discovering => ("discovering", ""),
+            RackState::Validation { rack_validation } => match rack_validation {
+                RackValidationState::Pending => ("validation", "pending"),
+                RackValidationState::InProgress => ("validation", "in_progress"),
+                RackValidationState::Partial => ("validation", "partial"),
+                RackValidationState::FailedPartial => ("validation", "failed_partial"),
+                RackValidationState::Validated => ("validation", "validated"),
+                RackValidationState::Failed => ("validation", "failed"),
+            },
+            RackState::Ready => ("ready", ""),
             RackState::Maintenance { .. } => ("maintenance", ""),
-            RackState::Ready { .. } => ("ready", ""),
             RackState::Error { .. } => ("error", ""),
             RackState::Deleting => ("deleting", ""),
-            RackState::Unknown => ("unknown", ""),
         }
     }
 
-    fn state_sla(state: &Versioned<Self::ControllerState>) -> StateSla {
+    fn state_sla(
+        state: &Versioned<Self::ControllerState>,
+        _object_state: &Self::State,
+    ) -> StateSla {
         state_sla(&state.value, &state.version)
     }
 }

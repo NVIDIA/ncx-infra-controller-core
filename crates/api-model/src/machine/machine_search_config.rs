@@ -41,6 +41,8 @@ pub struct MachineSearchConfig {
     pub for_update: bool,
     // Only include NVLink capable machines (GB200/GB300 etc)
     pub mnnvl_only: bool,
+    pub only_with_power_state: Option<String>,
+    pub only_with_health_alert: Option<String>,
 }
 
 impl TryFrom<rpc::forge::MachineSearchConfig> for MachineSearchConfig {
@@ -63,6 +65,8 @@ impl TryFrom<rpc::forge::MachineSearchConfig> for MachineSearchConfig {
                 .transpose()?,
             for_update: false, // This isn't exposed to API callers
             mnnvl_only: value.mnnvl_only,
+            only_with_power_state: value.only_with_power_state,
+            only_with_health_alert: value.only_with_health_alert,
         })
     }
 }
