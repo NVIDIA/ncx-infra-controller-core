@@ -199,9 +199,7 @@ pub(crate) async fn get_jwks(
     }))
 }
 
-/// OpenID-style discovery metadata (issuer, JWKS URIs). Carbide issues **JWT bearer** tokens only;
-/// `id_token_signing_alg_values_supported` is left empty; algorithms for bearer JWTs are in
-/// `jwt_bearer_signing_alg_values_supported`.
+/// OpenID Provider–shaped metadata (issuer, JWKS URIs). Signing algorithms come from GetJWKS keys (`alg`).
 pub(crate) async fn get_open_id_configuration(
     api: &Api,
     request: Request<OpenIdConfigRequest>,
@@ -237,7 +235,6 @@ pub(crate) async fn get_open_id_configuration(
         response_types_supported: vec!["token".into()],
         subject_types_supported: vec!["public".into()],
         id_token_signing_alg_values_supported: vec![],
-        jwt_bearer_signing_alg_values_supported: vec![cfg.algorithm.clone()],
         version,
     }))
 }

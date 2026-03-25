@@ -623,7 +623,7 @@ https://{carbide-rest}/v2/org/{org-id}/carbide/site/{site-id}/.well-known/jwks.j
 
 #### **3.5.1.5 OIDC Discovery URL**
 
-Discovery reuses common OpenID Provider field names where helpful, but **Carbide does not issue OIDC `id_token`s**—only **JWT bearer** access tokens (machine identity). Verifiers should use `jwks_uri` (or `spiffe_jwks_uri` for SPIFFE-style `use`) and `jwt_bearer_signing_alg_values_supported`, not `id_token_signing_alg_values_supported` (always empty).
+Discovery reuses common OpenID Provider field names where helpful, but **Carbide does not issue OIDC `id_token`s**—only **JWT bearer** access tokens (machine identity). Verifiers should use `jwks_uri` (or `spiffe_jwks_uri` for SPIFFE-style `use`) and the **`alg`** (and `kid`) on keys from GetJWKS; `id_token_signing_alg_values_supported` stays empty.
 
 ```bash
 GET
