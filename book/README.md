@@ -13,6 +13,7 @@
 
 ## Building
 
+- Uncomment the output.pdf line in book.toml to generate pdf
 - mdbook build
 - output will be in book/pdf directory
 
