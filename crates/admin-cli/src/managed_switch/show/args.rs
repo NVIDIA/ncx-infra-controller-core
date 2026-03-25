@@ -15,21 +15,25 @@
  * limitations under the License.
  */
 
-use carbide_uuid::rack::RackId;
-use mac_address::MacAddress;
-use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExpectedSwitchJson {
-    pub bmc_mac_address: MacAddress,
-    pub bmc_username: String,
-    pub bmc_password: String,
-    pub switch_serial_number: String,
-    #[serde(default)]
-    pub nvos_mac_addresses: Vec<MacAddress>,
-    pub nvos_username: Option<String>,
-    pub nvos_password: Option<String>,
-    #[serde(default)]
-    pub metadata: Option<rpc::forge::Metadata>,
-    pub rack_id: Option<RackId>,
+use carbide_uuid::switch::SwitchId;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+pub struct Args {
+    #[clap(help = "Switch ID or name to show details for (leave empty for all)")]
+    pub identifier: Option<String>,
+}
+
+impl Args {
+    pub fn parse_identifier(&self) -> (Option<SwitchId>, Option<String>) {
+        match &self.identifier {
+            Some(id) if !id.is_empty() => match SwitchId::from_str(id) {
+                Ok(switch_id) => (Some(switch_id), None),
+                Err(_) => (None, Some(id.clone())),
+            },
+            _ => (None, None),
+        }
+    }
 }

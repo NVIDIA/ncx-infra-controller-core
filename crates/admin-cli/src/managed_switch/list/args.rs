@@ -15,21 +15,7 @@
  * limitations under the License.
  */
 
-use carbide_uuid::rack::RackId;
-use mac_address::MacAddress;
-use serde::{Deserialize, Serialize};
+use clap::Parser;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExpectedSwitchJson {
-    pub bmc_mac_address: MacAddress,
-    pub bmc_username: String,
-    pub bmc_password: String,
-    pub switch_serial_number: String,
-    #[serde(default)]
-    pub nvos_mac_addresses: Vec<MacAddress>,
-    pub nvos_username: Option<String>,
-    pub nvos_password: Option<String>,
-    #[serde(default)]
-    pub metadata: Option<rpc::forge::Metadata>,
-    pub rack_id: Option<RackId>,
-}
+#[derive(Parser, Debug)]
+pub struct Args;

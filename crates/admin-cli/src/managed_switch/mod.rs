@@ -15,21 +15,20 @@
  * limitations under the License.
  */
 
-use carbide_uuid::rack::RackId;
-use mac_address::MacAddress;
-use serde::{Deserialize, Serialize};
+mod list;
+mod show;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExpectedSwitchJson {
-    pub bmc_mac_address: MacAddress,
-    pub bmc_username: String,
-    pub bmc_password: String,
-    pub switch_serial_number: String,
-    #[serde(default)]
-    pub nvos_mac_addresses: Vec<MacAddress>,
-    pub nvos_username: Option<String>,
-    pub nvos_password: Option<String>,
-    #[serde(default)]
-    pub metadata: Option<rpc::forge::Metadata>,
-    pub rack_id: Option<RackId>,
+#[cfg(test)]
+mod tests;
+
+use clap::Parser;
+
+use crate::cfg::dispatch::Dispatch;
+
+#[derive(Parser, Debug, Dispatch)]
+pub enum Cmd {
+    #[clap(about = "Display managed switch information")]
+    Show(show::Args),
+    #[clap(about = "List all managed switches")]
+    List(list::Args),
 }

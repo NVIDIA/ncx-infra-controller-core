@@ -15,21 +15,18 @@
  * limitations under the License.
  */
 
-use carbide_uuid::rack::RackId;
-use mac_address::MacAddress;
-use serde::{Deserialize, Serialize};
+pub mod args;
+pub mod cmd;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExpectedSwitchJson {
-    pub bmc_mac_address: MacAddress,
-    pub bmc_username: String,
-    pub bmc_password: String,
-    pub switch_serial_number: String,
-    #[serde(default)]
-    pub nvos_mac_addresses: Vec<MacAddress>,
-    pub nvos_username: Option<String>,
-    pub nvos_password: Option<String>,
-    #[serde(default)]
-    pub metadata: Option<rpc::forge::Metadata>,
-    pub rack_id: Option<RackId>,
+use ::rpc::admin_cli::CarbideCliResult;
+pub use args::Args;
+
+use crate::cfg::run::Run;
+use crate::cfg::runtime::RuntimeContext;
+
+impl Run for Args {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmd::list_managed_switches(&ctx.api_client).await?;
+        Ok(())
+    }
 }
