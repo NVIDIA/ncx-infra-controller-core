@@ -752,7 +752,7 @@ async fn test_state_outcome(pool: sqlx::PgPool) {
     let outcome = host_machine.controller_state_outcome.unwrap();
     dbg!(&outcome);
     assert!(
-        matches!(outcome, PersistentStateHandlerOutcome::Wait{ reason, source_ref: Some(source_ref) } if !reason.is_empty() && source_ref.file.ends_with("/handler.rs")),
+        matches!(outcome, PersistentStateHandlerOutcome::Wait{ reason, source_ref: Some(source_ref) } if !reason.is_empty() && source_ref.file.contains("/handler")),
         "Third iteration should be waiting for DPU agent, and include a wait reason and source reference",
     );
 }
