@@ -31,6 +31,10 @@ RUN USER=root cargo new --bin carbide
 WORKDIR ./carbide
 COPY . ./
 
+# Tell cargo to use sccache as the rustc wrapper via config file, since
+# cargo-make does not reliably propagate RUSTC_WRAPPER env vars to cargo.
+RUN mkdir -p .cargo && printf '[build]\nrustc-wrapper = "sccache"\n' > .cargo/config.toml
+
 # sccache is configured to use Azure Blob Storage for persistent caching across
 # CI runs. The connection string is passed as a Docker build secret to avoid
 # leaking credentials in image layers. If the secret is not available (e.g.,
@@ -45,6 +49,8 @@ RUN --mount=type=secret,id=sccache_azure \
     export SCCACHE_DIR=/sccache; \
   fi && \
   export RUSTC_WRAPPER=sccache && \
+  export CARGO_BUILD_RUSTC_WRAPPER=sccache && \
+  echo "sccache config:" && sccache --show-stats && \
   /etc/init.d/postgresql start && \
   sudo -u postgres psql -c "ALTER USER root WITH SUPERUSER;" && \
   createdb root && \
@@ -60,6 +66,7 @@ RUN --mount=type=secret,id=sccache_azure \
   echo "$(date): Finished cargo xtask check-workspace-deps\n" && \
   cargo make build-and-test-release-container-services && \
   echo "$(date): Finished cargo make build-and-test-release-container-services" && \
+  echo "sccache stats after build-and-test:" && sccache --show-stats && \
   cargo make --no-workspace check-licenses && \
   echo "$(date): Finished cargo make check-licenses\n" && \
   cargo make --no-workspace check-bans && \
