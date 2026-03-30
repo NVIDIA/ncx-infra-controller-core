@@ -168,6 +168,7 @@ impl InternalRBACRules {
         x.perm("CleanupMachineCompleted", vec![Machineatron, Scout]);
         x.perm("ReportForgeScoutError", vec![Scout]);
         x.perm("DiscoverDhcp", vec![Dhcp, Machineatron]);
+        x.perm("ExpireDhcpLease", vec![Dhcp, Machineatron]);
         x.perm("FindInterfaces", vec![ForgeAdminCLI, Agent, Rla]);
         x.perm("DeleteInterface", vec![ForgeAdminCLI]);
         x.perm("FindIpAddress", vec![ForgeAdminCLI]);
@@ -669,6 +670,8 @@ impl InternalRBACRules {
             "FindSwitchStateHistories",
             vec![ForgeAdminCLI, Machineatron, Rla],
         );
+        x.perm("FindRackIds", vec![ForgeAdminCLI, SiteAgent, Rla]);
+        x.perm("FindRacksByIds", vec![ForgeAdminCLI, SiteAgent, Rla]);
         x.perm("GetRack", vec![ForgeAdminCLI, Rla]);
         x.perm("DeleteRack", vec![ForgeAdminCLI, Rla]);
         x.perm("RackManagerCall", vec![ForgeAdminCLI]);

@@ -224,11 +224,6 @@ pub struct CarbideConfig {
     #[serde(default)]
     pub site_explorer: SiteExplorerConfig,
 
-    /// DPU agent to use NVUE instead of writing files directly.
-    /// Once we are comfortable with this and all DPUs are HBN 2+ it will become the only option.
-    #[serde(default = "default_to_true")]
-    pub nvue_enabled: bool,
-
     /// The policy to decide whether two VPCs are allowed to peer with each other based on their
     /// network virtualization type during creation
     pub vpc_peering_policy: Option<VpcPeeringPolicy>,
@@ -602,22 +597,59 @@ pub enum ComputeAllocationEnforcement {
 
 /// DPF (DPU Platform Framework) configuration for
 /// deploying DPU fabric as a Kubernetes service.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DpfConfig {
     /// Enables DPF deployment.
     #[serde(default)]
     pub enabled: bool,
+    /// Kubernetes deployment name for the DPF service.
+    #[serde(default = "default_dpf_deployment_name")]
+    pub deployment_name: String,
+    /// Kubernetes DPUFlavor CR name.
+    #[serde(default = "default_dpf_flavor_name")]
+    pub flavor_name: String,
+    /// Label key applied to DPUNode CRs for deployment matching.
+    #[serde(default = "default_dpf_node_label_key")]
+    pub node_label_key: String,
     /// URL to the BlueField firmware bundle (BFB) for
     /// DPU provisioning.
     #[serde(default)]
     pub bfb_url: String,
-    /// Kubernetes deployment name for the DPF service.
-    #[serde(default)]
-    pub deployment_name: Option<String>,
-    /// Additional Helm services to deploy alongside
-    /// DPF.
+    /// Additional Helm services to deploy alongside DPF.
     #[serde(default)]
     pub services: Option<Vec<DpfServiceConfig>>,
+    /// Whether to create the bf.cfg ConfigMap during initialization.
+    #[serde(default = "default_to_true")]
+    pub bfcfg_enabled: bool,
+}
+
+impl Default for DpfConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            deployment_name: default_dpf_deployment_name(),
+            flavor_name: default_dpf_flavor_name(),
+            node_label_key: default_dpf_node_label_key(),
+            bfb_url: String::new(),
+            services: None,
+            bfcfg_enabled: true,
+        }
+    }
+}
+
+// TODO change to -v2 when we're ready to enable v2 by default
+fn default_dpf_deployment_name() -> String {
+    "carbide-deployment".to_string()
+}
+
+// TODO change to -v2 when we're ready to enable v2 by default
+fn default_dpf_flavor_name() -> String {
+    "carbide-dpu-flavor".to_string()
+}
+
+// TODO change to .v2 when we're ready to enable v2 by default
+fn default_dpf_node_label_key() -> String {
+    "carbide.nvidia.com/controlled.node.v1".to_string()
 }
 
 /// Configuration for a single Helm-based DPF service.
@@ -2698,6 +2730,7 @@ impl From<VpcIsolationBehaviorType> for rpc::forge::VpcIsolationBehaviorType {
     }
 }
 
+#[allow(deprecated)] // nvue_enabled proto field is deprecated but still set for backwards compat
 impl From<CarbideConfig> for rpc::forge::RuntimeConfig {
     fn from(value: CarbideConfig) -> Self {
         Self {
@@ -2748,7 +2781,7 @@ impl From<CarbideConfig> for rpc::forge::RuntimeConfig {
                 .max_concurrent_machine_updates_absolute
                 .unwrap_or_default(),
             machine_update_runtime_interval: value.machine_update_run_interval.unwrap_or_default(),
-            nvue_enabled: value.nvue_enabled,
+            nvue_enabled: true,
             attestation_enabled: value.attestation_enabled,
             auto_host_firmware_update: value.firmware_global.autoupdate,
             host_enable_autoupdate: value.firmware_global.host_enable_autoupdate,
@@ -3328,7 +3361,6 @@ mod tests {
         assert!(config.pools.is_none());
         assert!(config.ib_config.is_none());
         assert!(config.ib_fabrics.is_empty());
-        assert!(config.nvue_enabled);
         assert!(config.vpc_peering_policy.is_none());
         assert!(config.site_explorer.enabled);
         assert!(
@@ -3376,7 +3408,6 @@ mod tests {
         assert_eq!(config.asn, 777);
         assert_eq!(config.dhcp_servers, vec!["99.101.102.103".to_string()]);
         assert!(config.route_servers.is_empty());
-        assert!(!config.nvue_enabled);
         assert_eq!(config.vpc_peering_policy, Some(VpcPeeringPolicy::Exclusive));
         assert_eq!(config.vpc_peering_policy_on_existing, None);
         assert_eq!(
@@ -3520,7 +3551,6 @@ mod tests {
             config.dhcp_servers,
             vec!["1.2.3.4".to_string(), "5.6.7.8".to_string()]
         );
-        assert!(config.nvue_enabled);
         assert_eq!(config.vpc_peering_policy, Some(VpcPeeringPolicy::Exclusive));
         assert_eq!(
             config.vpc_peering_policy_on_existing,
@@ -3797,6 +3827,18 @@ mod tests {
             MlxValueType::Integer(4)
         );
         assert!(mlxconfig_profile.get_variable("NONEXISTENT_GOO").is_none());
+
+        assert_eq!(config.rack_types.rack_types.len(), 2);
+        let nvl72 = config.rack_types.get("NVL72").unwrap();
+        assert_eq!(nvl72.compute.count, 18);
+        assert_eq!(nvl72.compute.name.as_deref(), Some("GB200"));
+        assert_eq!(nvl72.compute.vendor.as_deref(), Some("NVIDIA"));
+        assert_eq!(nvl72.switch.count, 9);
+        assert_eq!(nvl72.power_shelf.count, 8);
+        let nvl36 = config.rack_types.get("NVL36").unwrap();
+        assert_eq!(nvl36.compute.count, 9);
+        assert_eq!(nvl36.switch.count, 9);
+        assert_eq!(nvl36.power_shelf.count, 2);
     }
 
     #[test]
