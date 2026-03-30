@@ -105,7 +105,7 @@ pub async fn jump(args: Cmd, ctx: &mut RuntimeContext) -> color_eyre::Result<()>
                     )
                     .await?
                 }
-                MachineAddress | BmcIp | LoopbackIp => {
+                MachineAddress | BmcIp | StaticBmcIp | LoopbackIp => {
                     machine::handle_show(
                         machine::ShowMachine {
                             machine: Some(

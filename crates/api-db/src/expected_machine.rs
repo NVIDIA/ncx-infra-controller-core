@@ -204,9 +204,9 @@ pub async fn create(
 ) -> DatabaseResult<ExpectedMachine> {
     let id = machine.id.unwrap_or_else(Uuid::new_v4);
     let query = "INSERT INTO expected_machines
-            (id, bmc_mac_address, bmc_username, bmc_password, serial_number, fallback_dpu_serial_numbers, metadata_name, metadata_description, metadata_labels, sku_id, host_nics, rack_id, default_pause_ingestion_and_poweron, dpf_enabled)
+            (id, bmc_mac_address, bmc_username, bmc_password, serial_number, fallback_dpu_serial_numbers, metadata_name, metadata_description, metadata_labels, sku_id, host_nics, rack_id, default_pause_ingestion_and_poweron, dpf_enabled, ip_address)
             VALUES
-            ($1::uuid, $2::macaddr, $3::varchar, $4::varchar, $5::varchar, $6::text[], $7, $8, $9::jsonb, $10::varchar, $11::jsonb, $12, $13, $14) RETURNING *";
+            ($1::uuid, $2::macaddr, $3::varchar, $4::varchar, $5::varchar, $6::text[], $7, $8, $9::jsonb, $10::varchar, $11::jsonb, $12, $13, $14, $15::inet) RETURNING *";
 
     sqlx::query_as(query)
         .bind(id)
@@ -228,6 +228,7 @@ pub async fn create(
                 .unwrap_or(false),
         )
         .bind(machine.data.dpf_enabled.unwrap_or_default())
+        .bind(machine.data.ip_address)
         .fetch_one(txn)
         .await
         .map_err(|err: sqlx::Error| match err {
@@ -323,9 +324,9 @@ pub async fn clear(txn: &mut PgConnection) -> Result<(), DatabaseError> {
 /// otherwise matches by bmc_mac_address.
 pub async fn update(txn: &mut PgConnection, machine: &ExpectedMachine) -> DatabaseResult<()> {
     let (where_clause, target_id) = match machine.id {
-        Some(id) => ("id=$13::uuid", id.to_string()),
+        Some(id) => ("id=$14::uuid", id.to_string()),
         None => (
-            "bmc_mac_address=$13::macaddr",
+            "bmc_mac_address=$14::macaddr",
             machine.bmc_mac_address.to_string(),
         ),
     };
@@ -336,7 +337,8 @@ pub async fn update(txn: &mut PgConnection, machine: &ExpectedMachine) -> Databa
              fallback_dpu_serial_numbers=$4, metadata_name=$5, metadata_description=$6, \
              metadata_labels=$7, sku_id=$8, host_nics=$9::jsonb, rack_id=$10, \
              default_pause_ingestion_and_poweron=COALESCE($11, default_pause_ingestion_and_poweron), \
-             dpf_enabled=COALESCE($12, dpf_enabled) \
+             dpf_enabled=COALESCE($12, dpf_enabled), \
+             ip_address=$13 \
          WHERE {where_clause}"
     );
 
@@ -353,6 +355,7 @@ pub async fn update(txn: &mut PgConnection, machine: &ExpectedMachine) -> Databa
         .bind(&machine.data.rack_id)
         .bind(machine.data.default_pause_ingestion_and_poweron)
         .bind(machine.data.dpf_enabled)
+        .bind(machine.data.ip_address)
         .bind(&target_id)
         .execute(&mut *txn)
         .await

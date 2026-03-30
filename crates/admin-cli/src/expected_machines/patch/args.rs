@@ -42,6 +42,7 @@ use uuid::Uuid;
 "chassis_serial_number",
 "fallback_dpu_serial_numbers",
 "sku_id",
+"ip_address",
 ])))]
 pub struct Args {
     #[clap(short = 'a', long, help = "BMC MAC Address of the expected machine")]
@@ -135,6 +136,14 @@ pub struct Args {
         help = "DPF enable/disable for this machine. Default is updated as true.",
     )]
     pub dpf_enabled: Option<bool>,
+
+    #[clap(
+        long = "ip-address",
+        value_name = "IP_ADDRESS",
+        group = "group",
+        help = "Static IP address for BMC discovery (overrides DHCP-based discovery)"
+    )]
+    pub ip_address: Option<String>,
 }
 
 impl Args {
@@ -158,8 +167,9 @@ impl Args {
             && self.fallback_dpu_serial_numbers.is_none()
             && self.sku_id.is_none()
             && self.rack_id.is_none()
+            && self.ip_address.is_none()
         {
-            return Err(CarbideCliError::GenericError("One of the following options must be specified: bmc-user-name and bmc-password or chassis-serial-number or fallback-dpu-serial-number".to_string()));
+            return Err(CarbideCliError::GenericError("One of the following options must be specified: bmc-user-name and bmc-password or chassis-serial-number or fallback-dpu-serial-number or ip-address".to_string()));
         }
         if self
             .fallback_dpu_serial_numbers

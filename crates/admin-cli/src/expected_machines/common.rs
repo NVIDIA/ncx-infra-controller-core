@@ -38,6 +38,8 @@ pub struct ExpectedMachineJson {
     pub rack_id: Option<RackId>,
     pub default_pause_ingestion_and_poweron: Option<bool>,
     pub dpf_enabled: Option<bool>,
+    #[serde(default)]
+    pub ip_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -45,6 +45,7 @@ impl Run for Args {
                 self.rack_id,
                 self.default_pause_ingestion_and_poweron,
                 self.dpf_enabled,
+                self.ip_address,
             )
             .await?;
         Ok(())

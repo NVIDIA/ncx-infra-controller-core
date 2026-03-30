@@ -1309,6 +1309,11 @@ impl SiteExplorer {
             .explore_power_shelves_from_static_ip
             .load(Ordering::Relaxed);
 
+        let explore_machines_from_static_ip = self
+            .config
+            .explore_machines_from_static_ip
+            .load(Ordering::Relaxed);
+
         // Load SKU information for expected machines to record metrics
         let sku_ids: Vec<&str> = expected_machines
             .iter()
@@ -1356,7 +1361,7 @@ impl SiteExplorer {
 
             // For power shelves, currently adding a bogus static IP as an underlay interface if
             // configured to do so.
-            if explore_power_shelves_from_static_ip {
+            let with_power_shelves: Vec<MachineInterfaceSnapshot> = if explore_power_shelves_from_static_ip {
                 let underlay_segment_id = self.get_underlay_segment_id().await?;
                 underlay_interfaces
                     .chain(expected_power_shelves.iter().map(|expected_power_shelf| {
@@ -1379,8 +1384,50 @@ impl SiteExplorer {
                     .collect()
             } else {
                 underlay_interfaces.collect()
+            };
+
+            // For expected machines with static IPs, add them as underlay interfaces
+            if explore_machines_from_static_ip {
+                let underlay_segment_id = self.get_underlay_segment_id().await?;
+                with_power_shelves
+                    .into_iter()
+                    .chain(expected_machines.iter().filter_map(|expected_machine| {
+                        expected_machine.data.ip_address.map(|ip| {
+                            let mut fake_interface = MachineInterfaceSnapshot::mock_with_mac(
+                                expected_machine.bmc_mac_address,
+                            );
+                            fake_interface.hostname =
+                                format!("machine-{}", expected_machine.data.serial_number);
+                            fake_interface.segment_id = underlay_segment_id;
+                            fake_interface.addresses = vec![ip];
+                            fake_interface.network_segment_type = Some(NetworkSegmentType::Underlay);
+                            fake_interface
+                        })
+                    }))
+                    .collect()
+            } else {
+                with_power_shelves
             }
         };
+
+        // Ensure machine_interface records exist for static IPs (both power shelves and machines)
+        tracing::info!(
+            "Static IP flags: explore_machines={}, explore_shelves={}, expected_machines={}, expected_shelves={}",
+            explore_machines_from_static_ip,
+            explore_power_shelves_from_static_ip,
+            expected_machines.len(),
+            expected_power_shelves.len()
+        );
+        if explore_machines_from_static_ip || explore_power_shelves_from_static_ip {
+            tracing::info!("Calling ensure_machine_interfaces_for_static_ips");
+            self.ensure_machine_interfaces_for_static_ips(
+                &expected_machines,
+                &expected_power_shelves,
+                explore_machines_from_static_ip,
+                explore_power_shelves_from_static_ip,
+            )
+            .await?;
+        }
 
         // Start an index of all underlay interfaces, expected machines, expected power shelves, and expected switches.
         let index = ExploredEndpointIndex::builder(explored_endpoints, underlay_interfaces)
@@ -2439,6 +2486,105 @@ impl SiteExplorer {
                 Ok(true)
             }
         }
+    }
+
+    /// Ensures that machine_interface records exist in the database for expected machines and power shelves with static IPs.
+    /// This is necessary because the preingestion phase requires machine interfaces to exist.
+    async fn ensure_machine_interfaces_for_static_ips(
+        &self,
+        expected_machines: &[ExpectedMachine],
+        expected_power_shelves: &[ExpectedPowerShelf],
+        explore_machines: bool,
+        explore_shelves: bool,
+    ) -> CarbideResult<()> {
+        let mut txn = self.txn_begin().await?;
+
+        // Get the first underlay segment for BMC interfaces
+        let underlay_segments =
+            db::network_segment::list_segment_ids(&mut txn, Some(NetworkSegmentType::Underlay))
+                .await?;
+        let underlay_segment_id = underlay_segments
+            .first()
+            .ok_or_else(|| CarbideError::internal("No underlay network segment found".to_string()))?;
+        
+        // Fetch the full segment object
+        let segments = db::network_segment::find_by(
+            &mut txn,
+            ObjectColumnFilter::One(db::network_segment::IdColumn, underlay_segment_id),
+            Default::default(),
+        )
+        .await?;
+        let segment = segments
+            .first()
+            .ok_or_else(|| CarbideError::internal("Failed to fetch underlay segment".to_string()))?;
+
+        // Ensure machine interfaces exist for expected machines with static IPs
+        if explore_machines {
+            for expected_machine in expected_machines {
+                if let Some(ip_address) = expected_machine.data.ip_address {
+                    // Check if a machine interface already exists for this MAC
+                    let existing_interface = db::machine_interface::find_by_mac_address(
+                        &mut txn,
+                        expected_machine.bmc_mac_address,
+                    )
+                    .await?;
+
+                    if existing_interface.is_empty() {
+                        // Create a new machine interface with the specific IP
+                        tracing::info!(
+                            "Creating machine interface for static IP machine: MAC {} -> IP {}",
+                            expected_machine.bmc_mac_address,
+                            ip_address
+                        );
+                        
+                        db::machine_interface::create_with_specific_ip(
+                            &mut txn,
+                            segment,
+                            &expected_machine.bmc_mac_address,
+                            None, // domain_id
+                            false, // primary_interface
+                            ip_address,
+                        ).await?;
+                    }
+                    // Note: We don't update existing interfaces as they may be managed by DHCP
+                }
+            }
+        }
+
+        // Ensure machine interfaces exist for expected power shelves with static IPs
+        if explore_shelves {
+            for expected_shelf in expected_power_shelves {
+                if let Some(ip_address) = expected_shelf.ip_address {
+                    // Check if a machine interface already exists for this MAC
+                    let existing_interface = db::machine_interface::find_by_mac_address(
+                        &mut txn,
+                        expected_shelf.bmc_mac_address,
+                    )
+                    .await?;
+
+                    if existing_interface.is_empty() {
+                        // Create a new machine interface with the specific IP
+                        tracing::info!(
+                            "Creating machine interface for static IP power shelf: MAC {} -> IP {}",
+                            expected_shelf.bmc_mac_address,
+                            ip_address
+                        );
+                        
+                        db::machine_interface::create_with_specific_ip(
+                            &mut txn,
+                            segment,
+                            &expected_shelf.bmc_mac_address,
+                            None, // domain_id
+                            false, // primary_interface
+                            ip_address,
+                        ).await?;
+                    }
+                }
+            }
+        }
+
+        txn.commit().await?;
+        Ok(())
     }
 }
 

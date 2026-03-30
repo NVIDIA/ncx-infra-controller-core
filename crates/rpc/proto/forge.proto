@@ -4677,6 +4677,11 @@ enum IpType {
   // DB records specifically say their source type is `admin`.
   IpTypeRouteServerFromAdminApi = 10;
   IpTypeDpaInterface = 11;
+  // IpTypeStaticBmcIp are BMC IPs that were statically assigned via
+  // ExpectedMachine.ip_address or ExpectedPowerShelf.ip_address, as opposed
+  // to being discovered via DHCP. This helps identify IPs that may be outside
+  // of Carbide-managed subnets.
+  IpTypeStaticBmcIp = 12;
 }
 
 message MachineBootOverride {
@@ -4889,6 +4894,8 @@ message ExpectedMachine {
   // deprecated
   bool dpf_enabled = 12 [deprecated = true];
   optional bool is_dpf_enabled = 13;
+  // Static IP address for BMC (optional override for DHCP-based discovery)
+  optional string ip_address = 14;
 }
 
 message ExpectedMachineRequest {

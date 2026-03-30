@@ -554,6 +554,7 @@ pub async fn create_slow_path(
         domain_id,
         primary_interface,
         &allocated_addresses,
+        false, // not a static IP, allocated normally
     )
     .await?;
     inner_txn.commit().await?;
@@ -586,6 +587,7 @@ async fn try_create_fast_path(
         domain_id,
         primary_interface,
         &allocated_addresses,
+        false, // not a static IP, allocated via DHCP
     )
     .await
 }
@@ -604,6 +606,30 @@ async fn allocate_addresses_from_segment(
     Ok(addresses)
 }
 
+/// Create a machine interface with a specific IP address (for static IPs).
+/// This bypasses the normal allocation strategy and directly assigns the given IP.
+pub async fn create_with_specific_ip(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    macaddr: &MacAddress,
+    domain_id: Option<DomainId>,
+    primary_interface: bool,
+    ip_address: IpAddr,
+) -> DatabaseResult<MachineInterfaceSnapshot> {
+    let interface_id = create_inner(
+        txn,
+        segment,
+        macaddr,
+        domain_id,
+        primary_interface,
+        &[ip_address],
+        true, // this is a static IP
+    )
+    .await?;
+
+    find_one(txn, interface_id).await
+}
+
 /// Create the actual machine interface once we know what addresses we want.
 async fn create_inner(
     txn: &mut PgConnection,
@@ -612,6 +638,7 @@ async fn create_inner(
     domain_id: Option<DomainId>,
     primary_interface: bool,
     allocated_addresses: &[IpAddr],
+    is_static_ip: bool,
 ) -> DatabaseResult<MachineInterfaceId> {
     // Prefer IPv4 for hostname (more human-readable), fall back to
     // an IPv6-derived hostname otherwise.
@@ -639,6 +666,7 @@ async fn create_inner(
         hostname,
         domain_id,
         primary_interface,
+        is_static_ip,
     )
     .await?;
 
@@ -827,11 +855,12 @@ async fn insert_machine_interface(
     hostname: String,
     domain_id: Option<DomainId>,
     is_primary_interface: bool,
+    is_static_ip: bool,
 ) -> DatabaseResult<MachineInterfaceId> {
     let query = "INSERT INTO machine_interfaces
-        (segment_id, mac_address, hostname, domain_id, primary_interface)
+        (segment_id, mac_address, hostname, domain_id, primary_interface, is_static_ip)
         VALUES
-        ($1::uuid, $2::macaddr, $3::varchar, $4::uuid, $5::bool) RETURNING id";
+        ($1::uuid, $2::macaddr, $3::varchar, $4::uuid, $5::bool, $6::bool) RETURNING id";
 
     let (interface_id,): (MachineInterfaceId,) = sqlx::query_as(query)
         .bind(segment_id)
@@ -839,6 +868,7 @@ async fn insert_machine_interface(
         .bind(hostname)
         .bind(domain_id)
         .bind(is_primary_interface)
+        .bind(is_static_ip)
         .fetch_one(txn)
         .await
         .map_err(|err: sqlx::Error| match err {
@@ -1246,6 +1276,29 @@ WHERE network_segments.id = $1::uuid";
         }
         Ok(ip_networks)
     }
+}
+
+/// Check if a machine interface with the given IP address has is_static_ip set to true.
+/// Returns true if the interface exists and is marked as static, false otherwise.
+pub async fn is_static_bmc_ip(
+    txn: impl DbReader<'_>,
+    ip_address: &IpAddr,
+) -> DatabaseResult<bool> {
+    let query = r#"
+        SELECT mi.is_static_ip
+        FROM machine_interfaces mi
+        JOIN machine_interface_addresses mia ON mia.interface_id = mi.id
+        WHERE mia.address = $1
+        LIMIT 1
+    "#;
+    
+    let result: Option<(bool,)> = sqlx::query_as(query)
+        .bind(ip_address)
+        .fetch_optional(txn)
+        .await
+        .map_err(|e| DatabaseError::query(query, e))?;
+    
+    Ok(result.map(|(is_static,)| is_static).unwrap_or(false))
 }
 
 #[cfg(test)]

@@ -499,6 +499,7 @@ impl ApiClient {
                 #[allow(deprecated)]
                 dpf_enabled: true,
                 is_dpf_enabled: Some(true),
+                ip_address: None,
             })
             .await
             .map_err(ClientApiError::InvocationError)

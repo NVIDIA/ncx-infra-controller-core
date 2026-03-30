@@ -111,6 +111,13 @@ pub struct Args {
         help = "DPF enable/disable for this machine. Default is updated as true.",
     )]
     pub dpf_enabled: Option<bool>,
+
+    #[clap(
+        long = "ip-address",
+        value_name = "IP_ADDRESS",
+        help = "Static IP address for BMC discovery (overrides DHCP-based discovery)"
+    )]
+    pub ip_address: Option<String>,
 }
 
 impl Args {
@@ -160,6 +167,7 @@ impl TryFrom<Args> for rpc::forge::ExpectedMachine {
             #[allow(deprecated)]
             dpf_enabled: value.dpf_enabled.unwrap_or_default(),
             is_dpf_enabled: value.dpf_enabled,
+            ip_address: value.ip_address,
         })
     }
 }

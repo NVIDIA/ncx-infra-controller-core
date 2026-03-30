@@ -277,33 +277,66 @@ async fn search(
         // Look in machine_interface_addresses
         MachineAddresses => {
             let out = db::machine_interface_address::find_by_address(db, addr).await?;
-            out.map(|e| {
-                let message = match e.machine_id.as_ref() {
-                    Some(machine_id) => format!(
-                        "{ip} belongs to machine {} (interface {}) on network segment {} of type {}",
-                        machine_id, e.id, e.name, e.network_segment_type,
-                    ),
-                    None => format!(
-                        "{ip} belongs to interface {} on network segment {} of type {}. It is not attached to a machine.",
-                        e.id, e.name, e.network_segment_type,
+            match out {
+                Some(e) => {
+                    // Check if this machine address is actually a static BMC IP
+                    let addr_parsed: Result<IpAddr, _> = ip.parse();
+                    let is_static_bmc = if let Ok(addr) = addr_parsed {
+                        db::machine_interface::is_static_bmc_ip(db, &addr).await.unwrap_or(false)
+                    } else {
+                        false
+                    };
+                    
+                    let (ip_type, type_label) = if is_static_bmc {
+                        (rpc::IpType::StaticBmcIp, "static BMC IP")
+                    } else {
+                        (rpc::IpType::MachineAddress, "machine address")
+                    };
+                    
+                    let message = match e.machine_id.as_ref() {
+                        Some(machine_id) => format!(
+                            "{ip} is a {type_label} on machine {} (interface {}) on network segment {} of type {}",
+                            machine_id, e.id, e.name, e.network_segment_type,
                         ),
-                };
-                rpc::IpAddressMatch {
-                    ip_type: rpc::IpType::MachineAddress as i32,
-                    owner_id: e.machine_id.map(|id| id.to_string()),
-                    message,
+                        None => format!(
+                            "{ip} is a {type_label} on interface {} on network segment {} of type {}. It is not attached to a machine.",
+                            e.id, e.name, e.network_segment_type,
+                            ),
+                    };
+                    Some(rpc::IpAddressMatch {
+                        ip_type: ip_type as i32,
+                        owner_id: e.machine_id.map(|id| id.to_string()),
+                        message,
+                    })
                 }
-            })
+                None => None,
+            }
         }
 
         // BMC IP of the host
         BmcIp => {
             let out = db::machine_topology::find_machine_id_by_bmc_ip(db, ip).await?;
-            out.map(|machine_id| rpc::IpAddressMatch {
-                ip_type: rpc::IpType::BmcIp as i32,
-                owner_id: Some(machine_id.to_string()),
-                message: format!("{ip} is the BMC IP of {machine_id}"),
-            })
+            match out {
+                Some(machine_id) => {
+                    // Check if this is a static IP
+                    let addr: IpAddr = ip.parse()?;
+                    let is_static = db::machine_interface::is_static_bmc_ip(db, &addr).await?;
+                    
+                    Some(rpc::IpAddressMatch {
+                        ip_type: if is_static {
+                            rpc::IpType::StaticBmcIp as i32
+                        } else {
+                            rpc::IpType::BmcIp as i32
+                        },
+                        owner_id: Some(machine_id.to_string()),
+                        message: format!(
+                            "{ip} is the {} BMC IP of {machine_id}",
+                            if is_static { "static" } else { "DHCP-discovered" }
+                        ),
+                    })
+                }
+                None => None,
+            }
         }
         ExploredEndpoint => {
             let out = db::explored_endpoints::find_by_ips(db, vec![addr]).await?;

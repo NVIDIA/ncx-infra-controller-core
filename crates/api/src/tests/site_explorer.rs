@@ -893,6 +893,7 @@ async fn test_site_explorer_audit_exploration_results(
         allocate_secondary_vtep_ip: false,
         create_power_shelves: Arc::new(true.into()),
         explore_power_shelves_from_static_ip: Arc::new(true.into()),
+        explore_machines_from_static_ip: Arc::new(true.into()),
         power_shelves_created_per_run: 1,
         create_switches: Arc::new(true.into()),
         switches_created_per_run: 1,
@@ -1428,6 +1429,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                ip_address: None,
             },
         },
     )
@@ -1476,6 +1478,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
         host_nics: vec![],
         rack_id: None,
         dpf_enabled: Some(true),
+        ip_address: None,
     };
     db::expected_machine::update(&mut txn, &host1_expected_machine).await?;
     txn.commit().await?;
@@ -2435,6 +2438,7 @@ async fn test_machine_creation_with_sku(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                ip_address: None,
             },
         },
     )
@@ -2568,6 +2572,7 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                ip_address: None,
             },
         },
     )
@@ -2589,6 +2594,7 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                ip_address: None,
             },
         },
     )
@@ -2610,6 +2616,7 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                ip_address: None,
             },
         },
     )
