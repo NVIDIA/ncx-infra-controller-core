@@ -1220,6 +1220,7 @@ pub fn get_config() -> CarbideConfig {
         arm_pxe_boot_url_override: None,
         supernic_firmware_profiles: HashMap::default(),
         component_manager: None,
+        redfish_proxy: HashMap::default(),
     }
 }
 

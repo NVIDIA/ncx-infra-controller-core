@@ -44,10 +44,11 @@ enum RulePrincipal {
     Rla,
     MaintenanceJobs,
     DsxExchangeConsumer,
+    Dps,
     Anonymous, // Permitted for everything
 }
 use self::RulePrincipal::{
-    Agent, Anonymous, Dhcp, Dns, DsxExchangeConsumer, ForgeAdminCLI, Health, Machineatron,
+    Agent, Anonymous, Dhcp, Dns, Dps, DsxExchangeConsumer, ForgeAdminCLI, Health, Machineatron,
     MaintenanceJobs, Pxe, Rla, Scout, SiteAgent, Ssh, SshRs,
 };
 
@@ -468,7 +469,9 @@ impl InternalRBACRules {
             "RemoveMachineInstanceTypeAssociation",
             vec![ForgeAdminCLI, SiteAgent],
         );
-        x.perm("RedfishBrowse", vec![ForgeAdminCLI]);
+        x.perm("RedfishBrowse", vec![ForgeAdminCLI, Dps]);
+        x.perm("RedfishPost", vec![ForgeAdminCLI, Dps]);
+        x.perm("RedfishPatch", vec![ForgeAdminCLI, Dps]);
         x.perm("UfmBrowse", vec![ForgeAdminCLI]);
         x.perm("NmxmBrowse", vec![ForgeAdminCLI]);
         x.perm("UpdateMachineMetadata", vec![ForgeAdminCLI, SiteAgent]);
@@ -847,6 +850,9 @@ impl RuleInfo {
                     RulePrincipal::DsxExchangeConsumer => Principal::SpiffeServiceIdentifier(
                         "carbide-dsx-exchange-consumer".to_string(),
                     ),
+                    RulePrincipal::Dps => {
+                        Principal::SpiffeServiceIdentifier("carbide-dps".to_string())
+                    }
                     RulePrincipal::Anonymous => Principal::Anonymous,
                 })
                 .collect(),

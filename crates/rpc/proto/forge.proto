@@ -609,6 +609,8 @@ service Forge {
   rpc RedfishApproveAction(RedfishActionID) returns (RedfishApproveActionResponse);
   rpc RedfishApplyAction(RedfishActionID) returns (RedfishApplyActionResponse);
   rpc RedfishCancelAction(RedfishActionID) returns (RedfishCancelActionResponse);
+  rpc RedfishPost(RedfishPostRequest) returns (RedfishPostResponse);
+  rpc RedfishPatch(RedfishPatchRequest) returns (RedfishPatchResponse);
 
   rpc UfmBrowse(UfmBrowseRequest) returns (UfmBrowseResponse);
 
@@ -5539,6 +5541,28 @@ message RedfishApplyActionResponse {
 }
 
 message RedfishCancelActionResponse {
+}
+
+message RedfishPostRequest {
+  string uri = 1;
+  string body = 2;
+}
+
+message RedfishPostResponse {
+  string text = 1;
+  map<string, string> headers = 2;
+  string status = 3;
+}
+
+message RedfishPatchRequest {
+  string uri = 1;
+  string body = 2;
+}
+
+message RedfishPatchResponse {
+  string text = 1;
+  map<string, string> headers = 2;
+  string status = 3;
 }
 
 message UfmBrowseRequest {

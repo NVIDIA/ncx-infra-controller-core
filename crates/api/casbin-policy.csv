@@ -33,6 +33,12 @@ p, carbide-dns, forge/LookupRecord
 # FIXME: This should be removed once we have more fine-grained rule coverage.
 p, trusted-certificate, forge/*
 
+# Allow the DPS service to call Redfish proxy methods.
+g, spiffe-service-id/carbide-dps, carbide-dps
+p, carbide-dps, forge/RedfishBrowse
+p, carbide-dps, forge/RedfishPost
+p, carbide-dps, forge/RedfishPatch
+
 # Anonymous access to endpoints that don't modify state or expose any customer
 # or site data should be fine.
 p, anonymous, forge/Version
