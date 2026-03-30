@@ -78,6 +78,9 @@ The following services are installed during the NICo installation process.
 
   - nvmetal-carbide:v2025.07.04-rc2-0-8-g077781771 (primary carbide-api, plus supporting workloads)
 
+The following are the NICo REST components, sourced from the open-source repository
+[ncx-infra-controller-rest](https://github.com/NVIDIA/ncx-infra-controller-rest):
+
 - **cloud‑api**: cloud-api:v0.2.72 (two replicas)
 
 - **cloud‑workflow**: cloud-workflow:v0.2.30 (cloud‑worker, site‑worker)
@@ -114,7 +117,7 @@ This section provides a high-level order of operations for installing components
 
    - carbide-api and supporting services (DHCP/PXE/DNS/NTP as required)
 
-4.  Carbide REST components
+4.  Carbide REST components (from [ncx-infra-controller-rest](https://github.com/NVIDIA/ncx-infra-controller-rest))
 
     - Deploy cloud‑api, cloud‑workflow (cloud‑worker & site‑worker), and cloud‑cert‑manager (credsmgr)
 
