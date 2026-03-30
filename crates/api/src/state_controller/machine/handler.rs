@@ -3113,13 +3113,13 @@ async fn reprovision_dpu_power_cycle_grace_grace(
             })
             .min();
 
-        if let Some(issued_at) = earliest_issued {
-            if Utc::now() < issued_at + GRACE_GRACE_POWER_CYCLE_DELAY {
-                return Ok(GraceGraceDpuPowerCycleOutcome::Wait(format!(
-                    "Waiting for DPU power cycle delay to elapse for host {}",
-                    state.host_snapshot.id
-                )));
-            }
+        if let Some(issued_at) = earliest_issued
+            && Utc::now() < issued_at + GRACE_GRACE_POWER_CYCLE_DELAY
+        {
+            return Ok(GraceGraceDpuPowerCycleOutcome::Wait(format!(
+                "Waiting for DPU power cycle delay to elapse for host {}",
+                state.host_snapshot.id
+            )));
         }
 
         // Delay has elapsed — issue chassis reset for all DPUs.
