@@ -352,8 +352,10 @@ pub mod tests {
             );
         }
 
-        // now let's just fast forward to the failed state
-        env.run_spdm_controller_iteration().await;
+        // now let's just move to the failed state
+        for _ in 0..8 {
+            env.run_spdm_controller_iteration_no_requeue().await;
+        }
 
         for object_id in &*object_ids {
             let SpdmObjectId(_, device_id) = object_id;
