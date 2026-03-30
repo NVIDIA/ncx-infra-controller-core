@@ -831,7 +831,7 @@ impl SiteExplorer {
 
             if ep.report.is_dpu() {
                 // Ignore the DPU if we are using the host NIC instead of the DPU NIC.
-                if self.config.use_onboard_nic.load(Ordering::Relaxed) {
+                if self.config.force_dpu_nic_mode.load(Ordering::Relaxed) {
                     continue;
                 }
                 if self.can_ingest_dpu_endpoint(metrics, &ep).await? {
@@ -852,7 +852,7 @@ impl SiteExplorer {
         explored_dpus: HashMap<IpAddr, ExploredEndpoint>,
         explored_hosts: HashMap<IpAddr, ExploredEndpoint>,
     ) -> CarbideResult<Vec<(ExploredManagedHost, EndpointExplorationReport)>> {
-        if self.config.use_onboard_nic.load(Ordering::Relaxed) {
+        if self.config.force_dpu_nic_mode.load(Ordering::Relaxed) {
             // Ignore the DPU and ingest the machine as a managed host
             return Ok(explored_hosts
                 .values()

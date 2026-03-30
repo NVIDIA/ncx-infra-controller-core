@@ -477,12 +477,6 @@ pub struct CarbideConfig {
     #[serde(default)]
     pub rack_management_enabled: bool,
 
-    #[serde(default)]
-    /// Treat any dpu found as a regular NIC and skip configuring it as a managed dpu.
-    /// This is specifically for dev labs to allow using GB200/300 and VR compute
-    /// trays with bluefield dpus as NICs.
-    pub force_dpu_nic_mode: bool,
-
     /// URL of the Rack Manager Service API for rack-level firmware upgrades and power sequencing.
     pub rms_api_url: Option<String>,
 
@@ -494,14 +488,15 @@ pub struct CarbideConfig {
     #[serde(default)]
     pub rack_types: model::rack_type::RackTypeConfig,
 
-    /// Whether to use the host NIC instead of the DPUs on the compute trays.
-    /// This is used to test the host NIC functionality.
+    /// Treat any dpu found as a regular NIC and skip configuring it as a managed dpu.
+    /// This is specifically for dev labs to allow using GB200/300 and VR compute
+    /// trays with bluefield dpus as NICs.
     #[serde(
-        default = "SiteExplorerConfig::default_use_onboard_nic",
+        default = "SiteExplorerConfig::default_force_dpu_nic_mode",
         deserialize_with = "deserialize_arc_atomic_bool",
         serialize_with = "serialize_arc_atomic_bool"
     )]
-    pub use_onboard_nic: Arc<AtomicBool>,
+    pub force_dpu_nic_mode: Arc<AtomicBool>,
 
     /// SPDM (Security Protocol and Data Model) configuration for hardware attestation.
     #[serde(default)]
@@ -1607,11 +1602,11 @@ pub struct SiteExplorerConfig {
 
     /// Use onboard NIC for host networking instead of DPU NICs.
     #[serde(
-        default = "SiteExplorerConfig::default_use_onboard_nic",
+        default = "SiteExplorerConfig::default_force_dpu_nic_mode",
         deserialize_with = "deserialize_arc_atomic_bool",
         serialize_with = "serialize_arc_atomic_bool"
     )]
-    pub use_onboard_nic: Arc<AtomicBool>,
+    pub force_dpu_nic_mode: Arc<AtomicBool>,
     /// Controls which Redfish client implementation is used
     /// for hardware discovery (LibRedfish, NvRedfish, or
     /// CompareResult for side-by-side validation).
@@ -1642,7 +1637,7 @@ impl Default for SiteExplorerConfig {
             create_switches: Arc::new(true.into()),
             switches_created_per_run: Self::default_switches_created_per_run(),
             rotate_switch_nvos_credentials: Self::default_rotate_switch_nvos_credentials(),
-            use_onboard_nic: Arc::new(false.into()),
+            force_dpu_nic_mode: Arc::new(false.into()),
             explore_mode: Self::default_explore_mode(),
         }
     }
@@ -1714,7 +1709,7 @@ impl SiteExplorerConfig {
         9
     }
 
-    pub fn default_use_onboard_nic() -> Arc<AtomicBool> {
+    pub fn default_force_dpu_nic_mode() -> Arc<AtomicBool> {
         Arc::new(false.into())
     }
 
@@ -3420,7 +3415,7 @@ mod tests {
                 create_switches: Arc::new(true.into()),
                 switches_created_per_run: 9,
                 rotate_switch_nvos_credentials: Arc::new(false.into()),
-                use_onboard_nic: Arc::new(false.into()),
+                force_dpu_nic_mode: Arc::new(false.into()),
                 explore_mode: SiteExplorerExploreMode::LibRedfish,
             }
         );
@@ -3593,7 +3588,7 @@ mod tests {
                 create_switches: Arc::new(true.into()),
                 switches_created_per_run: 9,
                 rotate_switch_nvos_credentials: Arc::new(false.into()),
-                use_onboard_nic: Arc::new(false.into()),
+                force_dpu_nic_mode: Arc::new(false.into()),
                 explore_mode: SiteExplorerExploreMode::LibRedfish,
             }
         );
@@ -3895,7 +3890,7 @@ mod tests {
                 create_switches: Arc::new(true.into()),
                 switches_created_per_run: 9,
                 rotate_switch_nvos_credentials: Arc::new(false.into()),
-                use_onboard_nic: Arc::new(false.into()),
+                force_dpu_nic_mode: Arc::new(false.into()),
                 explore_mode: SiteExplorerExploreMode::LibRedfish,
             }
         );

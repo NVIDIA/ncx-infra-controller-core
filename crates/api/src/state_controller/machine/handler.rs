@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem::discriminant as enum_discr;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use carbide_uuid::machine::MachineId;
@@ -911,7 +912,12 @@ impl MachineStateHandler {
                     ))
                 } else {
                     let mut state_handler_outcome = StateHandlerOutcome::do_nothing();
-                    if ctx.services.site_config.force_dpu_nic_mode {
+                    if ctx
+                        .services
+                        .site_config
+                        .force_dpu_nic_mode
+                        .load(Ordering::Relaxed)
+                    {
                         // skip dpu discovery and init entirely, treat it as a nic
                         return Ok(StateHandlerOutcome::transition(
                             ManagedHostState::HostInit {
@@ -5086,7 +5092,12 @@ impl StateHandler for HostMachineStateHandler {
                             ))
                         }
                         LockdownState::TimeWaitForDPUDown => {
-                            if ctx.services.site_config.force_dpu_nic_mode {
+                            if ctx
+                                .services
+                                .site_config
+                                .force_dpu_nic_mode
+                                .load(Ordering::Relaxed)
+                            {
                                 // skip wait for dpu reboot TimeWaitForDPUDown, WaitForDPUUp
                                 // GB200/300, etc with dpu disconnected or in nic mode
                                 let next_state = ManagedHostState::BomValidating {

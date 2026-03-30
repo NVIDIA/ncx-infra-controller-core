@@ -897,7 +897,7 @@ async fn test_site_explorer_audit_exploration_results(
         create_switches: Arc::new(true.into()),
         switches_created_per_run: 1,
         rotate_switch_nvos_credentials: Arc::new(false.into()),
-        use_onboard_nic: Arc::new(false.into()),
+        force_dpu_nic_mode: Arc::new(false.into()),
         // Tests use MockEndpointExplorer. So this doesn't affect anything.
         explore_mode: SiteExplorerExploreMode::NvRedfish,
     };
