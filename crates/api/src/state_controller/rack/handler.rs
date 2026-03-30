@@ -64,7 +64,7 @@ async fn clear_rv_labels(
     for machine in machines {
         let mut metadata = machine.metadata.clone();
         if strip_rv_labels(&mut metadata) {
-            db_machine::update_metadata(&mut *txn, &machine.id, machine.version, metadata).await?;
+            db_machine::update_metadata(&mut txn, &machine.id, machine.version, metadata).await?;
         }
     }
 

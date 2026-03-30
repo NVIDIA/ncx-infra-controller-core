@@ -172,7 +172,7 @@ async fn test_can_retrieve_rack_state_history_with_real_handler(
         .with_expected_switches(vec![])
         .with_compute_trays(vec![machine_id_1, machine_id_2])
         .with_rack_type("Simple")
-        .persist(&mut *txn)
+        .persist(&mut txn)
         .await?;
 
     // Run the real handler through the controller.
@@ -308,7 +308,7 @@ async fn test_can_retrieve_rack_state_history_with_real_handler(
             metadata
                 .labels
                 .insert("rv.st".to_string(), "pass".to_string());
-            db_machine::update_metadata(&mut *txn, &machine.id, machine.version, metadata).await?;
+            db_machine::update_metadata(&mut txn, &machine.id, machine.version, metadata).await?;
         }
         txn.commit().await?;
     }
