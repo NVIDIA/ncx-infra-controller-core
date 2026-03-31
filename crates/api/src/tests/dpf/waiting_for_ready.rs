@@ -52,6 +52,8 @@ fn dpf_config() -> crate::cfg::file::DpfConfig {
     crate::cfg::file::DpfConfig {
         enabled: true,
         bfb_url: "http://example.com/test.bfb".to_string(),
+        services: None,
+        v2: true,
         ..Default::default()
     }
 }
@@ -502,6 +504,7 @@ async fn test_waiting_for_ready_reboot_blocked_without_discovery(pool: sqlx::PgP
     let dpf_sdk: Arc<dyn crate::dpf::DpfOperations> = Arc::new(mock);
     let mut config = get_config();
     config.dpf = dpf_config();
+    config.dpf.v2 = false;
 
     let env = create_test_env_with_overrides(
         pool.clone(),
@@ -578,6 +581,7 @@ async fn test_waiting_for_ready_reboot_proceeds_after_discovery(pool: sqlx::PgPo
     let dpf_sdk: Arc<dyn crate::dpf::DpfOperations> = Arc::new(mock);
     let mut config = get_config();
     config.dpf = dpf_config();
+    config.dpf.v2 = false;
 
     let env = create_test_env_with_overrides(
         pool.clone(),
@@ -732,6 +736,7 @@ async fn test_waiting_for_ready_reboot_blocked_until_all_dpus_discover(pool: sql
     let dpf_sdk: Arc<dyn crate::dpf::DpfOperations> = Arc::new(mock);
     let mut config = get_config();
     config.dpf = dpf_config();
+    config.dpf.v2 = false;
 
     let env = create_test_env_with_overrides(
         pool.clone(),
