@@ -678,7 +678,7 @@ pub struct MachineIdentityConfig {
 }
 
 fn machine_identity_default_enabled() -> bool {
-    true
+    false
 }
 fn machine_identity_default_algorithm() -> String {
     TENANT_IDENTITY_SIGNING_JWT_ALG.to_string()

@@ -1212,6 +1212,7 @@ pub fn get_config() -> CarbideConfig {
             nras_config: Some(nras::Config::default()),
         },
         machine_identity: crate::cfg::file::MachineIdentityConfig {
+            enabled: true,
             current_encryption_key_id: Some("test".to_string()),
             ..Default::default()
         },
