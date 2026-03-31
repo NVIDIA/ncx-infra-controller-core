@@ -1,3 +1,4 @@
+use std::path::Path;
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
@@ -132,7 +133,9 @@ pub async fn start(cmdline: command_line::Options) -> eyre::Result<()> {
                 factory_mac_address,
             } = match options.override_machine_id {
                 // Normal case
-                None => register(&agent).await.wrap_err("registration error")?,
+                None => register(&agent, options.discovery_info_file.as_deref())
+                    .await
+                    .wrap_err("registration error")?,
                 // Dev / test override
                 Some(machine_id) => Registration {
                     machine_id,
@@ -153,6 +156,7 @@ pub async fn start(cmdline: command_line::Options) -> eyre::Result<()> {
 
         // enumerate hardware and exit
         Some(AgentCommand::Hardware) => {
+            // XXX this won't work in a container
             let info = enumerate_hardware()?;
             let string_result = serde_json::to_string_pretty(&info)?;
             // print to stderr so it can be re-directed to a file without logs
@@ -183,7 +187,7 @@ pub async fn start(cmdline: command_line::Options) -> eyre::Result<()> {
         // One-off network monitor check.
         // dumps JSON-formatted peer DPU network reachability and latency status
         Some(AgentCommand::Network(options)) => {
-            let machine_id = register(&agent)
+            let machine_id = register(&agent, None)
                 .await
                 .wrap_err("network check machine registration error")?
                 .machine_id;
@@ -222,8 +226,9 @@ pub async fn start(cmdline: command_line::Options) -> eyre::Result<()> {
             // host_machine_id files, we need to make a registration call to
             // get the machine_id, and a carbide api request to get the
             // host_machine_id.
-            let Registration { machine_id, .. } =
-                register(&agent).await.wrap_err("registration error")?;
+            let Registration { machine_id, .. } = register(&agent, None)
+                .await
+                .wrap_err("registration error")?;
 
             let forge_api_server = agent.forge_system.api_server.clone();
             let periodic_config_fetcher = periodic_config_fetcher::PeriodicConfigFetcher::new(
@@ -433,9 +438,17 @@ impl HBNDeviceNames {
     }
 }
 
-/// Discover hardware, register DPU with carbide-api, and return machine id
-async fn register(agent: &AgentConfig) -> Result<Registration, eyre::Report> {
-    let mut hardware_info = enumerate_hardware().wrap_err("enumerate_hardware failed")?;
+/// Discover hardware, register DPU with carbide-api, and return machine id.
+/// If discovery_info_file is set, we'll load the rpc::DiscoveryInfo message
+/// from that instead of trying to probe hardware ourselves.
+async fn register(
+    agent: &AgentConfig,
+    discovery_info_file: Option<&Path>,
+) -> Result<Registration, eyre::Report> {
+    let mut hardware_info = match discovery_info_file {
+        Some(discovery_info_file) => load_discovery_info_file(discovery_info_file).await,
+        None => enumerate_hardware().wrap_err("enumerate_hardware failed"),
+    }?;
 
     // Pretend to be a bluefield DPU for local dev.
     // see model/hardware_info.rs::is_dpu
@@ -477,6 +490,12 @@ async fn register(agent: &AgentConfig) -> Result<Registration, eyre::Report> {
         machine_id,
         factory_mac_address,
     })
+}
+
+async fn load_discovery_info_file(discovery_info_file: &Path) -> eyre::Result<DiscoveryInfo> {
+    let contents = tokio::fs::read_to_string(discovery_info_file).await?;
+    let discovery_info = serde_json::from_str(&contents)?;
+    Ok(discovery_info)
 }
 
 pub fn pretty_cmd(c: &Command) -> String {

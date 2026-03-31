@@ -318,6 +318,11 @@ pub struct RunOptions {
         env = "AGENT_PLATFORM_TYPE"
     )]
     pub agent_platform_type: AgentPlatformType,
+    #[clap(
+        help = "Load discovery info from the specified file, rather than trying to probe hardware ourselves. This should be a JSON-serialized DiscoveryInfo message.",
+        env = "DISCOVERY_INFO_FILE"
+    )]
+    pub discovery_info_file: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug, Clone)]
