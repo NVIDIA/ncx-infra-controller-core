@@ -16,7 +16,6 @@
  */
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const OTLP_PROTO_VERSION: &str = "v1.5.0";
 const OTLP_PROTO_BASE_URL: &str =
@@ -29,12 +28,12 @@ const OTLP_PROTO_FILES: &[&str] = &[
     "opentelemetry/proto/collector/logs/v1/logs_service.proto",
 ];
 
+// production CI/Docker builds should set OTLP_PROTO_DIR to a pre-fetched Dockerfile layer to avoid runtime network deps
+// the reqwest fallback below should only be used for local development.
 fn fetch_otlp_protos(out_dir: &Path) -> PathBuf {
-    // if OTLP_PROTO_DIR is set (e.g. pre-fetched in a Docker layer), use that
     if let Ok(dir) = std::env::var("OTLP_PROTO_DIR") {
         let path = PathBuf::from(dir);
         if path.exists() {
-            println!("cargo:warning=using pre-fetched OTLP protos from {}", path.display());
             return path;
         }
     }
@@ -50,18 +49,14 @@ fn fetch_otlp_protos(out_dir: &Path) -> PathBuf {
         std::fs::create_dir_all(dest.parent().unwrap()).expect("create proto parent dirs");
 
         let url = format!("{OTLP_PROTO_BASE_URL}/{OTLP_PROTO_VERSION}/{proto_file}");
+        let bytes = reqwest::blocking::get(&url)
+            .and_then(|r| r.error_for_status())
+            .unwrap_or_else(|e| panic!("failed to download {url}: {e}"))
+            .bytes()
+            .unwrap_or_else(|e| panic!("failed to read response body from {url}: {e}"));
 
-        let status = Command::new("curl")
-            .args(["-sSfL", "--create-dirs", "-o"])
-            .arg(&dest)
-            .arg(&url)
-            .status()
-            .expect("curl must be available to download OTLP proto files");
-
-        assert!(
-            status.success(),
-            "failed to download {url} (exit code: {status})"
-        );
+        std::fs::write(&dest, &bytes)
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", dest.display()));
     }
 
     proto_dir
