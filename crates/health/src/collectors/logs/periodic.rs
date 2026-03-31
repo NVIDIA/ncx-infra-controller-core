@@ -164,33 +164,40 @@ impl LogFileWriter {
             tracing::error!(error = ?e, "Failed to flush log file before rotation");
         }
 
-        for i in (1..self.max_backups).rev() {
-            let from_path = self.rotated_log_path(i);
-            let to_path = self.rotated_log_path(i + 1);
+        let current_path = self.current_log_path();
 
-            if tokio::fs::metadata(&from_path).await.is_ok()
-                && let Err(e) = tokio::fs::rename(&from_path, &to_path).await
-            {
-                tracing::warn!(
+        if self.max_backups == 0 {
+            if let Err(e) = tokio::fs::remove_file(&current_path).await {
+                tracing::error!(
                     error = ?e,
-                    from = ?from_path,
-                    to = ?to_path,
-                    "Failed to rotate backup log file"
+                    "Failed to remove current log file, will continue with new file"
                 );
             }
-        }
+        } else {
+            for i in (1..self.max_backups).rev() {
+                let from_path = self.rotated_log_path(i);
+                let to_path = self.rotated_log_path(i + 1);
 
-        let current_path = self.current_log_path();
-        let backup_path = self.rotated_log_path(1);
+                if tokio::fs::metadata(&from_path).await.is_ok()
+                    && let Err(e) = tokio::fs::rename(&from_path, &to_path).await
+                {
+                    tracing::warn!(
+                        error = ?e,
+                        from = ?from_path,
+                        to = ?to_path,
+                        "Failed to rotate backup log file"
+                    );
+                }
+            }
 
-        if let Err(e) = tokio::fs::rename(&current_path, &backup_path).await {
-            tracing::error!(
-                error = ?e,
-                "Failed to rotate current log file, will continue with new file"
-            );
-        }
+            let backup_path = self.rotated_log_path(1);
+            if let Err(e) = tokio::fs::rename(&current_path, &backup_path).await {
+                tracing::error!(
+                    error = ?e,
+                    "Failed to rotate current log file, will continue with new file"
+                );
+            }
 
-        if self.max_backups > 0 {
             let oldest_path = self.rotated_log_path(self.max_backups + 1);
             if tokio::fs::metadata(&oldest_path).await.is_ok() {
                 let _ = tokio::fs::remove_file(&oldest_path).await;
@@ -524,7 +531,7 @@ impl<B: Bmc + 'static> LogsCollector<B> {
 
                 let mut attributes = HashMap::new();
                 attributes.insert(
-                    "machineid".to_string(),
+                    "machine_id".to_string(),
                     JsonValue::String(machine_id.clone()),
                 );
                 attributes.insert("type".to_string(), JsonValue::String("bmc_log".to_string()));
@@ -584,13 +591,13 @@ impl<B: Bmc + 'static> LogsCollector<B> {
                 }
             }
 
-            if let Some(log_writer) = &self.log_writer {
-                if let Err(e) = log_writer.lock().await.write_logs(&records).await {
-                    tracing::error!(
-                        error = ?e,
-                        "Failed to write log entries to file"
-                    );
-                }
+            if let Some(log_writer) = &self.log_writer
+                && let Err(e) = log_writer.lock().await.write_logs(&records).await
+            {
+                tracing::error!(
+                    error = ?e,
+                    "Failed to write log entries to file"
+                );
             }
 
             if max_id > last_seen_id.unwrap_or(0) {
