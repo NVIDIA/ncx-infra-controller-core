@@ -63,9 +63,13 @@ impl InlineIpxe {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatingSystemVariant {
-    /// An operating system that is booted into via iPXE
+    /// An operating system that is booted into via iPXE (inline script)
     Ipxe(InlineIpxe),
+    /// An operating system that references a qcow image
     OsImage(Uuid),
+    /// Reference to any operating system definition by ID (any variant except OS image).
+    /// On read, the actual type (iPXE / ipxe_os_definition) is resolved from the row.
+    OperatingSystemId(Uuid),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +128,11 @@ impl TryFrom<rpc::forge::OperatingSystem> for OperatingSystem {
                     RpcDataConversionError::InvalidUuid("os_image_id: ", e.to_string())
                 })?)
             }
+            rpc::forge::operating_system::Variant::OperatingSystemId(id) => {
+                OperatingSystemVariant::OperatingSystemId(Uuid::try_from(id).map_err(|e| {
+                    RpcDataConversionError::InvalidUuid("operating_system_id: ", e.to_string())
+                })?)
+            }
         };
 
         Ok(Self {
@@ -149,6 +158,9 @@ impl TryFrom<OperatingSystem> for rpc::forge::OperatingSystem {
             OperatingSystemVariant::OsImage(id) => {
                 rpc::forge::operating_system::Variant::OsImageId(id.into())
             }
+            OperatingSystemVariant::OperatingSystemId(id) => {
+                rpc::forge::operating_system::Variant::OperatingSystemId(id.into())
+            }
         };
 
         Ok(Self {
@@ -167,6 +179,7 @@ impl OperatingSystem {
         match &self.variant {
             OperatingSystemVariant::Ipxe(ipxe) => ipxe.validate(),
             OperatingSystemVariant::OsImage(_id) => Ok(()),
+            OperatingSystemVariant::OperatingSystemId(_id) => Ok(()),
         }
     }
 

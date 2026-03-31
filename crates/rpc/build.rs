@@ -109,6 +109,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
         .type_attribute("forge.InstanceStorageConfig", "#[derive(serde::Serialize)]")
+        
+        .type_attribute(
+            "forge.IpxeOsParameter",
+            "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
+        .type_attribute(
+            "forge.IpxeOsArtifact",
+            "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
+        .type_attribute(
+            "forge.IpxeScriptTemplate",
+            "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
+        
+        .type_attribute(
+            "forge.ArtifactCacheStrategy",
+            "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
         .type_attribute("forge.TenantConfig", "#[derive(serde::Serialize)]")
         .type_attribute("forge.InstanceConfig", "#[derive(serde::Serialize)]")
         .type_attribute("forge.InstanceDpuExtensionServicesConfig", "#[derive(serde::Serialize)]")
@@ -275,6 +293,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute(
             "forge.OperatingSystem.variant",
             "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
+        .type_attribute(
+            "forge.OperatingSystemDefinition",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "forge.OperatingSystemList",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
+        )
+        .type_attribute(
+            "forge.OperatingSystemType",
+            "#[derive(serde::Serialize, serde::Deserialize)]",
         )
         .type_attribute("forge.InterfaceList", "#[derive(serde::Serialize)]")
         .type_attribute(

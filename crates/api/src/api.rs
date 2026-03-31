@@ -2010,6 +2010,64 @@ impl Forge for Api {
     ) -> Result<Response<rpc::OsImage>, Status> {
         crate::storage::update_os_image(self, request).await
     }
+
+    async fn create_operating_system(
+        &self,
+        request: Request<rpc::CreateOperatingSystemRequest>,
+    ) -> Result<Response<rpc::OperatingSystemDefinition>, Status> {
+        crate::handlers::operating_system::create_operating_system(self, request).await
+    }
+
+    async fn get_operating_system(
+        &self,
+        request: Request<::rpc::Uuid>,
+    ) -> Result<Response<rpc::OperatingSystemDefinition>, Status> {
+        crate::handlers::operating_system::get_operating_system(self, request).await
+    }
+
+    async fn update_operating_system(
+        &self,
+        request: Request<rpc::UpdateOperatingSystemRequest>,
+    ) -> Result<Response<rpc::OperatingSystemDefinition>, Status> {
+        crate::handlers::operating_system::update_operating_system(self, request).await
+    }
+
+    async fn delete_operating_system(
+        &self,
+        request: Request<rpc::DeleteOperatingSystemRequest>,
+    ) -> Result<Response<rpc::DeleteOperatingSystemResponse>, Status> {
+        crate::handlers::operating_system::delete_operating_system(self, request).await
+    }
+
+    async fn find_operating_system_ids(
+        &self,
+        request: Request<rpc::OperatingSystemSearchFilter>,
+    ) -> Result<Response<rpc::OperatingSystemIdList>, Status> {
+        crate::handlers::operating_system::find_operating_system_ids(self, request).await
+    }
+
+    async fn find_operating_systems_by_ids(
+        &self,
+        request: Request<rpc::OperatingSystemsByIdsRequest>,
+    ) -> Result<Response<rpc::OperatingSystemList>, Status> {
+        crate::handlers::operating_system::find_operating_systems_by_ids(self, request).await
+    }
+
+    async fn get_operating_system_artifacts(
+        &self,
+        request: Request<rpc::GetOperatingSystemArtifactsRequest>,
+    ) -> Result<Response<rpc::OperatingSystemArtifactsResponse>, Status> {
+        crate::handlers::operating_system::get_operating_system_artifacts(self, request).await
+    }
+
+    async fn set_operating_system_artifacts_local_url(
+        &self,
+        request: Request<rpc::SetOperatingSystemArtifactsLocalUrlRequest>,
+    ) -> Result<Response<rpc::OperatingSystemArtifactsResponse>, Status> {
+        crate::handlers::operating_system::set_operating_system_artifacts_local_url(self, request)
+            .await
+    }
+
     async fn get_machine_validation_runs(
         &self,
         request: Request<rpc::MachineValidationRunListGetRequest>,
@@ -3012,6 +3070,74 @@ impl Forge for Api {
         request: Request<rpc::ListComponentFirmwareVersionsRequest>,
     ) -> Result<Response<rpc::ListComponentFirmwareVersionsResponse>, Status> {
         crate::handlers::component_manager::list_component_firmware_versions(self, request).await
+    }
+
+    async fn get_ipxe_script_template(
+        &self,
+        request: tonic::Request<::rpc::forge::GetIpxeScriptTemplateRequest>,
+    ) -> Result<tonic::Response<::rpc::forge::IpxeScriptTemplate>, Status> {
+        use carbide_ipxe_renderer::IpxeOsRenderer;
+
+        let req = request.into_inner();
+        let renderer = carbide_ipxe_renderer::DefaultIpxeOsRenderer::new();
+
+        match renderer.get_template(&req.name) {
+            Some(template) => Ok(tonic::Response::new(::rpc::forge::IpxeScriptTemplate {
+                name: template.name.clone(),
+                template: template.template.clone(),
+                required_params: template.required_params.clone(),
+                description: template.description.clone(),
+                reserved_params: template.reserved_params.clone(),
+                required_artifacts: template.required_artifacts.clone(),
+                scope: ipxe_script_template_scope_to_proto(template.scope).into(),
+            })),
+            None => Err(Status::not_found(format!(
+                "iPXE template '{}' not found",
+                req.name
+            ))),
+        }
+    }
+
+    async fn list_ipxe_script_templates(
+        &self,
+        _request: tonic::Request<::rpc::forge::ListIpxeScriptTemplatesRequest>,
+    ) -> Result<tonic::Response<::rpc::forge::ListIpxeScriptTemplatesResponse>, Status> {
+        use carbide_ipxe_renderer::IpxeOsRenderer;
+
+        let renderer = carbide_ipxe_renderer::DefaultIpxeOsRenderer::new();
+        let template_names = renderer.list_templates();
+
+        let templates = template_names
+            .iter()
+            .filter_map(|name| {
+                renderer
+                    .get_template(name)
+                    .map(|t| ::rpc::forge::IpxeScriptTemplate {
+                        name: t.name.clone(),
+                        template: t.template.clone(),
+                        required_params: t.required_params.clone(),
+                        description: t.description.clone(),
+                        reserved_params: t.reserved_params.clone(),
+                        required_artifacts: t.required_artifacts.clone(),
+                        scope: ipxe_script_template_scope_to_proto(t.scope).into(),
+                    })
+            })
+            .collect();
+
+        Ok(tonic::Response::new(
+            ::rpc::forge::ListIpxeScriptTemplatesResponse { templates },
+        ))
+    }
+}
+
+fn ipxe_script_template_scope_to_proto(
+    scope: carbide_ipxe_renderer::IpxeScriptTemplateScope,
+) -> ::rpc::forge::IpxeScriptTemplateScope {
+    use carbide_ipxe_renderer::IpxeScriptTemplateScope as RendererScope;
+    use ::rpc::forge::IpxeScriptTemplateScope as ProtoScope;
+    match scope {
+        RendererScope::Internal => ProtoScope::Internal,
+        RendererScope::Public => ProtoScope::Public,
     }
 }
 
