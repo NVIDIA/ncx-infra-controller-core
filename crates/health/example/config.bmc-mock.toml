@@ -27,6 +27,10 @@ rack_id = "RACK-1"
 [endpoint_sources.carbide_api]
 enabled = false
 
+[processors.leak_detection]
+enabled = true
+minimum_alerts_per_report = 2
+
 [processors.rack_leak]
 leaking_tray_threshold = 1
 

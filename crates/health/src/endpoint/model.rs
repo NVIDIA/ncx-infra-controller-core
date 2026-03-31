@@ -62,6 +62,15 @@ pub struct BmcEndpoint {
 }
 
 impl BmcEndpoint {
+    pub fn hash_key(&self) -> Cow<'static, str> {
+        Cow::Owned(
+            self.rack_id
+                .as_ref()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| self.addr.mac.to_string()),
+        )
+    }
+
     pub fn with_fixed_credentials(
         addr: BmcAddr,
         credentials: BmcCredentials,
@@ -85,7 +94,7 @@ impl BmcEndpoint {
         match &self.metadata {
             Some(EndpointMetadata::Machine(machine)) => Cow::Owned(machine.machine_id.to_string()),
             Some(EndpointMetadata::Switch(switch)) => Cow::Borrowed(&switch.serial),
-            None => self.addr.hash_key(),
+            None => Cow::Owned(self.addr.mac.to_string()),
         }
     }
 
@@ -139,10 +148,6 @@ pub struct BmcAddr {
 }
 
 impl BmcAddr {
-    pub fn hash_key(&self) -> Cow<'static, str> {
-        Cow::Owned(self.mac.to_string())
-    }
-
     pub fn to_url(&self) -> Result<Url, url::ParseError> {
         let scheme = if self.port.is_some_and(|v| v == 80) {
             "http"

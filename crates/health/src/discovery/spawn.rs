@@ -39,15 +39,15 @@ pub(super) async fn spawn_collectors_for_endpoint(
     data_sink: Option<Arc<dyn DataSink>>,
     metrics_prefix: &str,
 ) -> Result<(), HealthError> {
-    let key = endpoint.addr.hash_key();
+    let key = endpoint.hash_key();
     let endpoint_arc = endpoint.clone();
     if let Configurable::Enabled(sensor_cfg) = &ctx.sensors_config
         && !ctx.collectors.contains(CollectorKind::Sensor, &key)
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("sensor_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("sensor_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<SensorCollector<BmcClient>>(
             endpoint_arc.clone(),
             SensorCollectorConfig {
@@ -110,10 +110,10 @@ pub(super) async fn spawn_collectors_for_endpoint(
         };
 
         if let Some(log_writer) = log_writer {
-            let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-                format!("log_collector_{}", endpoint.addr.hash_key()),
-                metrics_prefix,
-            )?);
+            let collector_registry = Arc::new(
+                ctx.metrics_manager
+                    .create_collector_registry(format!("log_collector_{key}"), metrics_prefix)?,
+            );
 
             match Collector::start::<LogsCollector<BmcClient>>(
                 endpoint_arc.clone(),
@@ -155,10 +155,10 @@ pub(super) async fn spawn_collectors_for_endpoint(
     if let Configurable::Enabled(firmware_cfg) = &ctx.firmware_config
         && !ctx.collectors.contains(CollectorKind::Firmware, &key)
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("firmware_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("firmware_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<FirmwareCollector<BmcClient>>(
             endpoint_arc.clone(),
             FirmwareCollectorConfig {
@@ -196,10 +196,10 @@ pub(super) async fn spawn_collectors_for_endpoint(
         && !ctx.collectors.contains(CollectorKind::Nmxt, &key)
         && matches!(endpoint.metadata, Some(EndpointMetadata::Switch(_)))
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("nmxt_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("nmxt_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<NmxtCollector>(
             endpoint_arc.clone(),
             NmxtCollectorConfig {
@@ -239,10 +239,10 @@ pub(super) async fn spawn_collectors_for_endpoint(
         && !ctx.collectors.contains(CollectorKind::NvueRest, &key)
         && matches!(endpoint.metadata, Some(EndpointMetadata::Switch(_)))
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("nvue_rest_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("nvue_rest_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<NvueRestCollector>(
             endpoint_arc,
             NvueRestCollectorConfig {
