@@ -20,8 +20,8 @@ use std::collections::HashMap;
 use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult};
 use ::rpc::forge::instance_interface_config::NetworkDetails;
 use ::rpc::forge::{
-    self as rpc, BmcEndpointRequest, CreateNetworkSecurityGroupRequest,
-    FindInstanceTypesByIdsRequest, FindNetworkSecurityGroupsByIdsRequest, GetDpfStateRequest,
+    self as rpc, BmcEndpointRequest, FindInstanceTypesByIdsRequest,
+    FindNetworkSecurityGroupsByIdsRequest, GetDpfStateRequest,
     GetNetworkSecurityGroupAttachmentsRequest, GetNetworkSecurityGroupPropagationStatusRequest,
     IdentifySerialRequest, MachineHardwareInfo, MachineHardwareInfoUpdateType,
     ModifyDpfStateRequest, NetworkPrefix, NetworkSecurityGroupAttributes,
@@ -75,16 +75,7 @@ impl ApiClient {
             return Err(CarbideCliError::MachineNotFound(id));
         }
 
-        let mut machine_details = machines.machines.remove(0);
-
-        // Note: The field going forward is `associated_dpu_machine_ids`, but if we're talking to
-        // an older version of the API which doesn't support it, fall back on building our own Vec
-        // out of the `associated_dpu_machine_id` field.
-        if machine_details.associated_dpu_machine_ids.is_empty()
-            && let Some(ref dpu_id) = machine_details.associated_dpu_machine_id
-        {
-            machine_details.associated_dpu_machine_ids = vec![*dpu_id];
-        }
+        let machine_details = machines.machines.remove(0);
 
         Ok(machine_details)
     }
@@ -261,6 +252,30 @@ impl ApiClient {
         Ok(self.0.find_instance_ids(request).await?)
     }
 
+    pub async fn get_all_racks(&self, page_size: usize) -> CarbideCliResult<rpc::RackList> {
+        let all_ids = self.get_rack_ids().await?;
+        let mut all_list = rpc::RackList {
+            racks: Vec::with_capacity(all_ids.rack_ids.len()),
+        };
+
+        for ids in all_ids.rack_ids.chunks(page_size) {
+            let list = self.0.find_racks_by_ids(ids.to_vec()).await?;
+            all_list.racks.extend(list.racks);
+        }
+
+        Ok(all_list)
+    }
+
+    pub async fn get_one_rack(&self, rack_id: RackId) -> CarbideCliResult<rpc::RackList> {
+        let racks = self.0.find_racks_by_ids(vec![rack_id]).await?;
+
+        Ok(racks)
+    }
+
+    async fn get_rack_ids(&self) -> CarbideCliResult<rpc::RackIdList> {
+        Ok(self.0.find_rack_ids().await?)
+    }
+
     pub async fn get_all_segments(
         &self,
         tenant_org_id: Option<String>,
@@ -339,20 +354,6 @@ impl ApiClient {
             }),
         };
         Ok(self.0.insert_health_report_override(request).await?)
-    }
-
-    pub async fn bmc_reset(
-        &self,
-        bmc_endpoint_request: Option<BmcEndpointRequest>,
-        machine_id: Option<String>,
-        use_ipmitool: bool,
-    ) -> CarbideCliResult<rpc::AdminBmcResetResponse> {
-        let request = rpc::AdminBmcResetRequest {
-            bmc_endpoint_request,
-            machine_id,
-            use_ipmitool,
-        };
-        Ok(self.0.admin_bmc_reset(request).await?)
     }
 
     pub async fn admin_power_control(
@@ -564,7 +565,6 @@ impl ApiClient {
 
         Ok(self.0.update_expected_machine(request).await?)
     }
-
     pub async fn replace_all_expected_machines(
         &self,
         expected_machine_list: Vec<ExpectedMachineJson>,
@@ -635,6 +635,11 @@ impl ApiClient {
                     bmc_username: switch.bmc_username,
                     bmc_password: switch.bmc_password,
                     switch_serial_number: switch.switch_serial_number,
+                    nvos_mac_addresses: switch
+                        .nvos_mac_addresses
+                        .iter()
+                        .map(|m| m.to_string())
+                        .collect(),
                     nvos_username: switch.nvos_username,
                     nvos_password: switch.nvos_password,
                     metadata: switch.metadata,
@@ -1508,31 +1513,6 @@ impl ApiClient {
         Ok(self.0.update_machine_metadata(request).await?)
     }
 
-    pub async fn create_network_security_group(
-        &self,
-        id: Option<String>,
-        tenant_organization_id: String,
-        metadata: rpc::Metadata,
-        stateful_egress: bool,
-        rules: Vec<rpc::NetworkSecurityGroupRuleAttributes>,
-    ) -> CarbideCliResult<rpc::NetworkSecurityGroup> {
-        let request = CreateNetworkSecurityGroupRequest {
-            id,
-            tenant_organization_id,
-            metadata: Some(metadata),
-            network_security_group_attributes: Some(NetworkSecurityGroupAttributes {
-                stateful_egress,
-                rules,
-            }),
-        };
-
-        let response = self.0.create_network_security_group(request).await?;
-
-        response
-            .network_security_group
-            .ok_or(CarbideCliError::Empty)
-    }
-
     pub async fn get_single_network_security_group(
         &self,
         id: String,
@@ -1832,57 +1812,6 @@ impl ApiClient {
             .map_err(CarbideCliError::ApiInvocationError)
     }
 
-    pub async fn create_bmc_user(
-        &self,
-        ip_address: Option<String>,
-        mac_address: Option<MacAddress>,
-        machine_id: Option<String>,
-        create_username: String,
-        create_password: String,
-        create_role_id: Option<String>,
-    ) -> CarbideCliResult<rpc::CreateBmcUserResponse> {
-        let bmc_endpoint_request = if ip_address.is_some() || mac_address.is_some() {
-            Some(rpc::BmcEndpointRequest {
-                ip_address: ip_address.unwrap_or_default(),
-                mac_address: mac_address.map(|mac| mac.to_string()),
-            })
-        } else {
-            None
-        };
-
-        let request = rpc::CreateBmcUserRequest {
-            bmc_endpoint_request,
-            machine_id,
-            create_username,
-            create_password,
-            create_role_id,
-        };
-        Ok(self.0.create_bmc_user(request).await?)
-    }
-    pub async fn delete_bmc_user(
-        &self,
-        ip_address: Option<String>,
-        mac_address: Option<MacAddress>,
-        machine_id: Option<String>,
-        delete_username: String,
-    ) -> CarbideCliResult<rpc::DeleteBmcUserResponse> {
-        let bmc_endpoint_request = if ip_address.is_some() || mac_address.is_some() {
-            Some(rpc::BmcEndpointRequest {
-                ip_address: ip_address.unwrap_or_default(),
-                mac_address: mac_address.map(|mac| mac.to_string()),
-            })
-        } else {
-            None
-        };
-
-        let request = rpc::DeleteBmcUserRequest {
-            bmc_endpoint_request,
-            machine_id,
-            delete_username,
-        };
-        Ok(self.0.delete_bmc_user(request).await?)
-    }
-
     pub async fn enable_infinite_boot(
         &self,
         bmc_endpoint_request: Option<BmcEndpointRequest>,
@@ -1893,18 +1822,6 @@ impl ApiClient {
             machine_id,
         };
         Ok(self.0.enable_infinite_boot(request).await?)
-    }
-
-    pub async fn is_infinite_boot_enabled(
-        &self,
-        bmc_endpoint_request: Option<BmcEndpointRequest>,
-        machine_id: Option<String>,
-    ) -> CarbideCliResult<rpc::IsInfiniteBootEnabledResponse> {
-        let request = rpc::IsInfiniteBootEnabledRequest {
-            bmc_endpoint_request,
-            machine_id,
-        };
-        Ok(self.0.is_infinite_boot_enabled(request).await?)
     }
 
     pub async fn lockdown(
@@ -1919,18 +1836,6 @@ impl ApiClient {
             action: Some(action as i32),
         };
         Ok(self.0.lockdown(request).await?)
-    }
-
-    pub async fn lockdown_status(
-        &self,
-        bmc_endpoint_request: Option<BmcEndpointRequest>,
-        machine_id: MachineId,
-    ) -> CarbideCliResult<::rpc::site_explorer::LockdownStatus> {
-        let request = rpc::LockdownStatusRequest {
-            bmc_endpoint_request,
-            machine_id: Some(machine_id),
-        };
-        Ok(self.0.lockdown_status(request).await?)
     }
 
     pub async fn get_remediation(

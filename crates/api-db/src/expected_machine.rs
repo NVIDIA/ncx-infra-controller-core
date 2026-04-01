@@ -101,7 +101,7 @@ pub async fn find_by_host_mac_address(
 pub async fn find_one_linked(
     txn: &mut PgConnection,
     bmc_mac_address: MacAddress,
-) -> DatabaseResult<LinkedExpectedMachine> {
+) -> DatabaseResult<Option<LinkedExpectedMachine>> {
     let sql = r#"
  SELECT
  em.serial_number,
@@ -120,7 +120,7 @@ FROM expected_machines em
  "#;
     sqlx::query_as(sql)
         .bind(bmc_mac_address)
-        .fetch_one(txn)
+        .fetch_optional(txn)
         .await
         .map_err(|err| DatabaseError::query(sql, err))
 }
@@ -136,7 +136,7 @@ pub async fn find_all(txn: impl DbReader<'_>) -> DatabaseResult<Vec<ExpectedMach
 /// find_all_by_rack_id returns all expected machines for a given rack_id.
 pub async fn find_all_by_rack_id(
     txn: &mut PgConnection,
-    rack_id: RackId,
+    rack_id: &RackId,
 ) -> DatabaseResult<Vec<ExpectedMachine>> {
     let sql = "SELECT * FROM expected_machines WHERE rack_id=$1";
     sqlx::query_as(sql)
@@ -220,7 +220,7 @@ pub async fn create(
         .bind(sqlx::types::Json(&machine.data.metadata.labels))
         .bind(&machine.data.sku_id)
         .bind(sqlx::types::Json(&machine.data.host_nics))
-        .bind(machine.data.rack_id)
+        .bind(&machine.data.rack_id)
         .bind(
             machine
                 .data
@@ -350,7 +350,7 @@ pub async fn update(txn: &mut PgConnection, machine: &ExpectedMachine) -> Databa
         .bind(sqlx::types::Json(&machine.data.metadata.labels))
         .bind(&machine.data.sku_id)
         .bind(sqlx::types::Json(&machine.data.host_nics))
-        .bind(machine.data.rack_id)
+        .bind(&machine.data.rack_id)
         .bind(machine.data.default_pause_ingestion_and_poweron)
         .bind(machine.data.dpf_enabled)
         .bind(&target_id)

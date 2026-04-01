@@ -19,7 +19,7 @@ use carbide_uuid::machine::{MachineId, MachineIdSource, MachineType};
 use carbide_uuid::rack::RackId;
 use db::rack as db_rack;
 use mac_address::MacAddress;
-use model::rack::{RackConfig, RackState};
+use model::rack::{RackConfig, RackState, RackValidationState};
 use model::rack_type::{
     RackCapabilitiesSet, RackCapabilityCompute, RackCapabilityPowerShelf, RackCapabilitySwitch,
     RackTypeConfig,
@@ -119,7 +119,7 @@ fn config_with_rack_types() -> crate::cfg::file::CarbideConfig {
 }
 
 fn new_rack_id() -> RackId {
-    RackId::from(uuid::Uuid::new_v4())
+    RackId::new(uuid::Uuid::new_v4().to_string())
 }
 
 fn new_machine_id(seed: u8) -> MachineId {
@@ -155,14 +155,14 @@ async fn test_expected_no_definition_stays_parked(
     // auto-creating the rack before expected_rack arrives).
     db_rack::create(
         &mut txn,
-        rack_id,
+        &rack_id,
         vec![MacAddress::new([0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x50])],
         vec![],
         vec![],
     )
     .await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
     assert!(rack.config.rack_type.is_none());
 
     let handler = RackStateHandler::default();
@@ -210,18 +210,18 @@ async fn test_expected_incomplete_device_counts_stays(
     // but only register 1 compute tray.
     db_rack::create(
         &mut txn,
-        rack_id,
+        &rack_id,
         vec![MacAddress::new([0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x50])],
         vec![],
         vec![],
     )
     .await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
     let mut cfg = rack.config.clone();
     cfg.rack_type = Some("NVL72".to_string());
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
-    rack = db_rack::get(&pool, rack_id).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
+    rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -273,7 +273,7 @@ async fn test_expected_counts_match_but_not_linked_stays(
     // Create rack with correct device counts matching the definition.
     db_rack::create(
         &mut txn,
-        rack_id,
+        &rack_id,
         vec![mac1, mac2],
         vec![switch_mac],
         vec![ps_mac],
@@ -287,10 +287,11 @@ async fn test_expected_counts_match_but_not_linked_stays(
         expected_switches: vec![switch_mac],
         expected_power_shelves: vec![ps_mac],
         rack_type: Some("NVL72".to_string()),
+        validation_run_id: None,
     };
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -340,7 +341,7 @@ async fn test_expected_all_linked_transitions_to_discovering(
     let mut txn = pool.acquire().await?;
 
     // Create rack with a rack_type expecting 2 compute, 0 switches, 0 PS.
-    db_rack::create(&mut txn, rack_id, vec![mac1, mac2], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![mac1, mac2], vec![], vec![]).await?;
 
     // Simulate that both compute trays are already linked by setting
     // compute_trays to have 2 entries matching expected_compute_trays.
@@ -354,10 +355,11 @@ async fn test_expected_all_linked_transitions_to_discovering(
         expected_switches: vec![],
         expected_power_shelves: vec![],
         rack_type: Some("Simple".to_string()),
+        validation_run_id: None,
     };
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -412,7 +414,7 @@ async fn test_expected_more_discovered_than_expected_transitions(
     let mut txn = pool.acquire().await?;
 
     // Rack type "Single" expects 1 compute, 0 switches, 0 PS.
-    db_rack::create(&mut txn, rack_id, vec![mac1], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![mac1], vec![], vec![]).await?;
 
     // Simulate more compute_trays discovered than expected_compute_trays.
     let machine_id_1 = new_machine_id(1);
@@ -425,10 +427,11 @@ async fn test_expected_more_discovered_than_expected_transitions(
         expected_switches: vec![],
         expected_power_shelves: vec![],
         rack_type: Some("Single".to_string()),
+        validation_run_id: None,
     };
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -485,7 +488,7 @@ async fn test_discovering_waits_for_compute_ready(
     // have a managed host record yet.
     let machine_id = new_machine_id(1);
 
-    db_rack::create(&mut txn, rack_id, vec![], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![], vec![], vec![]).await?;
 
     let cfg = RackConfig {
         compute_trays: vec![machine_id],
@@ -494,10 +497,11 @@ async fn test_discovering_waits_for_compute_ready(
         expected_switches: vec![],
         expected_power_shelves: vec![],
         rack_type: Some("NVL72".to_string()),
+        validation_run_id: None,
     };
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -542,7 +546,7 @@ async fn test_discovering_empty_rack_transitions_to_maintenance(
     let mut txn = pool.acquire().await?;
 
     // Create a rack with empty device lists.
-    db_rack::create(&mut txn, rack_id, vec![], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![], vec![], vec![]).await?;
 
     let cfg = RackConfig {
         compute_trays: vec![],
@@ -551,10 +555,11 @@ async fn test_discovering_empty_rack_transitions_to_maintenance(
         expected_switches: vec![],
         expected_power_shelves: vec![],
         rack_type: Some("NVL72".to_string()),
+        validation_run_id: None,
     };
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -596,9 +601,9 @@ async fn test_error_state_does_nothing(
 
     let rack_id = new_rack_id();
     let mut txn = pool.acquire().await?;
-    db_rack::create(&mut txn, rack_id, vec![], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![], vec![], vec![]).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -625,19 +630,19 @@ async fn test_error_state_does_nothing(
     Ok(())
 }
 
-/// test_maintenance_completed_transitions_to_ready verifies that
-/// Maintenance::Completed transitions to Ready::Full.
+/// test_maintenance_completed_transitions_to_validation verifies that
+/// Maintenance::Completed transitions to Validation(Pending).
 #[crate::sqlx_test]
-async fn test_maintenance_completed_transitions_to_ready(
+async fn test_maintenance_completed_transitions_to_validation(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let env = create_test_env_with_overrides(pool.clone(), TestEnvOverrides::default()).await;
 
     let rack_id = new_rack_id();
     let mut txn = pool.acquire().await?;
-    db_rack::create(&mut txn, rack_id, vec![], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![], vec![], vec![]).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -661,11 +666,11 @@ async fn test_maintenance_completed_transitions_to_ready(
             assert!(
                 matches!(
                     next_state,
-                    RackState::Ready {
-                        rack_ready: model::rack::RackReadyState::Full,
+                    RackState::Validation {
+                        rack_validation: RackValidationState::Pending,
                     }
                 ),
-                "Maintenance::Completed should transition to Ready::Full, got {:?}",
+                "Maintenance::Completed should transition to Validation(Pending), got {:?}",
                 next_state
             );
         }
@@ -678,19 +683,19 @@ async fn test_maintenance_completed_transitions_to_ready(
     Ok(())
 }
 
-/// test_ready_full_transitions_to_validation verifies that Ready::Full
-/// transitions to Maintenance::RackValidation::Topology.
+/// test_ready_with_no_labels_stays_ready verifies that Ready with no
+/// validation metadata labels on machines stays in Ready (do_nothing).
 #[crate::sqlx_test]
-async fn test_ready_full_transitions_to_validation(
+async fn test_ready_with_no_labels_stays_ready(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let env = create_test_env_with_overrides(pool.clone(), TestEnvOverrides::default()).await;
 
     let rack_id = new_rack_id();
     let mut txn = pool.acquire().await?;
-    db_rack::create(&mut txn, rack_id, vec![], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![], vec![], vec![]).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -702,33 +707,16 @@ async fn test_ready_full_transitions_to_validation(
         pending_db_writes: &mut db_writes,
     };
 
-    let ready_state = RackState::Ready {
-        rack_ready: model::rack::RackReadyState::Full,
-    };
+    let ready_state = RackState::Ready;
     let outcome = handler
         .handle_object_state(&rack_id, &mut rack, &ready_state, &mut ctx)
         .await?;
 
-    match outcome {
-        StateHandlerOutcome::Transition { next_state, .. } => {
-            assert!(
-                matches!(
-                    next_state,
-                    RackState::Maintenance {
-                        rack_maintenance: model::rack::RackMaintenanceState::RackValidation {
-                            rack_validation: model::rack::RackValidationState::Topology,
-                        },
-                    }
-                ),
-                "Ready::Full should transition to RackValidation::Topology, got {:?}",
-                next_state
-            );
-        }
-        other => panic!(
-            "Expected Transition, got {:?}",
-            std::mem::discriminant(&other)
-        ),
-    }
+    assert!(
+        matches!(outcome, StateHandlerOutcome::DoNothing { .. }),
+        "Ready with no labels should do_nothing, got {:?}",
+        std::mem::discriminant(&outcome)
+    );
 
     Ok(())
 }
@@ -750,6 +738,7 @@ fn test_validate_device_counts_all_match() {
         expected_switches: vec![MacAddress::new([0x01, 0x01, 0x02, 0x03, 0x04, 0x05])],
         expected_power_shelves: vec![MacAddress::new([0x02, 0x01, 0x02, 0x03, 0x04, 0x05])],
         rack_type: Some("NVL72".to_string()),
+        validation_run_id: None,
     };
     assert!(handler::validate_device_counts(
         &rack_id,
@@ -770,6 +759,7 @@ fn test_validate_device_counts_compute_mismatch() {
         expected_switches: vec![MacAddress::new([0x01, 0x01, 0x02, 0x03, 0x04, 0x05])],
         expected_power_shelves: vec![MacAddress::new([0x02, 0x01, 0x02, 0x03, 0x04, 0x05])],
         rack_type: Some("NVL72".to_string()),
+        validation_run_id: None,
     };
     assert!(!handler::validate_device_counts(
         &rack_id,
@@ -793,6 +783,7 @@ fn test_validate_device_counts_switch_mismatch() {
         expected_switches: vec![],
         expected_power_shelves: vec![MacAddress::new([0x02, 0x01, 0x02, 0x03, 0x04, 0x05])],
         rack_type: Some("NVL72".to_string()),
+        validation_run_id: None,
     };
     assert!(!handler::validate_device_counts(
         &rack_id,
@@ -838,11 +829,11 @@ async fn test_adopt_dangling_devices_no_devices(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rack_id = new_rack_id();
     let mut txn = pool.acquire().await?;
-    db_rack::create(&mut txn, rack_id, vec![], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![], vec![], vec![]).await?;
     drop(txn);
 
     let mut config = RackConfig::default();
-    let changed = handler::adopt_dangling_devices(&pool, rack_id, &mut config).await?;
+    let changed = handler::adopt_dangling_devices(&pool, &rack_id, &mut config).await?;
 
     assert!(!changed, "No dangling devices should mean no changes");
     assert!(config.expected_compute_trays.is_empty());
@@ -882,16 +873,17 @@ async fn test_expected_unknown_rack_type_stays_parked(
 
     let rack_id = new_rack_id();
     let mut txn = pool.acquire().await?;
-    db_rack::create(&mut txn, rack_id, vec![], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![], vec![], vec![]).await?;
 
     // Set a rack_type that doesn't exist in the config.
     let cfg = RackConfig {
         rack_type: Some("NonExistentType".to_string()),
+        validation_run_id: None,
         ..Default::default()
     };
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
 
-    let mut rack = db_rack::get(&pool, rack_id).await?;
+    let mut rack = db_rack::get(&pool, &rack_id).await?;
 
     let handler_instance = RackStateHandler::default();
     let mut services = env.state_handler_services();
@@ -927,7 +919,7 @@ async fn test_expected_config_change_applies_retroactively(
     let mac1 = MacAddress::new([0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x50]);
 
     let mut txn = pool.acquire().await?;
-    db_rack::create(&mut txn, rack_id, vec![mac1], vec![], vec![]).await?;
+    db_rack::create(&mut txn, &rack_id, vec![mac1], vec![], vec![]).await?;
 
     // Register only 1 compute tray with rack_type "NVL72" (needs 2).
     let cfg = RackConfig {
@@ -937,8 +929,9 @@ async fn test_expected_config_change_applies_retroactively(
         expected_switches: vec![],
         expected_power_shelves: vec![],
         rack_type: Some("NVL72".to_string()),
+        validation_run_id: None,
     };
-    db_rack::update(&mut txn, rack_id, &cfg).await?;
+    db_rack::update(&mut txn, &rack_id, &cfg).await?;
     drop(txn);
 
     // validate_device_counts should fail with NVL72 (expects 2 compute).
