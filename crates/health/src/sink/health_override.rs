@@ -104,7 +104,7 @@ impl DataSink for HealthOverrideSink {
             if let Some(machine_id) = context.machine_id() {
                 self.queue.save_latest(OverrideJob {
                     id: machine_id,
-                    report: Arc::clone(report),
+                    report: report.clone(),
                 });
             } else {
                 tracing::warn!(

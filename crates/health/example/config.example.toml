@@ -113,6 +113,9 @@ interfaces_enabled = true
 # Processors
 # ==============================================================================
 
+[processors.health_report]
+level = "warning"
+
 [processors.leak_detection]
 enabled = true
 minimum_alerts_per_report = 1

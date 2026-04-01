@@ -20,6 +20,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
 use std::sync::Arc;
 
+use carbide_health::config::HealthOverrideLevel;
 use carbide_health::endpoint::{BmcAddr, EndpointMetadata, MachineData};
 use carbide_health::metrics::MetricsManager;
 use carbide_health::processor::{
@@ -207,7 +208,7 @@ fn bench_pipeline_health_processors(c: &mut Criterion) {
         Arc::new(MetricsManager::new("bench").expect("metrics manager should initialize"));
 
     let processors: Vec<Arc<dyn EventProcessor>> = vec![
-        Arc::new(HealthReportProcessor::new()),
+        Arc::new(HealthReportProcessor::new(HealthOverrideLevel::Critical)),
         Arc::new(LeakEventProcessor::new(1)),
     ];
     let pipeline = EventProcessingPipeline::new(
@@ -282,7 +283,7 @@ fn bench_pipeline_rack_leak(c: &mut Criterion) {
         Arc::new(MetricsManager::new("bench").expect("metrics manager should initialize"));
 
     let processors: Vec<Arc<dyn EventProcessor>> = vec![
-        Arc::new(HealthReportProcessor::new()),
+        Arc::new(HealthReportProcessor::new(HealthOverrideLevel::Critical)),
         Arc::new(LeakEventProcessor::new(1)),
         Arc::new(RackLeakProcessor::new(2)),
     ];

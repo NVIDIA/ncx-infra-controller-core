@@ -201,6 +201,14 @@ impl Default for HealthOverrideSinkConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthOverrideLevel {
+    Warning,
+    Critical,
+    Fatal,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RackHealthOverrideSinkConfig {
@@ -271,6 +279,9 @@ impl Default for CollectorsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProcessorsConfig {
+    /// Health report processor configuration.
+    pub health_report: HealthReportProcessorConfig,
+
     /// Leak detection processor configuration (if present, leak detection is enabled)
     pub leak_detection: Configurable<LeakDetectionProcessorConfig>,
 
@@ -281,8 +292,25 @@ pub struct ProcessorsConfig {
 impl Default for ProcessorsConfig {
     fn default() -> Self {
         Self {
+            health_report: HealthReportProcessorConfig::default(),
             leak_detection: Configurable::Enabled(LeakDetectionProcessorConfig::default()),
             rack_leak: Configurable::Enabled(RackLeakProcessorConfig::default()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HealthReportProcessorConfig {
+    /// Minimum health level that should be reported as an alert.
+    /// Lower-level findings are downgraded to successes.
+    pub level: HealthOverrideLevel,
+}
+
+impl Default for HealthReportProcessorConfig {
+    fn default() -> Self {
+        Self {
+            level: HealthOverrideLevel::Critical,
         }
     }
 }
@@ -678,6 +706,11 @@ mod tests {
         } else {
             panic!("health override sink is disabled")
         }
+
+        assert_eq!(
+            config.processors.health_report.level,
+            HealthOverrideLevel::Warning
+        );
 
         if let Configurable::Enabled(ref rate_limit) = config.rate_limit {
             assert_eq!(rate_limit.bucket_replenish, Duration::from_millis(35));
