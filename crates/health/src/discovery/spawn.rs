@@ -21,8 +21,8 @@ use std::sync::Arc;
 use super::context::{BmcClient, CollectorKind, DiscoveryLoopContext};
 use crate::HealthError;
 use crate::collectors::{
-    BackoffConfig, Collector, FirmwareCollector, FirmwareCollectorConfig, LogsCollector,
-    LogsCollectorConfig, NmxtCollector, NmxtCollectorConfig, NvueRestCollector,
+    BackoffConfig, Collector, CollectorStartContext, FirmwareCollector, FirmwareCollectorConfig,
+    LogsCollector, LogsCollectorConfig, NmxtCollector, NmxtCollectorConfig, NvueRestCollector,
     NvueRestCollectorConfig, SensorCollector, SensorCollectorConfig, SseLogCollector,
     SseLogCollectorConfig, create_log_file_writer,
 };
@@ -40,29 +40,32 @@ pub(super) async fn spawn_collectors_for_endpoint(
     event_pipeline: Option<Arc<EventPipeline>>,
     metrics_prefix: &str,
 ) -> Result<(), HealthError> {
-    let key = endpoint.addr.hash_key();
+    let key = endpoint.hash_key();
     let endpoint_arc = endpoint.clone();
     let pipeline = event_pipeline;
     if let Configurable::Enabled(sensor_cfg) = &ctx.sensors_config
         && !ctx.collectors.contains(CollectorKind::Sensor, &key)
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("sensor_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("sensor_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<SensorCollector<BmcClient>>(
             endpoint_arc.clone(),
-            ctx.limiter.clone(),
-            sensor_cfg.sensor_fetch_interval,
             SensorCollectorConfig {
                 pipeline: pipeline.clone(),
                 state_refresh_interval: sensor_cfg.state_refresh_interval,
                 sensor_fetch_concurrency: sensor_cfg.sensor_fetch_concurrency,
                 include_sensor_thresholds: sensor_cfg.include_sensor_thresholds,
             },
-            collector_registry,
-            ctx.client.clone(),
-            &ctx.config,
+            CollectorStartContext {
+                limiter: ctx.limiter.clone(),
+                iteration_interval: sensor_cfg.sensor_fetch_interval,
+                collector_registry,
+                metrics_manager: ctx.metrics_manager.clone(),
+                client: ctx.client.clone(),
+                health_options: ctx.config.clone(),
+            },
         ) {
             Ok(monitor) => {
                 ctx.collectors
@@ -125,17 +128,20 @@ pub(super) async fn spawn_collectors_for_endpoint(
                             let log_writer = Arc::new(tokio::sync::Mutex::new(writer));
                             Some(Collector::start::<LogsCollector<BmcClient>>(
                                 endpoint_arc.clone(),
-                                ctx.limiter.clone(),
-                                pcfg.logs_collection_interval,
                                 LogsCollectorConfig {
                                     state_file_path,
                                     service_refresh_interval: pcfg.state_refresh_interval,
                                     log_writer: Some(log_writer),
                                     pipeline: pipeline.clone(),
                                 },
-                                collector_registry,
-                                ctx.client.clone(),
-                                &ctx.config,
+                                CollectorStartContext {
+                                    limiter: ctx.limiter.clone(),
+                                    iteration_interval: pcfg.logs_collection_interval,
+                                    collector_registry,
+                                    metrics_manager: ctx.metrics_manager.clone(),
+                                    client: ctx.client.clone(),
+                                    health_options: ctx.config.clone(),
+                                },
                             ))
                         }
                         Err(error) => {
@@ -184,20 +190,23 @@ pub(super) async fn spawn_collectors_for_endpoint(
     if let Configurable::Enabled(firmware_cfg) = &ctx.firmware_config
         && !ctx.collectors.contains(CollectorKind::Firmware, &key)
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("firmware_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("firmware_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<FirmwareCollector<BmcClient>>(
             endpoint_arc.clone(),
-            ctx.limiter.clone(),
-            firmware_cfg.firmware_refresh_interval,
             FirmwareCollectorConfig {
                 pipeline: pipeline.clone(),
             },
-            collector_registry,
-            ctx.client.clone(),
-            &ctx.config,
+            CollectorStartContext {
+                limiter: ctx.limiter.clone(),
+                iteration_interval: firmware_cfg.firmware_refresh_interval,
+                collector_registry,
+                metrics_manager: ctx.metrics_manager.clone(),
+                client: ctx.client.clone(),
+                health_options: ctx.config.clone(),
+            },
         ) {
             Ok(collector) => {
                 ctx.collectors
@@ -222,21 +231,24 @@ pub(super) async fn spawn_collectors_for_endpoint(
         && !ctx.collectors.contains(CollectorKind::Nmxt, &key)
         && matches!(endpoint.metadata, Some(EndpointMetadata::Switch(_)))
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("nmxt_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("nmxt_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<NmxtCollector>(
             endpoint_arc.clone(),
-            ctx.limiter.clone(),
-            nmxt_cfg.scrape_interval,
             NmxtCollectorConfig {
                 nmxt_config: nmxt_cfg.clone(),
                 pipeline: pipeline.clone(),
             },
-            collector_registry,
-            ctx.client.clone(),
-            &ctx.config,
+            CollectorStartContext {
+                limiter: ctx.limiter.clone(),
+                iteration_interval: nmxt_cfg.scrape_interval,
+                collector_registry,
+                metrics_manager: ctx.metrics_manager.clone(),
+                client: ctx.client.clone(),
+                health_options: ctx.config.clone(),
+            },
         ) {
             Ok(handle) => {
                 ctx.collectors
@@ -262,21 +274,24 @@ pub(super) async fn spawn_collectors_for_endpoint(
         && !ctx.collectors.contains(CollectorKind::NvueRest, &key)
         && matches!(endpoint.metadata, Some(EndpointMetadata::Switch(_)))
     {
-        let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("nvue_rest_collector_{}", endpoint.addr.hash_key()),
-            metrics_prefix,
-        )?);
+        let collector_registry = Arc::new(
+            ctx.metrics_manager
+                .create_collector_registry(format!("nvue_rest_collector_{key}"), metrics_prefix)?,
+        );
         match Collector::start::<NvueRestCollector>(
             endpoint_arc,
-            ctx.limiter.clone(),
-            rest_cfg.poll_interval,
             NvueRestCollectorConfig {
                 rest_config: rest_cfg.clone(),
                 pipeline: pipeline.clone(),
             },
-            collector_registry,
-            ctx.client.clone(),
-            &ctx.config,
+            CollectorStartContext {
+                limiter: ctx.limiter.clone(),
+                iteration_interval: rest_cfg.poll_interval,
+                collector_registry,
+                metrics_manager: ctx.metrics_manager.clone(),
+                client: ctx.client.clone(),
+                health_options: ctx.config.clone(),
+            },
         ) {
             Ok(handle) => {
                 ctx.collectors
@@ -321,38 +336,40 @@ mod tests {
 
     #[test]
     fn test_endpoint_log_identity_falls_back_to_mac_without_metadata() {
-        let endpoint = BmcEndpoint {
-            addr: BmcAddr {
+        let endpoint = BmcEndpoint::with_fixed_credentials(
+            BmcAddr {
                 ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
                 port: Some(443),
                 mac: MacAddress::from_str("aa:bb:cc:dd:ee:ff").unwrap(),
             },
-            credentials: BmcCredentials {
+            BmcCredentials::UsernamePassword {
                 username: "user".to_string(),
-                password: "pass".to_string(),
+                password: Some("pass".to_string()),
             },
-            metadata: None,
-        };
+            None,
+            None,
+        );
 
         assert_eq!(endpoint.log_identity().as_ref(), "AA:BB:CC:DD:EE:FF");
     }
 
     #[test]
     fn test_endpoint_log_identity_uses_switch_serial_when_available() {
-        let endpoint = BmcEndpoint {
-            addr: BmcAddr {
+        let endpoint = BmcEndpoint::with_fixed_credentials(
+            BmcAddr {
                 ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
                 port: Some(443),
                 mac: MacAddress::from_str("11:22:33:44:55:66").unwrap(),
             },
-            credentials: BmcCredentials {
+            BmcCredentials::UsernamePassword {
                 username: "user".to_string(),
-                password: "pass".to_string(),
+                password: Some("pass".to_string()),
             },
-            metadata: Some(EndpointMetadata::Switch(SwitchData {
+            Some(EndpointMetadata::Switch(SwitchData {
                 serial: "switch-serial-1".to_string(),
             })),
-        };
+            None,
+        );
 
         assert_eq!(endpoint.log_identity().as_ref(), "switch-serial-1");
     }
@@ -366,22 +383,24 @@ mod tests {
         config.collectors.nmxt = Configurable::Disabled;
 
         let limiter: Arc<dyn RateLimiter> = Arc::new(NoopLimiter);
-        let metrics_manager = Arc::new(MetricsManager::new());
+        let metrics_manager =
+            Arc::new(MetricsManager::new("test").expect("metrics manager should initialize"));
         let mut ctx = DiscoveryLoopContext::new(limiter, metrics_manager, Arc::new(config))
             .expect("context should initialize");
 
-        let endpoint = Arc::new(BmcEndpoint {
-            addr: BmcAddr {
+        let endpoint = Arc::new(BmcEndpoint::with_fixed_credentials(
+            BmcAddr {
                 ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
                 port: Some(443),
                 mac: MacAddress::from_str("aa:bb:cc:dd:ee:ff").unwrap(),
             },
-            credentials: BmcCredentials {
+            BmcCredentials::UsernamePassword {
                 username: "user".to_string(),
-                password: "pass".to_string(),
+                password: Some("pass".to_string()),
             },
-            metadata: None,
-        });
+            None,
+            None,
+        ));
 
         spawn_collectors_for_endpoint(&mut ctx, &endpoint, None, "test")
             .await

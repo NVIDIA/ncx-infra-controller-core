@@ -35,6 +35,17 @@ pub const PATH_ACL: &str = "etc/cumulus/acl/policy.d/70-forge_nvue.rules";
 const TMPL_ETV_WITH_NVUE: &str = include_str!("../templates/nvue_startup_etv.conf");
 const TMPL_FNN: &str = include_str!("../templates/nvue_startup_fnn.conf");
 
+/// Returns the NVUE template for the given virtualization type.
+pub fn template_for(vtype: VpcVirtualizationType) -> eyre::Result<&'static str> {
+    match vtype {
+        VpcVirtualizationType::EthernetVirtualizerWithNvue => Ok(TMPL_ETV_WITH_NVUE),
+        VpcVirtualizationType::Fnn => Ok(TMPL_FNN),
+        VpcVirtualizationType::EthernetVirtualizer => Err(eyre::eyre!(
+            "Legacy EthernetVirtualizer is no longer supported"
+        )),
+    }
+}
+
 /// This value is added to the priority value specified
 /// by users for their NSG rules.
 const NETWORK_SECURITY_GROUP_RULE_PRIORITY_START: u32 = 2000;
@@ -93,13 +104,7 @@ fn split_prefixes_by_family(prefixes: &[String], start_index: usize) -> (Vec<Pre
 }
 
 pub fn build(conf: NvueConfig) -> eyre::Result<String> {
-    if !conf.vpc_virtualization_type.supports_nvue() {
-        return Err(eyre::eyre!(
-            "cannot nvue::build. provided virtualizaton type does not support nvue: {}",
-            conf.vpc_virtualization_type,
-        ));
-    }
-
+    let template = template_for(conf.vpc_virtualization_type)?;
     let host_interfaces: Vec<TmplHostInterfaces> = conf
         .ct_access_vlans
         .into_iter()
@@ -120,6 +125,8 @@ pub fn build(conf: NvueConfig) -> eyre::Result<String> {
         .ct_routing_profile
         .as_ref()
         .map(|rt| TmplRoutingProfile {
+            LeakDefaultRouteFromUnderlay: rt.leak_default_route_from_underlay,
+            LeakTenantHostRoutesToUnderlay: rt.leak_tenant_host_routes_to_underlay,
             RouteTargetImports: rt
                 .route_target_imports
                 .iter()
@@ -225,6 +232,8 @@ pub fn build(conf: NvueConfig) -> eyre::Result<String> {
         );
     }
 
+    let mut has_any_vpc_tenant_host_leak_to_underlay = false;
+
     for (base_i, network) in conf.ct_port_configs.into_iter().enumerate() {
         let svi_mac = vni_to_svi_mac(network.vni.unwrap_or(0))?.to_string();
         let (vpc_ipv4, vpc_ipv6) =
@@ -267,6 +276,11 @@ pub fn build(conf: NvueConfig) -> eyre::Result<String> {
                 .transpose()?,
         };
 
+        has_any_vpc_tenant_host_leak_to_underlay = has_any_vpc_tenant_host_leak_to_underlay
+            || routing_profile
+                .as_ref()
+                .map(|p| p.LeakTenantHostRoutesToUnderlay)
+                .unwrap_or_default();
         let (vpc_peer_ipv4, vpc_peer_ipv6) =
             split_prefixes_by_family(&network.vpc_peer_prefixes, 1);
 
@@ -275,6 +289,7 @@ pub fn build(conf: NvueConfig) -> eyre::Result<String> {
             .and_modify(|v| {
                 v.PortPrefixes.extend_from_slice(&port.VpcPrefixes);
                 v.PortPrefixesIpv6.extend_from_slice(&port.VpcPrefixesIpv6);
+                v.PortConfigs.push(port.clone());
             })
             .or_insert_with(|| TmplVpc {
                 VrfName: port.VrfName.clone(),
@@ -285,6 +300,7 @@ pub fn build(conf: NvueConfig) -> eyre::Result<String> {
                 // interface, regardless of whether the interface is owned by
                 // that VPC.
                 HostInterfaces: host_interfaces.clone(),
+                PortConfigs: vec![port.clone()],
                 HasVpcPeerPrefixes: !vpc_peer_ipv4.is_empty(),
                 VpcPeerPrefixes: vpc_peer_ipv4,
                 HasVpcPeerPrefixesIpv6: !vpc_peer_ipv6.is_empty(),
@@ -404,6 +420,7 @@ pub fn build(conf: NvueConfig) -> eyre::Result<String> {
         PublicPrefixInternalNextHop: public_prefix_internal_next_hop,
         VfInterceptHbnRepresentorIp: vf_intercept_hbn_representor_ip,
         VfInterceptBridgeSf: conf.vf_intercept_bridge_sf.unwrap_or_default(),
+        HasAnyVpcTenantHostLeakToUnderlay: has_any_vpc_tenant_host_leak_to_underlay,
         TrafficInterceptPublicPrefixes: traffic_intercept_ipv4,
         TrafficInterceptPublicPrefixesIpv6: traffic_intercept_ipv6,
         ASN: conf.asn,
@@ -485,28 +502,10 @@ pub fn build(conf: NvueConfig) -> eyre::Result<String> {
         IncludeBridge: include_bridge,
     };
 
-    // Returns the full content of the nvue template for the forge-dpu-agent
-    // to load for the given virtualization type. Since `EthernetVirtualizer`
-    // (non-nvue) is still in the mix, this is an Option<String>. However, once
-    // we're fully moved away from ETV (and everything is nvue), this can simply
-    // become a String.
-    let virtualization_template = match conf.vpc_virtualization_type {
-        VpcVirtualizationType::EthernetVirtualizer => None,
-        VpcVirtualizationType::EthernetVirtualizerWithNvue => Some(TMPL_ETV_WITH_NVUE),
-        VpcVirtualizationType::Fnn => Some(TMPL_FNN),
-    };
-
-    if let Some(template) = virtualization_template {
-        gtmpl::template(template, params).map_err(|e| {
-            println!("ERR filling template: {e}",);
-            e.into()
-        })
-    } else {
-        Err(eyre::eyre!(
-            "cannot nvue::build. no nvue template configured for virtualization type: {}",
-            conf.vpc_virtualization_type
-        ))
-    }
+    gtmpl::template(template, params).map_err(|e| {
+        println!("ERR filling template: {e}",);
+        e.into()
+    })
 }
 
 /// Prepares a set of network security groups rules for template use.
@@ -829,6 +828,19 @@ async fn run_apply(hbn_root: &Path, path: &Path) -> eyre::Result<()> {
         tracing::info!("nv config apply: {stdout}");
     }
 
+    // Restart nl2doca
+    // This is a workaround for a bug in versions of HBN 3.2.0 and older that
+    // will sometimes lead to loss of connectivity when switch over to an L3 evpn overlay.
+    let stdout = super::hbn::run_in_container(
+        &container_id,
+        &["supervisorctl", "restart", "nl2doca"],
+        false,
+    )
+    .await?;
+    if !stdout.is_empty() {
+        tracing::info!("nl2doca restart: {stdout}");
+    }
+
     Ok(())
 }
 
@@ -905,6 +917,8 @@ pub struct NvueConfig {
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct RoutingProfile {
+    pub leak_default_route_from_underlay: bool,
+    pub leak_tenant_host_routes_to_underlay: bool,
     pub route_target_imports: Vec<RouteTargetConfig>,
     pub route_targets_on_exports: Vec<RouteTargetConfig>,
 }
@@ -1041,6 +1055,10 @@ struct TmplNvue {
     /// The SF used to route traffic VF traffic to the HBN pod.
     VfInterceptBridgeSf: String,
 
+    /// Does any VPC at all have a routing profile that says
+    /// tenant routes should leak to the underlay?
+    HasAnyVpcTenantHostLeakToUnderlay: bool,
+
     /// The size of the of the prefix used for the internal
     /// bridge routing.
     InterceptBridgePrefixLen: u8,
@@ -1156,6 +1174,8 @@ struct TmplNetworkSecurityGroupRule {
 #[allow(non_snake_case)]
 #[derive(Clone, Gtmpl, Debug)]
 struct TmplRoutingProfile {
+    LeakTenantHostRoutesToUnderlay: bool,
+    LeakDefaultRouteFromUnderlay: bool,
     RouteTargetImports: Vec<TmplRouteTargetConfig>,
     RouteTargetsOnExports: Vec<TmplRouteTargetConfig>,
 }
@@ -1245,6 +1265,7 @@ struct TmplVpc {
     VrfLoopback: String,
 
     HostInterfaces: Vec<TmplHostInterfaces>,
+    PortConfigs: Vec<TmplConfigPort>,
 
     HasVpcPeerPrefixes: bool,
     VpcPeerPrefixes: Vec<Prefix>,
@@ -1476,6 +1497,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_template_for_etv_nvue() {
+        assert!(template_for(VpcVirtualizationType::EthernetVirtualizerWithNvue).is_ok());
+    }
+
+    #[test]
+    fn test_template_for_fnn() {
+        assert!(template_for(VpcVirtualizationType::Fnn).is_ok());
+    }
+
+    #[test]
+    fn test_template_for_rejects_legacy_etv() {
+        let err = template_for(VpcVirtualizationType::EthernetVirtualizer).unwrap_err();
+        assert!(
+            err.to_string().contains("EthernetVirtualizer"),
+            "unexpected error: {err}"
+        );
+    }
+
     /// Helper to compare build() output against a golden file, using the same
     /// diff-based comparison as the ethernet_virtualization tests.
     fn assert_build_matches_golden(conf: NvueConfig, golden_file: &str) {
@@ -1486,6 +1526,18 @@ mod tests {
             eprintln!("Golden file diff:\n{}", r.report());
             panic!("build output does not match golden file");
         }
+    }
+
+    #[test]
+    fn test_build_rejects_legacy_ethernet_virtualizer() {
+        let mut conf = minimal_nvue_config();
+        conf.vpc_virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
+        let err = build(conf).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("EthernetVirtualizer"),
+            "unexpected error message: {msg}"
+        );
     }
 
     #[test]
@@ -1531,6 +1583,8 @@ mod tests {
         conf.deny_prefixes = vec!["192.0.2.0/24".into(), "2001:db8:bad::/48".into()];
         conf.site_fabric_prefixes = vec!["10.0.0.0/16".into(), "fd00:abcd::/32".into()];
         conf.ct_routing_profile = Some(RoutingProfile {
+            leak_default_route_from_underlay: false,
+            leak_tenant_host_routes_to_underlay: false,
             route_target_imports: vec![],
             route_targets_on_exports: vec![],
         });
@@ -1603,6 +1657,9 @@ mod tests {
         conf.deny_prefixes = vec!["192.0.2.0/24".into()];
         conf.site_fabric_prefixes = vec!["10.0.0.0/16".into(), "fd00::/48".into()];
         conf.ct_routing_profile = Some(RoutingProfile {
+            leak_default_route_from_underlay: false,
+            leak_tenant_host_routes_to_underlay: false,
+
             route_target_imports: vec![],
             route_targets_on_exports: vec![],
         });
@@ -1679,6 +1736,8 @@ mod tests {
         conf.use_vpc_isolation = true;
         conf.site_fabric_prefixes = vec!["10.0.0.0/16".into(), "fd00::/32".into()];
         conf.ct_routing_profile = Some(RoutingProfile {
+            leak_default_route_from_underlay: false,
+            leak_tenant_host_routes_to_underlay: false,
             route_target_imports: vec![],
             route_targets_on_exports: vec![],
         });

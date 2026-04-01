@@ -273,6 +273,11 @@ pub async fn find(
         builder.push_bind(id);
     }
 
+    if let Some(rack_id) = search_config.rack_id {
+        builder.push(" AND m.rack_id = ");
+        builder.push_bind(rack_id);
+    }
+
     let all_machines: Vec<Machine> = builder
         .build_query_as()
         .fetch_all(txn)
@@ -1721,6 +1726,11 @@ pub async fn find_machine_ids(
     if let Some(id) = search_config.instance_type_id {
         qb.push(" AND instance_type_id = ");
         qb.push_bind(id);
+    }
+
+    if let Some(rack_id) = search_config.rack_id {
+        qb.push(" AND rack_id = ");
+        qb.push_bind(rack_id);
     }
 
     if search_config.for_update {

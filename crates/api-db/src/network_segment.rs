@@ -454,13 +454,12 @@ pub async fn try_update_controller_state(
     txn: &mut PgConnection,
     segment_id: NetworkSegmentId,
     expected_version: ConfigVersion,
+    new_version: ConfigVersion,
     new_state: &NetworkSegmentControllerState,
 ) -> Result<bool, DatabaseError> {
-    let next_version = expected_version.increment();
-
     let query = "UPDATE network_segments SET controller_state_version=$1, controller_state=$2::json where id=$3::uuid AND controller_state_version=$4 returning id";
     let result = sqlx::query_as::<_, NetworkSegmentId>(query)
-        .bind(next_version)
+        .bind(new_version)
         .bind(sqlx::types::Json(new_state))
         .bind(segment_id)
         .bind(expected_version)

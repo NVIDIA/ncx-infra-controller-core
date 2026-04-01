@@ -564,14 +564,13 @@ impl StateControllerIO for TestStateControllerIO {
         txn: &mut PgConnection,
         object_id: &Self::ObjectId,
         old_version: ConfigVersion,
+        new_version: ConfigVersion,
         new_state: &Self::ControllerState,
     ) -> Result<bool, DatabaseError> {
-        let next_version = old_version.increment();
-
         let query = "UPDATE test_objects SET controller_state_version=$1, controller_state=$2::json
             where id=$3 AND controller_state_version=$4 returning id";
         let result = sqlx::query_scalar::<_, String>(query)
-            .bind(next_version)
+            .bind(new_version)
             .bind(sqlx::types::Json(new_state))
             .bind(object_id)
             .bind(old_version)
@@ -586,7 +585,7 @@ impl StateControllerIO for TestStateControllerIO {
         &self,
         _txn: &mut PgConnection,
         _object_id: &Self::ObjectId,
-        _old_version: ConfigVersion,
+        _new_version: ConfigVersion,
         _new_state: &Self::ControllerState,
     ) -> Result<(), DatabaseError> {
         Ok(())
@@ -669,6 +668,7 @@ impl StateControllerIO for PanicInListObjectsStateControllerIO {
         _txn: &mut PgConnection,
         _object_id: &Self::ObjectId,
         _old_version: ConfigVersion,
+        _new_version: ConfigVersion,
         _new_state: &Self::ControllerState,
     ) -> Result<bool, DatabaseError> {
         unreachable!("persist_controller_state should never be called in this test")
@@ -678,7 +678,7 @@ impl StateControllerIO for PanicInListObjectsStateControllerIO {
         &self,
         _txn: &mut PgConnection,
         _object_id: &Self::ObjectId,
-        _old_version: ConfigVersion,
+        _new_version: ConfigVersion,
         _new_state: &Self::ControllerState,
     ) -> Result<(), DatabaseError> {
         unreachable!("persist_state_history should never be called in this test")

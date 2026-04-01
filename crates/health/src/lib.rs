@@ -48,9 +48,13 @@ use crate::otlp::drain::OtlpDrainTask;
 use crate::pipeline::EventPipeline;
 use crate::processor::{
     EventProcessingPipeline, EventProcessor, HealthReportProcessor, LeakEventProcessor,
+    RackLeakProcessor,
 };
 use crate::sharding::ShardManager;
-use crate::sink::{DataSink, HealthOverrideSink, PrometheusSink, TracingSink};
+use crate::sink::{
+    CompositeDataSink, DataSink, HealthOverrideSink, PrometheusSink, RackHealthOverrideSink,
+    TracingSink,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum HealthError {
@@ -123,8 +127,6 @@ fn build_endpoint_wiring(config: &Config) -> Result<EndpointWiring, HealthError>
             source_cfg.client_cert.clone(),
             source_cfg.client_key.clone(),
             &source_cfg.api_url,
-            config.collectors.nmxt.is_enabled(),
-            config.collectors.nvue.is_enabled(),
         ));
         sources.push(api_client as Arc<dyn EndpointSource>);
     }
@@ -161,12 +163,17 @@ fn build_event_pipeline(
 
     if let Configurable::Enabled(_) = &config.sinks.prometheus {
         sinks.push(Arc::new(PrometheusSink::new(
-            metrics_manager,
+            metrics_manager.clone(),
             &config.metrics.prefix,
         )?));
     }
 
-    processors.push(Arc::new(HealthReportProcessor::new()));
+    if config.sinks.tracing.is_enabled()
+        || config.sinks.health_override.is_enabled()
+        || config.processors.leak_detection.is_enabled()
+    {
+        processors.push(Arc::new(HealthReportProcessor::new()));
+    }
 
     if let Configurable::Enabled(ref leak_detection_cfg) = config.processors.leak_detection {
         processors.push(Arc::new(LeakEventProcessor::new(
@@ -174,8 +181,18 @@ fn build_event_pipeline(
         )));
     }
 
+    if let Configurable::Enabled(ref rack_leak_cfg) = config.processors.rack_leak {
+        processors.push(Arc::new(RackLeakProcessor::new(
+            rack_leak_cfg.leaking_tray_threshold,
+        )));
+    }
+
     if let Configurable::Enabled(ref sink_cfg) = config.sinks.health_override {
         sinks.push(Arc::new(HealthOverrideSink::new(sink_cfg)?));
+    }
+
+    if let Configurable::Enabled(ref sink_cfg) = config.sinks.rack_health_override {
+        sinks.push(Arc::new(RackHealthOverrideSink::new(sink_cfg)?));
     }
 
     if sinks.is_empty() {
@@ -207,7 +224,7 @@ fn build_event_pipeline(
 
 pub async fn run_service(config: Config) -> Result<(), HealthError> {
     let metrics_endpoint = config.metrics_addr()?;
-    let metrics_manager = Arc::new(MetricsManager::new());
+    let metrics_manager = Arc::new(MetricsManager::new(&config.metrics.prefix)?);
 
     let join_listener = tokio::spawn(run_metrics_server(
         metrics_endpoint,

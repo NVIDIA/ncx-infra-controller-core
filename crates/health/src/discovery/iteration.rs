@@ -30,10 +30,7 @@ use crate::pipeline::EventPipeline;
 use crate::sharding::ShardManager;
 
 fn active_keys(sharded_endpoints: &[Arc<BmcEndpoint>]) -> HashSet<Cow<'static, str>> {
-    sharded_endpoints
-        .iter()
-        .map(|e| e.addr.hash_key())
-        .collect()
+    sharded_endpoints.iter().map(|e| e.hash_key()).collect()
 }
 
 pub async fn run_discovery_iteration(
@@ -60,7 +57,7 @@ pub async fn run_discovery_iteration(
 
     let sharded_endpoints: Vec<Arc<BmcEndpoint>> = endpoints
         .iter()
-        .filter(|ep| shard_manager.should_monitor(&ep.addr))
+        .filter(|ep| shard_manager.should_monitor(ep))
         .cloned()
         .collect();
 
@@ -103,24 +100,25 @@ mod tests {
     use crate::endpoint::{BmcAddr, BmcCredentials, EndpointMetadata, SwitchData};
 
     fn endpoint(mac: MacAddress, switch: bool) -> Arc<BmcEndpoint> {
-        Arc::new(BmcEndpoint {
-            addr: BmcAddr {
+        Arc::new(BmcEndpoint::with_fixed_credentials(
+            BmcAddr {
                 ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Some(443),
                 mac,
             },
-            credentials: BmcCredentials {
+            BmcCredentials::UsernamePassword {
                 username: "user".to_string(),
-                password: "pass".to_string(),
+                password: Some("pass".to_string()),
             },
-            metadata: if switch {
+            if switch {
                 Some(EndpointMetadata::Switch(SwitchData {
                     serial: format!("serial-{mac}"),
                 }))
             } else {
                 None
             },
-        })
+            None,
+        ))
     }
 
     #[test]
@@ -130,9 +128,6 @@ mod tests {
 
         let keys = active_keys(&[ep1.clone(), ep2.clone()]);
 
-        assert_eq!(
-            keys,
-            HashSet::from([ep1.addr.hash_key(), ep2.addr.hash_key()])
-        );
+        assert_eq!(keys, HashSet::from([ep1.hash_key(), ep2.hash_key()]));
     }
 }
