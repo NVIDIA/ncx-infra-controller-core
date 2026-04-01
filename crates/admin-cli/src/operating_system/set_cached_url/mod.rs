@@ -15,22 +15,17 @@
  * limitations under the License.
  */
 
-use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult};
-use ::rpc::forge::DeleteOperatingSystemRequest;
+pub mod args;
+pub mod cmd;
 
-use super::args::Args;
-use crate::operating_system::common::str_to_os_id;
-use crate::rpc::ApiClient;
+use ::rpc::admin_cli::CarbideCliResult;
+pub use args::Args;
 
-pub async fn delete(opts: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
-    let id = str_to_os_id(&opts.id)?;
+use crate::cfg::run::Run;
+use crate::cfg::runtime::RuntimeContext;
 
-    api_client
-        .0
-        .delete_operating_system(DeleteOperatingSystemRequest { id: Some(id) })
-        .await
-        .map_err(CarbideCliError::from)?;
-
-    println!("Operating system {} deleted.", opts.id);
-    Ok(())
+impl Run for Args {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmd::set_cached_url(self, ctx.config.format, &ctx.api_client).await
+    }
 }

@@ -138,9 +138,8 @@ pub async fn detail(
         None => (false, name),
     };
 
-    let request = tonic::Request::new(forgerpc::GetIpxeScriptTemplateRequest {
-        name: name.clone(),
-    });
+    let request =
+        tonic::Request::new(forgerpc::GetIpxeScriptTemplateRequest { name: name.clone() });
 
     let tmpl = match state.get_ipxe_script_template(request).await {
         Ok(resp) => resp.into_inner(),

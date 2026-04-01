@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
+use ::rpc::forge::IpxeScriptParameter;
 use clap::Parser;
 
 use crate::operating_system::common::parse_param;
-use ::rpc::forge::IpxeOsParameter;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -28,19 +28,34 @@ pub struct Args {
     #[clap(short, long, help = "Organization identifier for this OS definition.")]
     pub org: String,
 
-    #[clap(long, help = "Optional UUID for the new OS definition (default: server-generated).")]
+    #[clap(
+        long,
+        help = "Optional UUID for the new OS definition (default: server-generated)."
+    )]
     pub id: Option<String>,
 
     #[clap(short, long, help = "Optional human-readable description.")]
     pub description: Option<String>,
 
-    #[clap(long, default_value = "true", help = "Whether this OS definition is active.")]
+    #[clap(
+        long,
+        default_value = "true",
+        help = "Whether this OS definition is active."
+    )]
     pub is_active: bool,
 
-    #[clap(long, default_value = "false", help = "Allow users to override OS parameters.")]
+    #[clap(
+        long,
+        default_value = "false",
+        help = "Allow users to override OS parameters."
+    )]
     pub allow_override: bool,
 
-    #[clap(long, default_value = "false", help = "Enable phone-home on first boot.")]
+    #[clap(
+        long,
+        default_value = "false",
+        help = "Enable phone-home on first boot."
+    )]
     pub phone_home_enabled: bool,
 
     #[clap(long, help = "Optional cloud-init / user-data script.")]
@@ -66,5 +81,5 @@ pub struct Args {
         value_parser = parse_param,
         help = "iPXE parameter in KEY=VALUE format. May be repeated."
     )]
-    pub params: Vec<IpxeOsParameter>,
+    pub params: Vec<IpxeScriptParameter>,
 }

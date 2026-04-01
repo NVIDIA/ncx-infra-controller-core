@@ -15,11 +15,12 @@
  * limitations under the License.
  */
 
+use carbide_uuid::operating_system::OperatingSystemId;
 use common::api_fixtures::instance::{default_tenant_config, single_interface_network_config};
 use common::api_fixtures::{create_managed_host, create_test_env};
 use config_version::ConfigVersion;
 use rpc::forge::forge_server::Forge;
-use rpc::forge::{IpxeOsArtifact, IpxeOsParameter};
+use rpc::forge::{IpxeScriptArtifact, IpxeScriptParameter};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::tests::common;
@@ -221,7 +222,7 @@ async fn test_create_instance_with_ipxe_template_os(_: PgPoolOptions, options: P
                 user_data: Some("os-level-userdata".to_string()),
                 ipxe_script: None,
                 ipxe_template_name: Some("raw-ipxe".to_string()),
-                ipxe_parameters: vec![rpc::forge::IpxeOsParameter {
+                ipxe_parameters: vec![rpc::forge::IpxeScriptParameter {
                     name: "ipxe".to_string(),
                     value: "chain http://boot.example.com".to_string(),
                 }],
@@ -234,16 +235,16 @@ async fn test_create_instance_with_ipxe_template_os(_: PgPoolOptions, options: P
 
     assert_eq!(
         os_def.r#type,
-        rpc::forge::OperatingSystemType::OsTypeIpxeOsDefinition as i32
+        rpc::forge::OperatingSystemType::OsTypeTemplatedIpxe as i32
     );
-    let os_id = os_def.id.clone().unwrap();
+    let os_id = os_def.id.unwrap();
 
     let instance_os = rpc::forge::OperatingSystem {
         phone_home_enabled: false,
         run_provisioning_instructions_on_every_boot: false,
         user_data: Some("instance-userdata".to_string()),
         variant: Some(rpc::forge::operating_system::Variant::OperatingSystemId(
-            os_id.clone(),
+            os_id,
         )),
     };
 
@@ -265,7 +266,7 @@ async fn test_create_instance_with_ipxe_template_os(_: PgPoolOptions, options: P
     let os = instance.config().os();
     match &os.variant {
         Some(rpc::forge::operating_system::Variant::OperatingSystemId(id)) => {
-            assert_eq!(id.value, os_def.id.as_ref().unwrap().value);
+            assert_eq!(*id, os_id);
         }
         other => panic!("expected OperatingSystemId variant, got {other:?}"),
     }
@@ -288,12 +289,12 @@ async fn test_create_instance_with_ipxe_template_os(_: PgPoolOptions, options: P
     );
 }
 
-/// Helper: creates an OS definition via the API and returns its UUID proto.
+/// Helper: creates an OS definition via the API and returns its OS id.
 async fn create_os_definition(
     env: &crate::tests::common::api_fixtures::TestEnv,
     name: &str,
     is_active: bool,
-) -> rpc::common::Uuid {
+) -> OperatingSystemId {
     env.api
         .create_operating_system(tonic::Request::new(
             rpc::forge::CreateOperatingSystemRequest {
@@ -307,7 +308,7 @@ async fn create_os_definition(
                 user_data: None,
                 ipxe_script: None,
                 ipxe_template_name: Some("raw-ipxe".to_string()),
-                ipxe_parameters: vec![IpxeOsParameter {
+                ipxe_parameters: vec![IpxeScriptParameter {
                     name: "ipxe".to_string(),
                     value: "chain http://boot.example.com".to_string(),
                 }],
@@ -371,16 +372,13 @@ async fn test_allocate_instance_rejects_inactive_os(_: PgPoolOptions, options: P
 }
 
 #[crate::sqlx_test]
-async fn test_allocate_instance_rejects_not_ready_os(
-    _: PgPoolOptions,
-    options: PgConnectOptions,
-) {
+async fn test_allocate_instance_rejects_not_ready_os(_: PgPoolOptions, options: PgConnectOptions) {
     let pool = PgPoolOptions::new().connect_with(options).await.unwrap();
     let env = create_test_env(pool).await;
     let segment_id = env.create_vpc_and_tenant_segment().await;
     let mh = create_managed_host(&env).await;
 
-    // CachedOnly artifact without local_url → OS status is PROVISIONING
+    // CachedOnly artifact without cached_url → OS status is PROVISIONING
     let os = env
         .api
         .create_operating_system(tonic::Request::new(
@@ -395,18 +393,18 @@ async fn test_allocate_instance_rejects_not_ready_os(
                 user_data: None,
                 ipxe_script: None,
                 ipxe_template_name: Some("raw-ipxe".to_string()),
-                ipxe_parameters: vec![IpxeOsParameter {
+                ipxe_parameters: vec![IpxeScriptParameter {
                     name: "ipxe".to_string(),
                     value: "chain http://boot.example.com".to_string(),
                 }],
-                ipxe_artifacts: vec![IpxeOsArtifact {
+                ipxe_artifacts: vec![IpxeScriptArtifact {
                     name: "kernel".to_string(),
                     url: "https://example.com/kernel".to_string(),
                     sha: None,
                     auth_type: None,
                     auth_token: None,
-                    cache_strategy: rpc::forge::ArtifactCacheStrategy::CachedOnly as i32,
-                    local_url: None,
+                    cache_strategy: rpc::forge::IpxeScriptArtifactCacheStrategy::CachedOnly as i32,
+                    cached_url: None,
                 }],
             },
         ))
@@ -457,10 +455,7 @@ async fn test_allocate_instance_rejects_not_ready_os(
 }
 
 #[crate::sqlx_test]
-async fn test_update_instance_os_rejects_inactive_os(
-    _: PgPoolOptions,
-    options: PgConnectOptions,
-) {
+async fn test_update_instance_os_rejects_inactive_os(_: PgPoolOptions, options: PgConnectOptions) {
     let pool = PgPoolOptions::new().connect_with(options).await.unwrap();
     let env = create_test_env(pool).await;
     let segment_id = env.create_vpc_and_tenant_segment().await;

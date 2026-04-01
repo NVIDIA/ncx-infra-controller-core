@@ -15,18 +15,21 @@
  * limitations under the License.
  */
 
+use ::rpc::forge::IpxeScriptArtifactUpdateRequest;
 use clap::Parser;
 
-use ::rpc::forge::ArtifactLocalUrlUpdate;
-
-fn parse_local_url_update(s: &str) -> Result<ArtifactLocalUrlUpdate, String> {
+fn parse_cached_url_update(s: &str) -> Result<IpxeScriptArtifactUpdateRequest, String> {
     let (name, url) = s
         .split_once('=')
         .ok_or_else(|| format!("expected NAME=URL (or NAME= to clear), got '{s}'"))?;
-    let local_url = if url.is_empty() { None } else { Some(url.to_string()) };
-    Ok(ArtifactLocalUrlUpdate {
+    let cached_url = if url.is_empty() {
+        None
+    } else {
+        Some(url.to_string())
+    };
+    Ok(IpxeScriptArtifactUpdateRequest {
         name: name.to_string(),
-        local_url,
+        cached_url,
     })
 }
 
@@ -38,9 +41,9 @@ pub struct Args {
     #[clap(
         long = "set",
         value_name = "NAME=URL",
-        value_parser = parse_local_url_update,
+        value_parser = parse_cached_url_update,
         required = true,
-        help = "Set local_url for an artifact. Use NAME=URL to set, NAME= to clear. May be repeated."
+        help = "Set cached_url for an artifact. Use NAME=URL to set, NAME= to clear. May be repeated."
     )]
-    pub updates: Vec<ArtifactLocalUrlUpdate>,
+    pub updates: Vec<IpxeScriptArtifactUpdateRequest>,
 }

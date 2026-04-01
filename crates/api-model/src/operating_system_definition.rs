@@ -22,12 +22,15 @@
 //! The model type name matches the RPC message name (OperatingSystemDefinition).
 
 use ::rpc::forge::{self as forgerpc};
-use carbide_ipxe_renderer::{ArtifactCacheStrategy, IpxeOsArtifact, IpxeOsParameter};
+use carbide_ipxe_renderer::{
+    IpxeScriptArtifact, IpxeScriptArtifactCacheStrategy, IpxeScriptParameter,
+};
+use carbide_uuid::operating_system::OperatingSystemId;
 
 /// Database value for the raw inline iPXE script OS type.
 pub const OS_TYPE_IPXE: &str = "iPXE";
 /// Database value for the iPXE OS definition (template-based) OS type.
-pub const OS_TYPE_IPXE_OS_DEFINITION: &str = "ipxe_os_definition";
+pub const OS_TYPE_TEMPLATED_IPXE: &str = "ipxe_os_definition";
 
 /// Operating system definition (list/get/create/update response).
 ///
@@ -49,8 +52,8 @@ pub struct OperatingSystemDefinition {
     pub updated: String,
     pub ipxe_script: Option<String>,
     pub ipxe_template_name: Option<String>,
-    pub ipxe_parameters: Vec<IpxeOsParameter>,
-    pub ipxe_artifacts: Vec<IpxeOsArtifact>,
+    pub ipxe_parameters: Vec<IpxeScriptParameter>,
+    pub ipxe_artifacts: Vec<IpxeScriptArtifact>,
     pub ipxe_definition_hash: Option<String>,
 }
 
@@ -58,11 +61,14 @@ impl From<OperatingSystemDefinition> for forgerpc::OperatingSystemDefinition {
     fn from(m: OperatingSystemDefinition) -> Self {
         let os_type = match m.type_.as_str() {
             OS_TYPE_IPXE => forgerpc::OperatingSystemType::OsTypeIpxe,
-            OS_TYPE_IPXE_OS_DEFINITION => forgerpc::OperatingSystemType::OsTypeIpxeOsDefinition,
+            OS_TYPE_TEMPLATED_IPXE => forgerpc::OperatingSystemType::OsTypeTemplatedIpxe,
             _ => forgerpc::OperatingSystemType::OsTypeUnspecified,
         };
         Self {
-            id: Some(::rpc::common::Uuid { value: m.id }),
+            id: Some(
+                m.id.parse::<OperatingSystemId>()
+                    .expect("operating system id from model must be a valid UUID"),
+            ),
             name: m.name,
             description: m.description,
             tenant_organization_id: m.tenant_organization_id,
@@ -80,7 +86,7 @@ impl From<OperatingSystemDefinition> for forgerpc::OperatingSystemDefinition {
             ipxe_parameters: m
                 .ipxe_parameters
                 .into_iter()
-                .map(|p| forgerpc::IpxeOsParameter {
+                .map(|p| forgerpc::IpxeScriptParameter {
                     name: p.name,
                     value: p.value,
                 })
@@ -88,19 +94,19 @@ impl From<OperatingSystemDefinition> for forgerpc::OperatingSystemDefinition {
             ipxe_artifacts: m
                 .ipxe_artifacts
                 .into_iter()
-                .map(|a| forgerpc::IpxeOsArtifact {
+                .map(|a| forgerpc::IpxeScriptArtifact {
                     name: a.name,
                     url: a.url,
                     sha: a.sha,
                     auth_type: a.auth_type,
                     auth_token: a.auth_token,
                     cache_strategy: match a.cache_strategy {
-                        ArtifactCacheStrategy::CacheAsNeeded => 0,
-                        ArtifactCacheStrategy::LocalOnly => 1,
-                        ArtifactCacheStrategy::CachedOnly => 2,
-                        ArtifactCacheStrategy::RemoteOnly => 3,
+                        IpxeScriptArtifactCacheStrategy::CacheAsNeeded => 0,
+                        IpxeScriptArtifactCacheStrategy::LocalOnly => 1,
+                        IpxeScriptArtifactCacheStrategy::CachedOnly => 2,
+                        IpxeScriptArtifactCacheStrategy::RemoteOnly => 3,
                     },
-                    local_url: a.local_url,
+                    cached_url: a.cached_url,
                 })
                 .collect(),
             ipxe_definition_hash: m.ipxe_definition_hash,

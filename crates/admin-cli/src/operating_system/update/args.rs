@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
+use ::rpc::forge::IpxeScriptParameter;
 use clap::Parser;
 
 use crate::operating_system::common::parse_param;
-use ::rpc::forge::IpxeOsParameter;
 
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
@@ -63,5 +63,5 @@ pub struct Args {
         value_parser = parse_param,
         help = "Replace all iPXE parameters with these KEY=VALUE pairs. May be repeated."
     )]
-    pub params: Vec<IpxeOsParameter>,
+    pub params: Vec<IpxeScriptParameter>,
 }

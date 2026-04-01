@@ -16,19 +16,19 @@
  */
 
 use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult};
-use ::rpc::forge::{IpxeOsParameters, UpdateOperatingSystemRequest};
+use ::rpc::forge::{IpxeScriptParameters, UpdateOperatingSystemRequest};
 
 use super::args::Args;
-use crate::operating_system::common::str_to_rpc_uuid;
+use crate::operating_system::common::str_to_os_id;
 use crate::rpc::ApiClient;
 
 pub async fn update(opts: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
-    let id = str_to_rpc_uuid(&opts.id)?;
+    let id = str_to_os_id(&opts.id)?;
 
     let ipxe_parameters = if opts.params.is_empty() {
         None
     } else {
-        Some(IpxeOsParameters { items: opts.params })
+        Some(IpxeScriptParameters { items: opts.params })
     };
 
     let os = api_client
@@ -53,7 +53,7 @@ pub async fn update(opts: Args, api_client: &ApiClient) -> CarbideCliResult<()> 
     println!(
         "Operating system updated: {} (id={})",
         os.name,
-        os.id.as_ref().map(|u| u.value.as_str()).unwrap_or("")
+        os.id.map(|u| u.to_string()).as_deref().unwrap_or("")
     );
     Ok(())
 }

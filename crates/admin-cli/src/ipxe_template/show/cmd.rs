@@ -41,14 +41,8 @@ pub async fn handle_show(
     }
 }
 
-async fn list_all(
-    format: OutputFormat,
-    api_client: &ApiClient,
-) -> Result<(), CarbideCliError> {
-    let result = api_client
-        .0
-        .list_ipxe_script_templates()
-        .await?;
+async fn list_all(format: OutputFormat, api_client: &ApiClient) -> Result<(), CarbideCliError> {
+    let result = api_client.0.list_ipxe_script_templates().await?;
 
     if format == OutputFormat::Json {
         println!("{}", serde_json::to_string_pretty(&result.templates)?);

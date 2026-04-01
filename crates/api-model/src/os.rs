@@ -129,9 +129,7 @@ impl TryFrom<rpc::forge::OperatingSystem> for OperatingSystem {
                 })?)
             }
             rpc::forge::operating_system::Variant::OperatingSystemId(id) => {
-                OperatingSystemVariant::OperatingSystemId(Uuid::try_from(id).map_err(|e| {
-                    RpcDataConversionError::InvalidUuid("operating_system_id: ", e.to_string())
-                })?)
+                OperatingSystemVariant::OperatingSystemId(Uuid::from(id))
             }
         };
 

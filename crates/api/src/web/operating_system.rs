@@ -153,7 +153,7 @@ struct OsParameter {
 struct OsArtifact {
     name: String,
     url: String,
-    local_url: String,
+    cached_url: String,
     sha: String,
     cache_strategy: String,
 }
@@ -181,13 +181,13 @@ impl From<forgerpc::OperatingSystemDefinition> for OsDetail {
             .iter()
             .map(|a| {
                 let cache_strategy =
-                    forgerpc::ArtifactCacheStrategy::try_from(a.cache_strategy)
+                    forgerpc::IpxeScriptArtifactCacheStrategy::try_from(a.cache_strategy)
                         .map(|s| format!("{s:?}"))
                         .unwrap_or_else(|_| "Unknown".to_string());
                 OsArtifact {
                     name: a.name.clone(),
                     url: a.url.clone(),
-                    local_url: a.local_url.clone().unwrap_or_default(),
+                    cached_url: a.cached_url.clone().unwrap_or_default(),
                     sha: a.sha.clone().unwrap_or_default(),
                     cache_strategy,
                 }
@@ -224,11 +224,12 @@ pub async fn detail(
         None => (false, os_id),
     };
 
-    let uuid = rpc::common::Uuid {
-        value: os_id.clone(),
+    let os_id_msg: carbide_uuid::operating_system::OperatingSystemId = match os_id.parse() {
+        Ok(id) => id,
+        Err(_) => return super::not_found_response(os_id),
     };
 
-    let request = tonic::Request::new(uuid);
+    let request = tonic::Request::new(os_id_msg);
     let os = match state.get_operating_system(request).await {
         Ok(resp) => resp.into_inner(),
         Err(err) if err.code() == tonic::Code::NotFound => {

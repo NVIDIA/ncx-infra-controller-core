@@ -56,6 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .extern_path(".common.VpcPeeringId", "::carbide_uuid::vpc_peering::VpcPeeringId")
         .extern_path(".common.VpcPrefixId", "::carbide_uuid::vpc::VpcPrefixId")
         .extern_path(".common.ComputeAllocationId", "::carbide_uuid::compute_allocation::ComputeAllocationId")
+        .extern_path(".common.OperatingSystemId", "::carbide_uuid::operating_system::OperatingSystemId")
         .extern_path(".measured_boot.MeasurementSystemProfileId", "::carbide_uuid::measured_boot::MeasurementSystemProfileId")
         .extern_path(".measured_boot.MeasurementSystemProfileAttrId", "::carbide_uuid::measured_boot::MeasurementSystemProfileAttrId")
         .extern_path(".measured_boot.MeasurementBundleId", "::carbide_uuid::measured_boot::MeasurementBundleId")
@@ -109,22 +110,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
         .type_attribute("forge.InstanceStorageConfig", "#[derive(serde::Serialize)]")
-        
         .type_attribute(
-            "forge.IpxeOsParameter",
+            "forge.IpxeScriptParameter",
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
         .type_attribute(
-            "forge.IpxeOsArtifact",
+            "forge.IpxeScriptArtifact",
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
         .type_attribute(
             "forge.IpxeScriptTemplate",
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
-        
         .type_attribute(
-            "forge.ArtifactCacheStrategy",
+            "forge.IpxeScriptArtifactCacheStrategy",
             "#[derive(serde::Deserialize, serde::Serialize)]",
         )
         .type_attribute("forge.TenantConfig", "#[derive(serde::Serialize)]")
@@ -870,6 +869,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (
                 ".common.ComputeAllocationId",
                 "::carbide_uuid::compute_allocation::ComputeAllocationId",
+            ),
+            (
+                ".common.OperatingSystemId",
+                "::carbide_uuid::operating_system::OperatingSystemId",
             ),
             (".common.RackId", "::carbide_uuid::rack::RackId"),
             (

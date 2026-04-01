@@ -16,8 +16,8 @@
  */
 use ::rpc::forge as rpc;
 use carbide_ipxe_renderer::{
-    ArtifactCacheStrategy, DefaultIpxeOsRenderer, IpxeOs, IpxeOsArtifact, IpxeOsParameter,
-    IpxeOsRenderer,
+    DefaultIpxeScriptRenderer, IpxeScriptArtifact, IpxeScriptArtifactCacheStrategy,
+    IpxeScriptParameter, IpxeScriptRenderer, IpxeTemplatedScript,
 };
 use carbide_uuid::machine::{MachineId, MachineInterfaceId, MachineType};
 use db::{self};
@@ -32,21 +32,20 @@ use sqlx::PgConnection;
 
 use crate::CarbideError;
 
-/// Converts an operating_systems row (type ipxe_os_definition) to IpxeOs for the renderer.
-fn operating_system_row_to_ipxe_os(
+/// Converts an operating_systems row (type ipxe_os_definition) to IpxeTemplatedScript for the renderer.
+fn operating_system_row_to_ipxe_templated_script(
     row: &db::operating_system::OperatingSystem,
-) -> Result<IpxeOs, CarbideError> {
-    if row.type_ != model::operating_system_definition::OS_TYPE_IPXE_OS_DEFINITION {
+) -> Result<IpxeTemplatedScript, CarbideError> {
+    if row.type_ != model::operating_system_definition::OS_TYPE_TEMPLATED_IPXE {
         return Err(CarbideError::internal(format!(
             "operating_system {} has type {}, expected {}",
-            row.id, row.type_, model::operating_system_definition::OS_TYPE_IPXE_OS_DEFINITION,
+            row.id,
+            row.type_,
+            model::operating_system_definition::OS_TYPE_TEMPLATED_IPXE,
         )));
     }
-    let ipxe_template_name = row
-        .ipxe_template_name
-        .clone()
-        .unwrap_or_default();
-    let parameters: Vec<IpxeOsParameter> = row
+    let ipxe_template_name = row.ipxe_template_name.clone().unwrap_or_default();
+    let parameters: Vec<IpxeScriptParameter> = row
         .ipxe_parameters
         .as_ref()
         .and_then(|j| {
@@ -54,7 +53,7 @@ fn operating_system_row_to_ipxe_os(
                 arr.iter()
                     .filter_map(|v| {
                         let obj = v.as_object()?;
-                        Some(IpxeOsParameter {
+                        Some(IpxeScriptParameter {
                             name: obj.get("name")?.as_str()?.to_string(),
                             value: obj.get("value")?.as_str().unwrap_or("").to_string(),
                         })
@@ -63,7 +62,7 @@ fn operating_system_row_to_ipxe_os(
             })
         })
         .unwrap_or_default();
-    let artifacts: Vec<IpxeOsArtifact> = row
+    let artifacts: Vec<IpxeScriptArtifact> = row
         .ipxe_artifacts
         .as_ref()
         .and_then(|j| {
@@ -76,12 +75,12 @@ fn operating_system_row_to_ipxe_os(
                             .and_then(|v| v.as_i64())
                             .unwrap_or(0)
                         {
-                            1 => ArtifactCacheStrategy::LocalOnly,
-                            2 => ArtifactCacheStrategy::CachedOnly,
-                            3 => ArtifactCacheStrategy::RemoteOnly,
-                            _ => ArtifactCacheStrategy::CacheAsNeeded,
+                            1 => IpxeScriptArtifactCacheStrategy::LocalOnly,
+                            2 => IpxeScriptArtifactCacheStrategy::CachedOnly,
+                            3 => IpxeScriptArtifactCacheStrategy::RemoteOnly,
+                            _ => IpxeScriptArtifactCacheStrategy::CacheAsNeeded,
                         };
-                        Some(IpxeOsArtifact {
+                        Some(IpxeScriptArtifact {
                             name: obj.get("name")?.as_str()?.to_string(),
                             url: obj.get("url")?.as_str().unwrap_or("").to_string(),
                             sha: obj.get("sha").and_then(|v| v.as_str()).map(String::from),
@@ -94,8 +93,8 @@ fn operating_system_row_to_ipxe_os(
                                 .and_then(|v| v.as_str())
                                 .map(String::from),
                             cache_strategy,
-                            local_url: obj
-                                .get("local_url")
+                            cached_url: obj
+                                .get("cached_url")
                                 .and_then(|v| v.as_str())
                                 .map(String::from),
                         })
@@ -104,7 +103,7 @@ fn operating_system_row_to_ipxe_os(
             })
         })
         .unwrap_or_default();
-    Ok(IpxeOs {
+    Ok(IpxeTemplatedScript {
         name: row.name.clone(),
         description: row.description.clone(),
         hash: row.ipxe_definition_hash.clone().unwrap_or_default(),
@@ -190,16 +189,16 @@ impl PxeInstructions {
         }.serialize_pxe_instructions()
     }
 
-    /// Render an IpxeOs definition using the template-based renderer
-    fn render_ipxe_os_definition(
-        ipxeos: &IpxeOs,
+    /// Render an IpxeTemplatedScript definition using the template-based renderer
+    fn render_ipxe_templated_script(
+        ipxeos: &IpxeTemplatedScript,
         base_url: &str,
         console: &str,
     ) -> Result<String, CarbideError> {
-        let renderer = DefaultIpxeOsRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new();
 
         // Build reserved parameters
-        let mut reserved_params = vec![IpxeOsParameter {
+        let mut reserved_params = vec![IpxeScriptParameter {
             name: "base_url".to_string(),
             value: base_url.to_string(),
         }];
@@ -211,7 +210,7 @@ impl PxeInstructions {
                 .iter()
                 .any(|p| p.to_lowercase() == "console")
         {
-            reserved_params.push(IpxeOsParameter {
+            reserved_params.push(IpxeScriptParameter {
                 name: "console".to_string(),
                 value: console.to_string(),
             });
@@ -498,9 +497,16 @@ exit ||
                             }
                             model::os::OperatingSystemVariant::OperatingSystemId(os_id) => {
                                 let row = db::operating_system::get(txn, os_id).await?;
-                                if row.type_ == model::operating_system_definition::OS_TYPE_IPXE_OS_DEFINITION {
-                                    let ipxeos = operating_system_row_to_ipxe_os(&row)?;
-                                    Self::render_ipxe_os_definition(&ipxeos, "${base-url}", console)?
+                                if row.type_
+                                    == model::operating_system_definition::OS_TYPE_TEMPLATED_IPXE
+                                {
+                                    let ipxeos =
+                                        operating_system_row_to_ipxe_templated_script(&row)?;
+                                    Self::render_ipxe_templated_script(
+                                        &ipxeos,
+                                        "${base-url}",
+                                        console,
+                                    )?
                                 } else {
                                     row.ipxe_script.unwrap_or_default()
                                 }

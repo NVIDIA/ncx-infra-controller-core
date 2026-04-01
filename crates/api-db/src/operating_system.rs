@@ -15,12 +15,13 @@
  * limitations under the License.
  */
 
+use carbide_ipxe_renderer::{
+    IpxeScriptArtifact, IpxeScriptArtifactCacheStrategy, IpxeScriptParameter,
+};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
-
-use carbide_ipxe_renderer::{ArtifactCacheStrategy, IpxeOsArtifact, IpxeOsParameter};
 
 use crate::DatabaseError;
 
@@ -29,13 +30,13 @@ pub const OS_STATUS_PROVISIONING: &str = "PROVISIONING";
 
 fn ipxe_parameters_from_json(
     j: Option<&sqlx::types::Json<serde_json::Value>>,
-) -> Vec<IpxeOsParameter> {
+) -> Vec<IpxeScriptParameter> {
     j.and_then(|j| j.0.as_array())
         .map(|arr| {
             arr.iter()
                 .filter_map(|v| {
                     let obj = v.as_object()?;
-                    Some(IpxeOsParameter {
+                    Some(IpxeScriptParameter {
                         name: obj.get("name")?.as_str()?.to_string(),
                         value: obj.get("value")?.as_str().unwrap_or("").to_string(),
                     })
@@ -47,7 +48,7 @@ fn ipxe_parameters_from_json(
 
 fn ipxe_artifacts_from_json(
     j: Option<&sqlx::types::Json<serde_json::Value>>,
-) -> Vec<IpxeOsArtifact> {
+) -> Vec<IpxeScriptArtifact> {
     j.and_then(|j| j.0.as_array())
         .map(|arr| {
             arr.iter()
@@ -58,12 +59,12 @@ fn ipxe_artifacts_from_json(
                         .and_then(|v| v.as_i64())
                         .unwrap_or(0)
                     {
-                        1 => ArtifactCacheStrategy::LocalOnly,
-                        2 => ArtifactCacheStrategy::CachedOnly,
-                        3 => ArtifactCacheStrategy::RemoteOnly,
-                        _ => ArtifactCacheStrategy::CacheAsNeeded,
+                        1 => IpxeScriptArtifactCacheStrategy::LocalOnly,
+                        2 => IpxeScriptArtifactCacheStrategy::CachedOnly,
+                        3 => IpxeScriptArtifactCacheStrategy::RemoteOnly,
+                        _ => IpxeScriptArtifactCacheStrategy::CacheAsNeeded,
                     };
-                    Some(IpxeOsArtifact {
+                    Some(IpxeScriptArtifact {
                         name: obj.get("name")?.as_str()?.to_string(),
                         url: obj.get("url")?.as_str().unwrap_or("").to_string(),
                         sha: obj.get("sha").and_then(|v| v.as_str()).map(String::from),
@@ -76,8 +77,8 @@ fn ipxe_artifacts_from_json(
                             .and_then(|v| v.as_str())
                             .map(String::from),
                         cache_strategy,
-                        local_url: obj
-                            .get("local_url")
+                        cached_url: obj
+                            .get("cached_url")
                             .and_then(|v| v.as_str())
                             .map(String::from),
                     })

@@ -133,7 +133,7 @@ async fn convert_instance_to_nice_format(
                         Some(Cow::Owned(format!("OS Image ID: {}", image.value)))
                     }
                     Some(::rpc::forge::operating_system::Variant::OperatingSystemId(id)) => {
-                        Some(Cow::Owned(format!("Operating System ID: {}", id.value)))
+                        Some(Cow::Owned(format!("Operating System ID: {}", id)))
                     }
                     None => None,
                 })

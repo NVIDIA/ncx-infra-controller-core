@@ -65,17 +65,13 @@ pub async fn validate_os_definition_usable(
         OperatingSystemVariant::OperatingSystemId(id) => id,
         _ => return Ok(()),
     };
-    let row = db::operating_system::get(txn, os_id)
-        .await
-        .map_err(|e| {
-            if e.is_not_found() {
-                CarbideError::FailedPrecondition(format!(
-                    "Operating system `{os_id}` does not exist"
-                ))
-            } else {
-                CarbideError::internal(format!("Failed to get operating system: {e}"))
-            }
-        })?;
+    let row = db::operating_system::get(txn, os_id).await.map_err(|e| {
+        if e.is_not_found() {
+            CarbideError::FailedPrecondition(format!("Operating system `{os_id}` does not exist"))
+        } else {
+            CarbideError::internal(format!("Failed to get operating system: {e}"))
+        }
+    })?;
     if !row.is_active {
         return Err(CarbideError::FailedPrecondition(format!(
             "Operating system `{os_id}` is not active"

@@ -436,7 +436,7 @@ mod tests {
             instance_type_id: None,
             network_security_group_id: None,
             extension_services_config: InstanceExtensionServicesConfig::default(),
-            extension_services_config_version: version.clone(),
+            extension_services_config_version: version,
             requested: Utc::now(),
             started: Utc::now(),
             finished: None,

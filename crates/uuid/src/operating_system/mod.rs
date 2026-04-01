@@ -15,17 +15,21 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmd;
+use crate::typed_uuids::{TypedUuid, UuidSubtype};
 
-use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Args;
+/// Marker type for OperatingSystemId.
+pub struct OperatingSystemIdMarker;
 
-use crate::cfg::run::Run;
-use crate::cfg::runtime::RuntimeContext;
+impl UuidSubtype for OperatingSystemIdMarker {
+    const TYPE_NAME: &'static str = "OperatingSystemId";
+}
 
-impl Run for Args {
-    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
-        cmd::set_local_url(self, ctx.config.format, &ctx.api_client).await
-    }
+/// OperatingSystemId is a strongly typed UUID specific to an operating system definition ID.
+pub type OperatingSystemId = TypedUuid<OperatingSystemIdMarker>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::typed_uuid_tests;
+    typed_uuid_tests!(OperatingSystemId, "OperatingSystemId", "id");
 }

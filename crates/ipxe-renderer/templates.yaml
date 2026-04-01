@@ -1,5 +1,5 @@
 # iPXE Script Templates
-# These templates are loaded at compile time into DefaultIpxeOsRenderer
+# These templates are loaded at compile time into DefaultIpxeScriptRenderer
 
 templates:
   - name: raw-ipxe

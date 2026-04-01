@@ -241,7 +241,9 @@ fn build_operating_system_for_snapshot(
                 ipxe_script: script,
             })
         }
-        model::operating_system_definition::OS_TYPE_IPXE_OS_DEFINITION => OperatingSystemVariant::OperatingSystemId(os_row.id),
+        model::operating_system_definition::OS_TYPE_TEMPLATED_IPXE => {
+            OperatingSystemVariant::OperatingSystemId(os_row.id)
+        }
         _ => {
             tracing::warn!(
                 os_id = %os_row.id,

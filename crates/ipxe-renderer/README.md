@@ -17,8 +17,8 @@ This crate provides a flexible, template-based approach to generating iPXE boot 
 
 ### Core Components
 
-- **`IpxeOsRenderer`**: Main trait for rendering iPXE scripts
-- **`DefaultIpxeOsRenderer`**: Default implementation with built-in templates
+- **`IpxeScriptRenderer`**: Main trait for rendering iPXE scripts
+- **`DefaultIpxeScriptRenderer`**: Default implementation with built-in templates
 - **Template Management**: Support for multiple iPXE script templates
 - **Artifact Caching**: Potential ocal caching of remote artifacts (kernels, initrds, images)
 - **Parameter Validation**: Validates required, reserved, and optional parameters
@@ -27,19 +27,19 @@ This crate provides a flexible, template-based approach to generating iPXE boot 
 
 ```rust
 use carbide_ipxe_renderer::{
-    IpxeOsRenderer, DefaultIpxeOsRenderer, IpxeOs, IpxeOsParameter
+    IpxeScriptRenderer, DefaultIpxeScriptRenderer, IpxeTemplatedScript, IpxeScriptParameter
 };
 
 // Create renderer
-let renderer = DefaultIpxeOsRenderer::new();
+let renderer = DefaultIpxeScriptRenderer::new();
 
 // Define an iPXE OS
-let mut ipxeos = IpxeOs {
+let mut ipxeos = IpxeTemplatedScript {
     id: "test-os".to_string(),
     name: "Ubuntu 22.04".to_string(),
     ipxe_template_name: "qcow-image".to_string(),
     parameters: vec![
-        IpxeOsParameter {
+        IpxeScriptParameter {
             name: "image_url".to_string(),
             value: "http://example.com/ubuntu.qcow2".to_string(),
         },
@@ -52,11 +52,11 @@ ipxeos.hash = renderer.hash(&ipxeos);
 
 // Render iPXE script
 let reserved_params = vec![
-    IpxeOsParameter {
+    IpxeScriptParameter {
         name: "base_url".to_string(),
         value: "http://pxe.local".to_string(),
     },
-    IpxeOsParameter {
+    IpxeScriptParameter {
         name: "console".to_string(),
         value: "ttyS0,115200".to_string(),
     },
@@ -101,12 +101,12 @@ Templates support three types of parameters:
 Artifacts represent downloadable components (kernels, initrds, images, ...):
 
 ```rust
-IpxeOsArtifact {
+IpxeScriptArtifact {
     name: "kernel".to_string(),
     url: "http://example.com/vmlinuz".to_string(),
     sha: Some("sha256:abc123...".to_string()),
-    cache_strategy: ArtifactCacheStrategy::CacheAsNeeded,
-    local_url: Some("http://pxe.local/artifacts/kernel-abc123".to_string()),
+    cache_strategy: IpxeScriptArtifactCacheStrategy::CacheAsNeeded,
+    cached_url: Some("http://pxe.local/artifacts/kernel-abc123".to_string()),
 }
 ```
 

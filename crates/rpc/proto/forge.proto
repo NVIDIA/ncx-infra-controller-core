@@ -529,7 +529,7 @@ service Forge {
 
   // iPXE Script Template management
   rpc GetIpxeScriptTemplate(GetIpxeScriptTemplateRequest) returns (IpxeScriptTemplate);
-  rpc ListIpxeScriptTemplates(ListIpxeScriptTemplatesRequest) returns (ListIpxeScriptTemplatesResponse);
+  rpc ListIpxeScriptTemplates(ListIpxeScriptTemplatesRequest) returns (IpxeScriptTemplateList);
 
   rpc RebootCompleted(MachineRebootCompletedRequest) returns (MachineRebootCompletedResponse);
 
@@ -857,16 +857,16 @@ service Forge {
 
   // Operating System library
   rpc CreateOperatingSystem(CreateOperatingSystemRequest) returns (OperatingSystemDefinition);
-  rpc GetOperatingSystem(common.UUID) returns (OperatingSystemDefinition);
+  rpc GetOperatingSystem(common.OperatingSystemId) returns (OperatingSystemDefinition);
   rpc UpdateOperatingSystem(UpdateOperatingSystemRequest) returns (OperatingSystemDefinition);
   rpc DeleteOperatingSystem(DeleteOperatingSystemRequest) returns (DeleteOperatingSystemResponse);
   rpc FindOperatingSystemIds(OperatingSystemSearchFilter) returns (OperatingSystemIdList);
   rpc FindOperatingSystemsByIds(OperatingSystemsByIdsRequest) returns (OperatingSystemList);
   // Returns the ordered artifact list for an OS definition without fetching the full record.
-  rpc GetOperatingSystemArtifacts(GetOperatingSystemArtifactsRequest) returns (OperatingSystemArtifactsResponse);
-  // Updates the local_url field of named artifacts in-place, leaving all other artifact fields
+  rpc GetOperatingSystemCachableIpxeScriptArtifacts(GetOperatingSystemCachableIpxeScriptArtifactsRequest) returns (IpxeScriptArtifactList);
+  // Updates the cached_url field of named artifacts in-place, leaving all other artifact fields
   // and OS definition fields (including ipxe_definition_hash) unchanged.
-  rpc SetOperatingSystemArtifactsLocalUrl(SetOperatingSystemArtifactsLocalUrlRequest) returns (OperatingSystemArtifactsResponse);
+  rpc UpdateOperatingSystemCachableIpxeScriptArtifacts(UpdateOperatingSystemIpxeScriptArtifactRequest) returns (IpxeScriptArtifactList);
 }
 
 message AttestationIdsRequest {
@@ -2271,13 +2271,13 @@ message BatchInstanceAllocationResponse {
 // Parameter for iPXE template substitution or kernel command line
 // Can be used to replace variables in iPXE templates or add parameters to kernel command line
 // Some are "well known" like 'console', others can be custom defined by users
-message IpxeOsParameter {
+message IpxeScriptParameter {
   string name = 1;   // Name of the parameter (used as variable in template)
   string value = 2;  // Value of the parameter
 }
 
 // Artifact cache strategy
-enum ArtifactCacheStrategy {
+enum IpxeScriptArtifactCacheStrategy {
   CACHE_AS_NEEDED = 0;   // Download and cache artifact locally if possible
   LOCAL_ONLY = 1;        // Artifact URL provided is only usable locally: site specific, no caching applicable.
   CACHED_ONLY = 2;       // Artifact URL must be cached locally or is unusable
@@ -2286,14 +2286,14 @@ enum ArtifactCacheStrategy {
 
 // Remote artifact to be cached locally before booting
 // Examples: kernel, initrd, rootfs, qcow-imager.efi, OS image, ...
-message IpxeOsArtifact {
+message IpxeScriptArtifact {
   string name = 1;                          // Name of the artifact (can be used as variable in template)
   string url = 2;                           // Original URL for the artifact
   optional string sha = 3;                  // Optional SHA256 checksum for the artifact
   optional string auth_type = 4;            // Auth type: "None", "Basic", "Bearer"
   optional string auth_token = 5;           // Optional auth token for the artifact
-  ArtifactCacheStrategy cache_strategy = 6; // How to handle caching for this artifact
-  optional string local_url = 7;            // Local cached URL, set by carbide-core on successful download. If present overrides 'url' at boot time.
+  IpxeScriptArtifactCacheStrategy cache_strategy = 6; // How to handle caching for this artifact
+  optional string cached_url = 7;           // Local cached URL, set by carbide-core on successful download. If present overrides 'url' at boot time.
 }
 
 // Scope for iPXE script templates.
@@ -2337,7 +2337,7 @@ message OperatingSystem {
     common.UUID os_image_id = 2;
     // Reference any operating system definition by ID (any variant except OS image).
     // On read the actual variant (iPXE / ipxe_os_definition) is resolved from the row.
-    common.UUID operating_system_id = 4;
+    common.OperatingSystemId operating_system_id = 4;
   }
 
   // If this flag is set to `true` the instance will not transition to a Ready state until
@@ -4939,7 +4939,7 @@ message ListIpxeScriptTemplatesRequest {
   // Empty for now
 }
 
-message ListIpxeScriptTemplatesResponse {
+message IpxeScriptTemplateList {
   repeated IpxeScriptTemplate templates = 1;
 }
 
@@ -7298,11 +7298,11 @@ message ListComponentFirmwareVersionsResponse {
 enum OperatingSystemType {
   OS_TYPE_UNSPECIFIED = 0;
   OS_TYPE_IPXE = 1;              // Raw inline iPXE script
-  OS_TYPE_IPXE_OS_DEFINITION = 2; // iPXE OS using an iPXE template
+  OS_TYPE_TEMPLATED_IPXE = 2; // iPXE OS using an iPXE template
 }
 
 message OperatingSystemDefinition {
-  common.UUID id = 1;
+  common.OperatingSystemId id = 1;
   string name = 2;
   optional string description = 3;
   string tenant_organization_id = 4;
@@ -7319,8 +7319,8 @@ message OperatingSystemDefinition {
   optional string ipxe_script = 20;
   // Variant: ipxe_os_definition
   optional string ipxe_template_name = 22;
-  repeated IpxeOsParameter ipxe_parameters = 23;
-  repeated IpxeOsArtifact ipxe_artifacts = 24;
+  repeated IpxeScriptParameter ipxe_parameters = 23;
+  repeated IpxeScriptArtifact ipxe_artifacts = 24;
   optional string ipxe_definition_hash = 25;
 }
 
@@ -7332,30 +7332,30 @@ message CreateOperatingSystemRequest {
   bool allow_override = 5;
   bool phone_home_enabled = 6;
   optional string user_data = 7;
-  optional common.UUID id = 8;
+  optional common.OperatingSystemId id = 8;
 
   // Exactly one variant must be provided to determine the type.
-  // ipxe: set ipxe_script
-  // ipxe_os_definition: set ipxe_template_name (and optionally parameters/artifacts)
+  // This is only set for 'ipxe' variant:
   optional string ipxe_script = 20;
+  // This is only set for 'ipxe_os_definition' variant (with optional parameters/artifacts):
   optional string ipxe_template_name = 22;
-  repeated IpxeOsParameter ipxe_parameters = 23;
-  repeated IpxeOsArtifact ipxe_artifacts = 24;
+  repeated IpxeScriptParameter ipxe_parameters = 23;
+  repeated IpxeScriptArtifact ipxe_artifacts = 24;
 }
 
-// Wrapper for repeated IpxeOsParameter so that an optional field can distinguish
+// Wrapper for repeated IpxeScriptParameter so that an optional field can distinguish
 // "not provided" (keep existing) from "provided but empty" (clear the list).
-message IpxeOsParameters {
-  repeated IpxeOsParameter items = 1;
+message IpxeScriptParameters {
+  repeated IpxeScriptParameter items = 1;
 }
 
-// Wrapper for repeated IpxeOsArtifact (same rationale as IpxeOsParameters).
-message IpxeOsArtifacts {
-  repeated IpxeOsArtifact items = 1;
+// Wrapper for repeated IpxeScriptArtifact (same rationale as IpxeScriptParameters).
+message IpxeScriptArtifacts {
+  repeated IpxeScriptArtifact items = 1;
 }
 
 message UpdateOperatingSystemRequest {
-  common.UUID id = 1;
+  common.OperatingSystemId id = 1;
   optional string name = 2;
   optional string description = 3;
   optional bool is_active = 4;
@@ -7365,13 +7365,13 @@ message UpdateOperatingSystemRequest {
 
   optional string ipxe_script = 20;
   optional string ipxe_template_name = 22;
-  optional IpxeOsParameters ipxe_parameters = 23;
-  optional IpxeOsArtifacts ipxe_artifacts = 24;
+  optional IpxeScriptParameters ipxe_parameters = 23;
+  optional IpxeScriptArtifacts ipxe_artifacts = 24;
   optional string ipxe_definition_hash = 25; // if provided, used as-is; otherwise recomputed
 }
 
 message DeleteOperatingSystemRequest {
-  common.UUID id = 1;
+  common.OperatingSystemId id = 1;
 }
 
 message DeleteOperatingSystemResponse {
@@ -7382,33 +7382,33 @@ message OperatingSystemSearchFilter {
 }
 
 message OperatingSystemIdList {
-  repeated common.UUID ids = 1;
+  repeated common.OperatingSystemId ids = 1;
 }
 
 message OperatingSystemsByIdsRequest {
-  repeated common.UUID ids = 1;
+  repeated common.OperatingSystemId ids = 1;
 }
 
 message OperatingSystemList {
   repeated OperatingSystemDefinition operating_systems = 1;
 }
 
-message GetOperatingSystemArtifactsRequest {
-  common.UUID id = 1;
+message GetOperatingSystemCachableIpxeScriptArtifactsRequest {
+  common.OperatingSystemId id = 1;
 }
 
-message OperatingSystemArtifactsResponse {
-  repeated IpxeOsArtifact artifacts = 1;
+message IpxeScriptArtifactList {
+  repeated IpxeScriptArtifact artifacts = 1;
 }
 
-// A single (artifact name, local_url) pair for SetOperatingSystemArtifactsLocalUrl.
-// local_url is optional: absent means clear the local_url on the matching artifact(s).
-message ArtifactLocalUrlUpdate {
+// A single (artifact name, cached_url) pair for UpdateOperatingSystemCachableIpxeScriptArtifacts.
+// cached_url is optional: absent means clear the cached_url on the matching artifact(s).
+message IpxeScriptArtifactUpdateRequest {
   string name = 1;
-  optional string local_url = 2;
+  optional string cached_url = 2;
 }
 
-message SetOperatingSystemArtifactsLocalUrlRequest {
-  common.UUID id = 1;
-  repeated ArtifactLocalUrlUpdate updates = 2;
+message UpdateOperatingSystemIpxeScriptArtifactRequest {
+  common.OperatingSystemId id = 1;
+  repeated IpxeScriptArtifactUpdateRequest updates = 2;
 }

@@ -16,22 +16,26 @@
  */
 
 use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult};
-use ::rpc::forge::{self as forgerpc, IpxeOsArtifact, IpxeOsParameter, OperatingSystemDefinition};
+use ::rpc::forge::{
+    self as forgerpc, IpxeScriptArtifact, IpxeScriptParameter, OperatingSystemDefinition,
+};
 use serde::Serialize;
 
-pub fn str_to_rpc_uuid(id: &str) -> CarbideCliResult<::rpc::common::Uuid> {
-    let id: ::rpc::common::Uuid = uuid::Uuid::parse_str(id)
+pub fn str_to_os_id(
+    id: &str,
+) -> CarbideCliResult<::carbide_uuid::operating_system::OperatingSystemId> {
+    let id = uuid::Uuid::parse_str(id)
         .map_err(|e| CarbideCliError::GenericError(e.to_string()))?
         .into();
     Ok(id)
 }
 
-/// Parse a "key=value" string into an `IpxeOsParameter`.
-pub fn parse_param(s: &str) -> Result<IpxeOsParameter, String> {
+/// Parse a "key=value" string into an `IpxeScriptParameter`.
+pub fn parse_param(s: &str) -> Result<IpxeScriptParameter, String> {
     let (name, value) = s
         .split_once('=')
         .ok_or_else(|| format!("expected KEY=VALUE, got '{s}'"))?;
-    Ok(IpxeOsParameter {
+    Ok(IpxeScriptParameter {
         name: name.to_string(),
         value: value.to_string(),
     })
@@ -73,23 +77,26 @@ pub struct SerializableArtifact {
     pub sha: Option<String>,
     pub auth_type: Option<String>,
     pub cache_strategy: String,
-    pub local_url: Option<String>,
+    pub cached_url: Option<String>,
 }
 
-impl From<IpxeOsParameter> for SerializableParam {
-    fn from(p: IpxeOsParameter) -> Self {
-        Self { name: p.name, value: p.value }
+impl From<IpxeScriptParameter> for SerializableParam {
+    fn from(p: IpxeScriptParameter) -> Self {
+        Self {
+            name: p.name,
+            value: p.value,
+        }
     }
 }
 
-impl From<IpxeOsArtifact> for SerializableArtifact {
-    fn from(a: IpxeOsArtifact) -> Self {
-        use ::rpc::forge::ArtifactCacheStrategy;
-        let cache_strategy = match ArtifactCacheStrategy::try_from(a.cache_strategy) {
-            Ok(ArtifactCacheStrategy::CacheAsNeeded) => "cache_as_needed",
-            Ok(ArtifactCacheStrategy::LocalOnly) => "local_only",
-            Ok(ArtifactCacheStrategy::CachedOnly) => "cached_only",
-            Ok(ArtifactCacheStrategy::RemoteOnly) => "remote_only",
+impl From<IpxeScriptArtifact> for SerializableArtifact {
+    fn from(a: IpxeScriptArtifact) -> Self {
+        use ::rpc::forge::IpxeScriptArtifactCacheStrategy;
+        let cache_strategy = match IpxeScriptArtifactCacheStrategy::try_from(a.cache_strategy) {
+            Ok(IpxeScriptArtifactCacheStrategy::CacheAsNeeded) => "cache_as_needed",
+            Ok(IpxeScriptArtifactCacheStrategy::LocalOnly) => "local_only",
+            Ok(IpxeScriptArtifactCacheStrategy::CachedOnly) => "cached_only",
+            Ok(IpxeScriptArtifactCacheStrategy::RemoteOnly) => "remote_only",
             _ => "cache_as_needed",
         };
         Self {
@@ -98,7 +105,7 @@ impl From<IpxeOsArtifact> for SerializableArtifact {
             sha: a.sha,
             auth_type: a.auth_type,
             cache_strategy: cache_strategy.to_string(),
-            local_url: a.local_url,
+            cached_url: a.cached_url,
         }
     }
 }
@@ -106,7 +113,7 @@ impl From<IpxeOsArtifact> for SerializableArtifact {
 impl From<OperatingSystemDefinition> for SerializableOs {
     fn from(os: OperatingSystemDefinition) -> Self {
         Self {
-            id: os.id.map(|u| u.value).unwrap_or_default(),
+            id: os.id.map(|u| u.to_string()).unwrap_or_default(),
             name: os.name,
             description: os.description,
             org: os.tenant_organization_id,

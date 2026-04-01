@@ -16,11 +16,11 @@
  */
 
 use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult, OutputFormat};
-use ::rpc::forge::ArtifactCacheStrategy;
+use ::rpc::forge::IpxeScriptArtifactCacheStrategy;
 use prettytable::{Cell, Row, Table};
 
 use super::args::Args;
-use crate::operating_system::common::{str_to_rpc_uuid, SerializableArtifact};
+use crate::operating_system::common::{SerializableArtifact, str_to_os_id};
 use crate::rpc::ApiClient;
 
 pub async fn get_artifacts(
@@ -28,19 +28,22 @@ pub async fn get_artifacts(
     format: OutputFormat,
     api_client: &ApiClient,
 ) -> CarbideCliResult<()> {
-    let id = str_to_rpc_uuid(&opts.id)?;
+    let id = str_to_os_id(&opts.id)?;
 
     let resp = api_client
         .0
-        .get_operating_system_artifacts(::rpc::forge::GetOperatingSystemArtifactsRequest {
-            id: Some(id),
-        })
+        .get_operating_system_cachable_ipxe_script_artifacts(
+            ::rpc::forge::GetOperatingSystemCachableIpxeScriptArtifactsRequest { id: Some(id) },
+        )
         .await
         .map_err(CarbideCliError::from)?;
 
     if format == OutputFormat::Json {
-        let serializable: Vec<SerializableArtifact> =
-            resp.artifacts.into_iter().map(SerializableArtifact::from).collect();
+        let serializable: Vec<SerializableArtifact> = resp
+            .artifacts
+            .into_iter()
+            .map(SerializableArtifact::from)
+            .collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&serializable).map_err(CarbideCliError::JsonError)?
@@ -57,23 +60,23 @@ pub async fn get_artifacts(
     table.set_titles(Row::new(vec![
         Cell::new("Name"),
         Cell::new("URL"),
-        Cell::new("Local URL"),
+        Cell::new("Cached URL"),
         Cell::new("SHA"),
         Cell::new("Cache Strategy"),
     ]));
 
     for a in &resp.artifacts {
-        let cache = match ArtifactCacheStrategy::try_from(a.cache_strategy) {
-            Ok(ArtifactCacheStrategy::CacheAsNeeded) => "cache_as_needed",
-            Ok(ArtifactCacheStrategy::LocalOnly) => "local_only",
-            Ok(ArtifactCacheStrategy::CachedOnly) => "cached_only",
-            Ok(ArtifactCacheStrategy::RemoteOnly) => "remote_only",
+        let cache = match IpxeScriptArtifactCacheStrategy::try_from(a.cache_strategy) {
+            Ok(IpxeScriptArtifactCacheStrategy::CacheAsNeeded) => "cache_as_needed",
+            Ok(IpxeScriptArtifactCacheStrategy::LocalOnly) => "local_only",
+            Ok(IpxeScriptArtifactCacheStrategy::CachedOnly) => "cached_only",
+            Ok(IpxeScriptArtifactCacheStrategy::RemoteOnly) => "remote_only",
             _ => "unknown",
         };
         table.add_row(Row::new(vec![
             Cell::new(&a.name),
             Cell::new(&a.url),
-            Cell::new(a.local_url.as_deref().unwrap_or("-")),
+            Cell::new(a.cached_url.as_deref().unwrap_or("-")),
             Cell::new(a.sha.as_deref().unwrap_or("-")),
             Cell::new(cache),
         ]));

@@ -16,11 +16,13 @@
  */
 
 use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult, OutputFormat};
-use ::rpc::forge::{ArtifactCacheStrategy, OperatingSystemSearchFilter, OperatingSystemType};
+use ::rpc::forge::{
+    IpxeScriptArtifactCacheStrategy, OperatingSystemSearchFilter, OperatingSystemType,
+};
 use prettytable::{Cell, Row, Table};
 
 use super::args::Args;
-use crate::operating_system::common::{str_to_rpc_uuid, SerializableOs};
+use crate::operating_system::common::{SerializableOs, str_to_os_id};
 use crate::rpc::ApiClient;
 
 pub async fn handle_show(
@@ -60,8 +62,10 @@ async fn list_all(
     };
 
     if format == OutputFormat::Json {
-        let serializable: Vec<SerializableOs> =
-            operating_systems.into_iter().map(SerializableOs::from).collect();
+        let serializable: Vec<SerializableOs> = operating_systems
+            .into_iter()
+            .map(SerializableOs::from)
+            .collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&serializable).map_err(CarbideCliError::JsonError)?
@@ -105,9 +109,9 @@ async fn list_all(
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        let id_str = os.id.as_ref().map(|u| u.value.as_str()).unwrap_or("");
+        let id_str = os.id.map(|u| u.to_string()).unwrap_or_default();
         table.add_row(Row::new(vec![
-            Cell::new(id_str),
+            Cell::new(&id_str),
             Cell::new(&os.name),
             Cell::new(&os.tenant_organization_id),
             Cell::new(
@@ -131,7 +135,7 @@ async fn show_one(
     format: OutputFormat,
     api_client: &ApiClient,
 ) -> CarbideCliResult<()> {
-    let id = str_to_rpc_uuid(id_str)?;
+    let id = str_to_os_id(id_str)?;
 
     let os = match api_client.0.get_operating_system(id).await {
         Ok(os) => os,
@@ -153,7 +157,10 @@ async fn show_one(
         return Ok(());
     }
 
-    println!("ID:                  {}", os.id.as_ref().map(|u| u.value.as_str()).unwrap_or(""));
+    println!(
+        "ID:                  {}",
+        os.id.map(|u| u.to_string()).as_deref().unwrap_or("")
+    );
     println!("Name:                {}", os.name);
     println!("Org:                 {}", os.tenant_organization_id);
     println!(
@@ -192,11 +199,11 @@ async fn show_one(
     if !os.ipxe_artifacts.is_empty() {
         println!("\niPXE Artifacts:");
         for a in &os.ipxe_artifacts {
-            let cache = match ArtifactCacheStrategy::try_from(a.cache_strategy) {
-                Ok(ArtifactCacheStrategy::CacheAsNeeded) => "cache_as_needed",
-                Ok(ArtifactCacheStrategy::LocalOnly) => "local_only",
-                Ok(ArtifactCacheStrategy::CachedOnly) => "cached_only",
-                Ok(ArtifactCacheStrategy::RemoteOnly) => "remote_only",
+            let cache = match IpxeScriptArtifactCacheStrategy::try_from(a.cache_strategy) {
+                Ok(IpxeScriptArtifactCacheStrategy::CacheAsNeeded) => "cache_as_needed",
+                Ok(IpxeScriptArtifactCacheStrategy::LocalOnly) => "local_only",
+                Ok(IpxeScriptArtifactCacheStrategy::CachedOnly) => "cached_only",
+                Ok(IpxeScriptArtifactCacheStrategy::RemoteOnly) => "remote_only",
                 _ => "cache_as_needed",
             };
             println!("  {}:", a.name);
@@ -208,8 +215,8 @@ async fn show_one(
                 println!("    Auth Type:      {auth_type}");
             }
             println!("    Cache Strategy: {cache}");
-            if let Some(local_url) = &a.local_url {
-                println!("    Local URL:      {local_url}");
+            if let Some(cached_url) = &a.cached_url {
+                println!("    Cached URL:      {cached_url}");
             }
         }
     }

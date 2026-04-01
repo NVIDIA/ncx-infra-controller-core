@@ -2020,7 +2020,7 @@ impl Forge for Api {
 
     async fn get_operating_system(
         &self,
-        request: Request<::rpc::Uuid>,
+        request: Request<::carbide_uuid::operating_system::OperatingSystemId>,
     ) -> Result<Response<rpc::OperatingSystemDefinition>, Status> {
         crate::handlers::operating_system::get_operating_system(self, request).await
     }
@@ -2053,19 +2053,24 @@ impl Forge for Api {
         crate::handlers::operating_system::find_operating_systems_by_ids(self, request).await
     }
 
-    async fn get_operating_system_artifacts(
+    async fn get_operating_system_cachable_ipxe_script_artifacts(
         &self,
-        request: Request<rpc::GetOperatingSystemArtifactsRequest>,
-    ) -> Result<Response<rpc::OperatingSystemArtifactsResponse>, Status> {
-        crate::handlers::operating_system::get_operating_system_artifacts(self, request).await
+        request: Request<rpc::GetOperatingSystemCachableIpxeScriptArtifactsRequest>,
+    ) -> Result<Response<rpc::IpxeScriptArtifactList>, Status> {
+        crate::handlers::operating_system::get_operating_system_cachable_ipxe_script_artifacts(
+            self, request,
+        )
+        .await
     }
 
-    async fn set_operating_system_artifacts_local_url(
+    async fn update_operating_system_cachable_ipxe_script_artifacts(
         &self,
-        request: Request<rpc::SetOperatingSystemArtifactsLocalUrlRequest>,
-    ) -> Result<Response<rpc::OperatingSystemArtifactsResponse>, Status> {
-        crate::handlers::operating_system::set_operating_system_artifacts_local_url(self, request)
-            .await
+        request: Request<rpc::UpdateOperatingSystemIpxeScriptArtifactRequest>,
+    ) -> Result<Response<rpc::IpxeScriptArtifactList>, Status> {
+        crate::handlers::operating_system::update_operating_system_cachable_ipxe_script_artifacts(
+            self, request,
+        )
+        .await
     }
 
     async fn get_machine_validation_runs(
@@ -3076,10 +3081,10 @@ impl Forge for Api {
         &self,
         request: tonic::Request<::rpc::forge::GetIpxeScriptTemplateRequest>,
     ) -> Result<tonic::Response<::rpc::forge::IpxeScriptTemplate>, Status> {
-        use carbide_ipxe_renderer::IpxeOsRenderer;
+        use carbide_ipxe_renderer::IpxeScriptRenderer;
 
         let req = request.into_inner();
-        let renderer = carbide_ipxe_renderer::DefaultIpxeOsRenderer::new();
+        let renderer = carbide_ipxe_renderer::DefaultIpxeScriptRenderer::new();
 
         match renderer.get_template(&req.name) {
             Some(template) => Ok(tonic::Response::new(::rpc::forge::IpxeScriptTemplate {
@@ -3101,10 +3106,10 @@ impl Forge for Api {
     async fn list_ipxe_script_templates(
         &self,
         _request: tonic::Request<::rpc::forge::ListIpxeScriptTemplatesRequest>,
-    ) -> Result<tonic::Response<::rpc::forge::ListIpxeScriptTemplatesResponse>, Status> {
-        use carbide_ipxe_renderer::IpxeOsRenderer;
+    ) -> Result<tonic::Response<::rpc::forge::IpxeScriptTemplateList>, Status> {
+        use carbide_ipxe_renderer::IpxeScriptRenderer;
 
-        let renderer = carbide_ipxe_renderer::DefaultIpxeOsRenderer::new();
+        let renderer = carbide_ipxe_renderer::DefaultIpxeScriptRenderer::new();
         let template_names = renderer.list_templates();
 
         let templates = template_names
@@ -3124,17 +3129,17 @@ impl Forge for Api {
             })
             .collect();
 
-        Ok(tonic::Response::new(
-            ::rpc::forge::ListIpxeScriptTemplatesResponse { templates },
-        ))
+        Ok(tonic::Response::new(::rpc::forge::IpxeScriptTemplateList {
+            templates,
+        }))
     }
 }
 
 fn ipxe_script_template_scope_to_proto(
     scope: carbide_ipxe_renderer::IpxeScriptTemplateScope,
 ) -> ::rpc::forge::IpxeScriptTemplateScope {
-    use carbide_ipxe_renderer::IpxeScriptTemplateScope as RendererScope;
     use ::rpc::forge::IpxeScriptTemplateScope as ProtoScope;
+    use carbide_ipxe_renderer::IpxeScriptTemplateScope as RendererScope;
     match scope {
         RendererScope::Internal => ProtoScope::Internal,
         RendererScope::Public => ProtoScope::Public,

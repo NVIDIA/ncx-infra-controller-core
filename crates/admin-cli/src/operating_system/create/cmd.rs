@@ -19,16 +19,11 @@ use ::rpc::admin_cli::{CarbideCliError, CarbideCliResult};
 use ::rpc::forge::CreateOperatingSystemRequest;
 
 use super::args::Args;
-use crate::operating_system::common::str_to_rpc_uuid;
+use crate::operating_system::common::str_to_os_id;
 use crate::rpc::ApiClient;
 
-
 pub async fn create(opts: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
-    let id = opts
-        .id
-        .as_deref()
-        .map(str_to_rpc_uuid)
-        .transpose()?;
+    let id = opts.id.as_deref().map(str_to_os_id).transpose()?;
 
     let os = api_client
         .0
@@ -52,7 +47,7 @@ pub async fn create(opts: Args, api_client: &ApiClient) -> CarbideCliResult<()> 
     println!(
         "Operating system created: {} (id={})",
         os.name,
-        os.id.as_ref().map(|u| u.value.as_str()).unwrap_or("")
+        os.id.map(|u| u.to_string()).as_deref().unwrap_or("")
     );
     Ok(())
 }
