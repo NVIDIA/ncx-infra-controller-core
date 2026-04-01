@@ -818,17 +818,22 @@ impl MainLoop {
                 current_instance_config_version = status_out.instance_config_version.clone();
                 current_instance_id = status_out.instance_id.as_ref().map(|id| id.to_string());
 
-                let health_report = health::health_check(HealthCheckParams {
-                    hbn_root: &self.agent_config.hbn.root_dir,
-                    host_routes: &tenant_peers,
-                    has_changed_configs,
-                    min_healthy_links: conf.min_dpu_functioning_links.unwrap_or(2),
-                    route_servers: &conf.route_servers,
-                    hbn_device_names: self.hbn_device_names.clone(),
-                    include_dhcp_server: !conf.use_admin_network || conf.is_primary_dpu,
-                    run_restricted_mode_check: false,
-                })
-                .await;
+                let health_report = match self.nvue_client.as_ref() {
+                    None => {
+                        health::health_check(HealthCheckParams {
+                            hbn_root: &self.agent_config.hbn.root_dir,
+                            host_routes: &tenant_peers,
+                            has_changed_configs,
+                            min_healthy_links: conf.min_dpu_functioning_links.unwrap_or(2),
+                            route_servers: &conf.route_servers,
+                            hbn_device_names: self.hbn_device_names.clone(),
+                            include_dhcp_server: !conf.use_admin_network || conf.is_primary_dpu,
+                            run_restricted_mode_check: false,
+                        })
+                        .await
+                    }
+                    Some(nvue_client) => health::nvue_api_health(nvue_client).await,
+                };
                 is_healthy = !health_report.successes.is_empty() && health_report.alerts.is_empty();
                 self.is_hbn_up = health::is_up(&health_report);
                 // subset of is_healthy
