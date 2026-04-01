@@ -80,18 +80,19 @@ impl HealthReportProcessor {
         health: &SensorHealthContext,
         reading: f64,
         state: SensorHealth,
+        unit: &str,
     ) -> String {
         match state {
             SensorHealth::SensorFailure => {
                 if let Some(max) = health.range_max
                     && reading > max
                 {
-                    return format!("reading {reading} is above the valid maximum of {max}");
+                    return format!("reading {reading} {unit} is above the valid maximum of {max}");
                 }
                 if let Some(min) = health.range_min
                     && reading < min
                 {
-                    return format!("reading {reading} is below the valid minimum of {min}");
+                    return format!("reading {reading} {unit} is below the valid minimum of {min}");
                 }
                 "reading is outside the valid sensor range".to_string()
             }
@@ -99,12 +100,16 @@ impl HealthReportProcessor {
                 if let Some(max) = health.upper_fatal
                     && reading >= max
                 {
-                    return format!("reading {reading} reached or exceeded the fatal threshold of {max}");
+                    return format!(
+                        "reading {reading} {unit} reached or exceeded the fatal threshold of {max}"
+                    );
                 }
                 if let Some(min) = health.lower_fatal
                     && reading <= min
                 {
-                    return format!("reading {reading} reached or fell below the fatal threshold of {min}");
+                    return format!(
+                        "reading {reading} {unit} reached or fell below the fatal threshold of {min}"
+                    );
                 }
                 "reading reached the fatal threshold".to_string()
             }
@@ -113,14 +118,14 @@ impl HealthReportProcessor {
                     && reading >= max
                 {
                     return format!(
-                        "reading {reading} reached or exceeded the critical threshold of {max}"
+                        "reading {reading} {unit} reached or exceeded the critical threshold of {max}"
                     );
                 }
                 if let Some(min) = health.lower_critical
                     && reading <= min
                 {
                     return format!(
-                        "reading {reading} reached or fell below the critical threshold of {min}"
+                        "reading {reading} {unit} reached or fell below the critical threshold of {min}"
                     );
                 }
                 "reading reached the critical threshold".to_string()
@@ -129,13 +134,15 @@ impl HealthReportProcessor {
                 if let Some(max) = health.upper_caution
                     && reading >= max
                 {
-                    return format!("reading {reading} reached or exceeded the warning threshold of {max}");
+                    return format!(
+                        "reading {reading} {unit} reached or exceeded the warning threshold of {max}"
+                    );
                 }
                 if let Some(min) = health.lower_caution
                     && reading <= min
                 {
                     return format!(
-                        "reading {reading} reached or fell below the warning threshold of {min}"
+                        "reading {reading} {unit} reached or fell below the warning threshold of {min}"
                     );
                 }
                 "reading reached the warning threshold".to_string()
@@ -207,7 +214,8 @@ impl HealthReportProcessor {
                 target: Some(health.sensor_id.clone()),
             }),
             state => {
-                let reason = Self::triggered_condition(health, metric.value, state);
+                let reason =
+                    Self::triggered_condition(health, metric.value, state, metric.unit.as_str());
                 if health.bmc_health == BmcHealth::Ok {
                     tracing::warn!(
                         sensor_id = %health.sensor_id,
