@@ -84,11 +84,30 @@ mod tests {
         Arc::new(MetricsManager::new("test").expect("should create metrics manager"))
     }
 
+    struct NoOpProcessor;
+    impl crate::processor::EventProcessor for NoOpProcessor {
+        fn processor_type(&self) -> &'static str {
+            "noop"
+        }
+
+        fn process_event(&self, _: &EventContext, _: &CollectorEvent) -> Vec<CollectorEvent> {
+            vec![]
+        }
+    }
+
+    fn noop_processors() -> Vec<Arc<dyn crate::processor::EventProcessor>> {
+        vec![Arc::new(NoOpProcessor)]
+    }
+
     struct CountingSink {
         counter: Arc<AtomicUsize>,
     }
 
     impl DataSink for CountingSink {
+        fn sink_type(&self) -> &'static str {
+            "counting"
+        }
+
         fn handle_event(&self, _: &EventContext, _: &CollectorEvent) {
             self.counter.fetch_add(1, Ordering::SeqCst);
         }
@@ -104,6 +123,7 @@ mod tests {
             },
             collector_type: "test",
             metadata: None,
+            rack_id: None,
         }
     }
 
@@ -121,7 +141,7 @@ mod tests {
         let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
             counter: sink_counter.clone(),
         });
-        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
+        let inner = EventProcessingPipeline::new(noop_processors(), sink, test_metrics_manager());
         let (otlp_tx, mut otlp_rx) = tokio::sync::mpsc::channel(10);
         let pipeline = EventPipeline::new(inner, Some(otlp_tx));
 
@@ -136,7 +156,7 @@ mod tests {
         let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
             counter: Arc::new(AtomicUsize::new(0)),
         });
-        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
+        let inner = EventProcessingPipeline::new(noop_processors(), sink, test_metrics_manager());
         let (otlp_tx, mut otlp_rx) = tokio::sync::mpsc::channel(10);
         let pipeline = EventPipeline::new(inner, Some(otlp_tx));
 
@@ -153,7 +173,7 @@ mod tests {
         let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
             counter: sink_counter.clone(),
         });
-        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
+        let inner = EventProcessingPipeline::new(noop_processors(), sink, test_metrics_manager());
         let pipeline = EventPipeline::new(inner, None);
 
         pipeline.handle_event(&test_context(), &log_event()).await;
@@ -166,7 +186,7 @@ mod tests {
         let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
             counter: Arc::new(AtomicUsize::new(0)),
         });
-        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
+        let inner = EventProcessingPipeline::new(noop_processors(), sink, test_metrics_manager());
         let (otlp_tx, _otlp_rx) = tokio::sync::mpsc::channel(1);
         let pipeline = Arc::new(EventPipeline::new(inner, Some(otlp_tx)));
 
@@ -189,6 +209,10 @@ mod tests {
 
         struct DoubleProcessor;
         impl EventProcessor for DoubleProcessor {
+            fn processor_type(&self) -> &'static str {
+                "double"
+            }
+
             fn process_event(
                 &self,
                 _: &EventContext,

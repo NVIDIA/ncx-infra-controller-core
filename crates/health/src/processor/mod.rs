@@ -250,26 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn handle_and_collect_without_processors_returns_single_event() {
-        let sink_counter = Arc::new(AtomicUsize::new(0));
-        let metrics_manager =
-            Arc::new(MetricsManager::new("test").expect("should create metrics manager"));
-        let pipeline = EventProcessingPipeline::new(
-            vec![],
-            Arc::new(CountingSink {
-                counter: sink_counter.clone(),
-            }),
-            metrics_manager,
-        );
-
-        let event = CollectorEvent::MetricCollectionStart;
-        let collected = pipeline.handle_and_collect(&context(), &event);
-
-        assert_eq!(collected.len(), 1);
-        assert_eq!(sink_counter.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
     fn processor_does_not_reconsume_its_own_descendants() {
         let processor_counter = Arc::new(AtomicUsize::new(0));
         let sink_counter = Arc::new(AtomicUsize::new(0));

@@ -185,6 +185,7 @@ mod tests {
             },
             collector_type: "test",
             metadata: None,
+            rack_id: None,
         }
     }
 
@@ -251,6 +252,7 @@ mod tests {
             },
             collector_type: "test",
             metadata: None,
+            rack_id: None,
         };
         let ctx2 = EventContext {
             endpoint_key: "endpoint-b".to_string(),
