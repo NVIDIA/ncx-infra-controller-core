@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use carbide_uuid::rack::RackId;
 use db::{self, machine as db_machine, rack as db_rack};
+use model::expected_machine::ExpectedMachineData;
 use model::machine::ManagedHostState;
 use model::machine::machine_search_config::MachineSearchConfig;
 use model::rack::{
@@ -212,12 +213,16 @@ async fn test_can_retrieve_rack_state_history_with_real_handler(
     // machine in compute_trays and requires ManagedHostState::Ready. We insert
     // machine records directly, bypassing the full machine state machine since
     // this test exercises the rack SM only.
+    let rack_data = ExpectedMachineData {
+        rack_id: Some(rack_id.clone()),
+        ..Default::default()
+    };
     db_machine::create(
         &mut txn,
         None,
         &machine_id_1,
         ManagedHostState::Ready,
-        None,
+        Some(&rack_data),
         2,
     )
     .await?;
@@ -226,7 +231,7 @@ async fn test_can_retrieve_rack_state_history_with_real_handler(
         None,
         &machine_id_2,
         ManagedHostState::Ready,
-        None,
+        Some(&rack_data),
         2,
     )
     .await?;

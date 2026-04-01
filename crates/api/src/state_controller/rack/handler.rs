@@ -23,7 +23,7 @@ use db::{
     expected_switch as db_expected_switch, machine as db_machine, rack as db_rack,
 };
 use model::machine::machine_search_config::MachineSearchConfig;
-use model::machine::{LoadSnapshotOptions, ManagedHostState};
+use model::machine::{LoadSnapshotOptions, Machine, ManagedHostState};
 use model::power_shelf::PowerShelfControllerState;
 use model::rack::{
     MachineRvLabels, Rack, RackConfig, RackFirmwareUpgradeState, RackMaintenanceState,
@@ -31,13 +31,33 @@ use model::rack::{
 };
 use model::rack_type::RackCapabilitiesSet;
 use model::switch::SwitchControllerState;
-use sqlx::{PgPool, PgTransaction};
+use sqlx::{PgConnection, PgPool, PgTransaction};
 
 use crate::state_controller::rack::context::RackStateHandlerContextObjects;
 use crate::state_controller::rack::rv::{RackPartitionSummary, RvPartitions, strip_rv_labels};
 use crate::state_controller::state_handler::{
     StateHandler, StateHandlerContext, StateHandlerError, StateHandlerOutcome,
 };
+
+async fn get_machines_from_injested_rack(
+    rack: &Rack,
+    txn: &mut PgConnection,
+) -> Result<Vec<Machine>, StateHandlerError> {
+    let search_cfg = MachineSearchConfig {
+        rack_id: Some(rack.id.clone()),
+        ..Default::default()
+    };
+
+    let machine_ids = db_machine::find_machine_ids(&mut *txn, search_cfg).await?;
+    let machines = db_machine::find(
+        txn,
+        db::ObjectFilter::List(&machine_ids),
+        MachineSearchConfig::default(),
+    )
+    .await?;
+
+    Ok(machines)
+}
 
 /// Strips all `rv.*` metadata labels from every compute tray in the rack.
 ///
@@ -48,23 +68,17 @@ async fn clear_rv_labels(
     rack: &Rack,
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<(), StateHandlerError> {
-    let machine_ids = &rack.config.compute_trays;
-    if machine_ids.is_empty() {
-        return Ok(());
-    }
-
     let mut txn = ctx.services.db_pool.begin().await?;
-    let machines = db_machine::find(
-        &mut *txn,
-        db::ObjectFilter::List(machine_ids),
-        MachineSearchConfig::default(),
-    )
-    .await?;
 
-    for machine in machines {
-        let mut metadata = machine.metadata.clone();
+    let machines = get_machines_from_injested_rack(rack, &mut *txn).await?;
+
+    for machine in machines.into_iter() {
+        let mut metadata = machine.metadata;
+        let id = machine.id;
+        let ver = machine.version;
+
         if strip_rv_labels(&mut metadata) {
-            db_machine::update_metadata(&mut txn, &machine.id, machine.version, metadata).await?;
+            db_machine::update_metadata(&mut txn, &id, ver, metadata).await?;
         }
     }
 
@@ -92,31 +106,11 @@ async fn load_partition_summary(
     run_id: &str,
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<RackPartitionSummary, StateHandlerError> {
-    let machine_ids = &rack.config.compute_trays;
-
-    if machine_ids.is_empty() {
-        tracing::debug!(
-            "Rack {} has no compute trays, returning empty summary",
-            rack_id
-        );
-        return Ok(RackPartitionSummary::default());
-    }
-
     let mut txn = ctx.services.db_pool.begin().await?;
-    let machines = db_machine::find(
-        &mut *txn,
-        db::ObjectFilter::List(machine_ids),
-        MachineSearchConfig::default(),
-    )
-    .await?;
+    let machines = get_machines_from_injested_rack(rack, &mut *txn).await?;
     txn.commit().await?;
 
-    tracing::debug!(
-        "Rack {} has {} machines for {} compute trays",
-        rack_id,
-        machines.len(),
-        machine_ids.len(),
-    );
+    tracing::debug!("Rack {} has {} machines", rack_id, machines.len());
 
     let partitions = RvPartitions::from_machines(machines, run_id)?;
     Ok(partitions.summarize())
@@ -129,18 +123,8 @@ async fn find_rv_run_id(
     rack: &Rack,
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<Option<String>, StateHandlerError> {
-    let machine_ids = &rack.config.compute_trays;
-    if machine_ids.is_empty() {
-        return Ok(None);
-    }
-
     let mut txn = ctx.services.db_pool.begin().await?;
-    let machines = db_machine::find(
-        &mut *txn,
-        db::ObjectFilter::List(machine_ids),
-        MachineSearchConfig::default(),
-    )
-    .await?;
+    let machines = get_machines_from_injested_rack(rack, &mut *txn).await?;
     txn.commit().await?;
 
     let run_label = MachineRvLabels::RunId.as_str();

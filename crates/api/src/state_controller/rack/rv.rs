@@ -32,18 +32,11 @@ use crate::state_controller::state_handler::StateHandlerError;
 /// Returns `true` if any labels were removed, `false` if the metadata was
 /// already clean.
 pub fn strip_rv_labels(metadata: &mut Metadata) -> bool {
-    let rv_keys: Vec<String> = metadata
-        .labels
-        .keys()
-        .filter(|k| k.starts_with("rv."))
-        .cloned()
-        .collect();
+    let before = metadata.labels.len();
+    metadata.labels.retain(|k, _| {!k.starts_with("rv.")});
+    let after = metadata.labels.len();
 
-    let changed = !rv_keys.is_empty();
-    for key in rv_keys {
-        metadata.labels.remove(&key);
-    }
-    changed
+    after != before
 }
 
 //------------------------------------------------------------------------------
@@ -111,14 +104,14 @@ impl TryFrom<Metadata> for MachineRvState {
 ///
 /// Only machines that carry the `rv.part-id` label are considered
 /// validation participants. Machines without it are silently skipped.
-/// When a `run_id` is provided, machines whose `rv.run-id` label doesn't
-/// match are also skipped (stale labels from previous runs).
+/// Machines whose `rv.run-id` label is missing or doesn't match the
+/// provided `run_id` are also skipped (stale labels from previous runs).
 pub struct RvPartitions {
     inner: HashMap<String, Vec<MachineRvState>>,
 }
 
 impl RvPartitions {
-    /// Build from a vec of machines, optionally filtering by run ID.
+    /// Build from a vec of machines, filtering by run ID.
     pub fn from_machines(machines: Vec<Machine>, run_id: &str) -> Result<Self, StateHandlerError> {
         Self::from_meta_iter(machines.into_iter().map(|m| m.metadata), run_id)
     }
@@ -368,5 +361,36 @@ mod tests {
         assert_eq!(summary.validated, 1); // p1
         assert_eq!(summary.in_progress, 1); // p2
         assert_eq!(summary.pending, 1); // p3
+    }
+
+    // -------------------------------------------------------------------------
+    // strip_rv_labels tests
+
+    #[test]
+    fn test_strip_rv_labels_removes_only_rv_keys() {
+        let mut m = metadata_with_labels(&[
+            ("rv.run-id", "run-1"),
+            ("rv.part-id", "p0"),
+            ("rv.st", "pass"),
+            ("other", "keep-me"),
+        ]);
+        assert!(strip_rv_labels(&mut m));
+        assert!(!m.labels.contains_key("rv.run-id"));
+        assert!(!m.labels.contains_key("rv.part-id"));
+        assert!(!m.labels.contains_key("rv.st"));
+        assert_eq!(m.labels.get("other").map(String::as_str), Some("keep-me"));
+    }
+
+    #[test]
+    fn test_strip_rv_labels_returns_false_when_already_clean() {
+        let mut m = metadata_with_labels(&[("foo", "bar"), ("baz", "qux")]);
+        assert!(!strip_rv_labels(&mut m));
+        assert_eq!(m.labels.len(), 2);
+    }
+
+    #[test]
+    fn test_strip_rv_labels_empty_metadata() {
+        let mut m = metadata_with_labels(&[]);
+        assert!(!strip_rv_labels(&mut m));
     }
 }
