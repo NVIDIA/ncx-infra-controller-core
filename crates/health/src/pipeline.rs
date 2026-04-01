@@ -46,6 +46,8 @@ impl EventPipeline {
             return;
         };
 
+        // TODO: fix waste: context is cloned per otlp-relevant event 
+        // probably better to switch channel to Arc<EventContext> to pay for one allocation instead of N clones
         for evt in self.inner.handle_and_collect(context, event) {
             if is_otlp_relevant(&evt)
                 && sender.send((context.clone(), evt)).await.is_err()
