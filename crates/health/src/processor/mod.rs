@@ -104,7 +104,7 @@ impl EventProcessingPipeline {
         event: &CollectorEvent,
     ) -> Vec<CollectorEvent> {
         if self.processors.is_empty() {
-            self.deliver_to_sinks(context, event);
+            self.sink.handle_event(context, event);
             return vec![event.clone()];
         }
 
@@ -119,7 +119,7 @@ impl EventProcessingPipeline {
             blocked_processors,
         }) = queue.pop_front()
         {
-            self.deliver_to_sinks(context, &current_event);
+            self.sink.handle_event(context, &current_event);
             collected.push(current_event.into_owned());
             self.next_events(
                 context,
@@ -219,13 +219,16 @@ mod tests {
     #[test]
     fn handle_and_collect_returns_original_and_derived_events() {
         let sink_counter = Arc::new(AtomicUsize::new(0));
+        let metrics_manager =
+            Arc::new(MetricsManager::new("test").expect("should create metrics manager"));
         let pipeline = EventProcessingPipeline::new(
             vec![Arc::new(SelfReemittingProcessor {
                 counter: Arc::new(AtomicUsize::new(0)),
             })],
-            vec![Arc::new(CountingSink {
+            Arc::new(CountingSink {
                 counter: sink_counter.clone(),
-            })],
+            }),
+            metrics_manager,
         );
 
         let event = CollectorEvent::Metric(
@@ -249,11 +252,14 @@ mod tests {
     #[test]
     fn handle_and_collect_without_processors_returns_single_event() {
         let sink_counter = Arc::new(AtomicUsize::new(0));
+        let metrics_manager =
+            Arc::new(MetricsManager::new("test").expect("should create metrics manager"));
         let pipeline = EventProcessingPipeline::new(
             vec![],
-            vec![Arc::new(CountingSink {
+            Arc::new(CountingSink {
                 counter: sink_counter.clone(),
-            })],
+            }),
+            metrics_manager,
         );
 
         let event = CollectorEvent::MetricCollectionStart;

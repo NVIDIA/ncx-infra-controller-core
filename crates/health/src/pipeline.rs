@@ -77,7 +77,12 @@ mod tests {
 
     use super::*;
     use crate::endpoint::BmcAddr;
+    use crate::metrics::MetricsManager;
     use crate::sink::{DataSink, LogRecord};
+
+    fn test_metrics_manager() -> Arc<MetricsManager> {
+        Arc::new(MetricsManager::new("test").expect("should create metrics manager"))
+    }
 
     struct CountingSink {
         counter: Arc<AtomicUsize>,
@@ -113,12 +118,10 @@ mod tests {
     #[tokio::test]
     async fn sync_sinks_complete_before_otlp_send() {
         let sink_counter = Arc::new(AtomicUsize::new(0));
-        let inner = EventProcessingPipeline::new(
-            vec![],
-            vec![Arc::new(CountingSink {
-                counter: sink_counter.clone(),
-            })],
-        );
+        let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
+            counter: sink_counter.clone(),
+        });
+        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
         let (otlp_tx, mut otlp_rx) = tokio::sync::mpsc::channel(10);
         let pipeline = EventPipeline::new(inner, Some(otlp_tx));
 
@@ -130,7 +133,10 @@ mod tests {
 
     #[tokio::test]
     async fn metric_events_are_filtered_from_otlp_channel() {
-        let inner = EventProcessingPipeline::new(vec![], vec![]);
+        let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
+            counter: Arc::new(AtomicUsize::new(0)),
+        });
+        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
         let (otlp_tx, mut otlp_rx) = tokio::sync::mpsc::channel(10);
         let pipeline = EventPipeline::new(inner, Some(otlp_tx));
 
@@ -144,12 +150,10 @@ mod tests {
     #[tokio::test]
     async fn works_without_otlp_sender() {
         let sink_counter = Arc::new(AtomicUsize::new(0));
-        let inner = EventProcessingPipeline::new(
-            vec![],
-            vec![Arc::new(CountingSink {
-                counter: sink_counter.clone(),
-            })],
-        );
+        let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
+            counter: sink_counter.clone(),
+        });
+        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
         let pipeline = EventPipeline::new(inner, None);
 
         pipeline.handle_event(&test_context(), &log_event()).await;
@@ -159,7 +163,10 @@ mod tests {
 
     #[tokio::test]
     async fn backpressure_suspends_on_full_channel() {
-        let inner = EventProcessingPipeline::new(vec![], vec![]);
+        let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
+            counter: Arc::new(AtomicUsize::new(0)),
+        });
+        let inner = EventProcessingPipeline::new(vec![], sink, test_metrics_manager());
         let (otlp_tx, _otlp_rx) = tokio::sync::mpsc::channel(1);
         let pipeline = Arc::new(EventPipeline::new(inner, Some(otlp_tx)));
 
@@ -192,11 +199,13 @@ mod tests {
         }
 
         let sink_counter = Arc::new(AtomicUsize::new(0));
+        let sink: Arc<dyn DataSink> = Arc::new(CountingSink {
+            counter: sink_counter.clone(),
+        });
         let inner = EventProcessingPipeline::new(
             vec![Arc::new(DoubleProcessor)],
-            vec![Arc::new(CountingSink {
-                counter: sink_counter.clone(),
-            })],
+            sink,
+            test_metrics_manager(),
         );
         let (otlp_tx, mut otlp_rx) = tokio::sync::mpsc::channel(10);
         let pipeline = EventPipeline::new(inner, Some(otlp_tx));

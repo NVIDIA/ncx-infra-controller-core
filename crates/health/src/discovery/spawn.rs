@@ -90,7 +90,7 @@ pub(super) async fn spawn_collectors_for_endpoint(
         && !ctx.collectors.contains(CollectorKind::Logs, &key)
     {
         let collector_registry = Arc::new(ctx.metrics_manager.create_collector_registry(
-            format!("log_collector_{}", endpoint.addr.hash_key()),
+            format!("log_collector_{}", endpoint.hash_key()),
             metrics_prefix,
         )?);
 

@@ -26,7 +26,7 @@ use crate::collectors::{IterationResult, PeriodicCollector};
 use crate::config::NvueRestConfig;
 use crate::endpoint::{BmcCredentials, BmcEndpoint, EndpointMetadata};
 use crate::pipeline::EventPipeline;
-use crate::sink::{CollectorEvent, DataSink, EventContext, SensorHealthData};
+use crate::sink::{CollectorEvent, EventContext, SensorHealthData};
 
 const COLLECTOR_NAME: &str = "nvue_rest";
 

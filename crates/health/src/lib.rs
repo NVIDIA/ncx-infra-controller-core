@@ -199,7 +199,9 @@ fn build_event_pipeline(
         return Ok(None);
     }
 
-    let inner = EventProcessingPipeline::new(processors, sinks);
+    let composite_sink: Arc<dyn DataSink> =
+        Arc::new(CompositeDataSink::new(sinks, metrics_manager.clone()));
+    let inner = EventProcessingPipeline::new(processors, composite_sink, metrics_manager);
 
     let (otlp_sender, drain_handle) = if let Configurable::Enabled(ref otlp_cfg) = config.sinks.otlp
     {

@@ -339,7 +339,13 @@ fn bench_handle_and_collect_overhead(c: &mut Criterion) {
     let context = event_context();
     let events = metric_events(batch_size, 64, true);
 
-    let pipeline_sync = EventProcessingPipeline::new(processors.clone(), make_sinks(2));
+    let metrics_manager: Arc<MetricsManager> =
+        Arc::new(MetricsManager::new("bench").expect("metrics manager should initialize"));
+    let pipeline_sync = EventProcessingPipeline::new(
+        processors.clone(),
+        make_composite_sink(2, metrics_manager.clone()),
+        metrics_manager.clone(),
+    );
     group.bench_with_input(
         BenchmarkId::new("handle_event", "sync_only"),
         &events,
@@ -348,7 +354,11 @@ fn bench_handle_and_collect_overhead(c: &mut Criterion) {
         },
     );
 
-    let pipeline_collect = EventProcessingPipeline::new(processors, make_sinks(2));
+    let pipeline_collect = EventProcessingPipeline::new(
+        processors,
+        make_composite_sink(2, metrics_manager.clone()),
+        metrics_manager,
+    );
     group.bench_with_input(
         BenchmarkId::new("handle_and_collect", "with_vec"),
         &events,
