@@ -239,6 +239,41 @@ pub struct Collector {
     cancel_token: CancellationToken,
 }
 
+fn create_bmc(
+    client: ReqwestClient,
+    endpoint: &BmcEndpoint,
+    health_options: &AppConfig,
+) -> Result<Arc<BmcClient>, HealthError> {
+    let bmc_url = match &health_options.bmc_proxy_url {
+        Some(url) => url.clone(),
+        None => endpoint
+            .addr
+            .to_url()
+            .map_err(|e| HealthError::GenericError(e.to_string()))?,
+    };
+
+    let headers = if health_options.bmc_proxy_url.is_some() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::FORWARDED,
+            format!("host={}", endpoint.addr.ip)
+                .parse()
+                .map_err(|e: InvalidHeaderValue| HealthError::GenericError(e.to_string()))?,
+        );
+        headers
+    } else {
+        HeaderMap::new()
+    };
+
+    Ok(Arc::new(HttpBmc::with_custom_headers(
+        client,
+        bmc_url,
+        endpoint.credentials.clone().into(),
+        CacheSettings::with_capacity(health_options.cache_size),
+        headers,
+    )))
+}
+
 impl Collector {
     pub fn start<C: PeriodicCollector<BmcClient>>(
         endpoint: Arc<BmcEndpoint>,
@@ -252,34 +287,7 @@ impl Collector {
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
 
-        let bmc_url = match &health_options.bmc_proxy_url {
-            Some(url) => url.clone(),
-            None => endpoint
-                .addr
-                .to_url()
-                .map_err(|e| HealthError::GenericError(e.to_string()))?,
-        };
-
-        let headers = if health_options.bmc_proxy_url.is_some() {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::FORWARDED,
-                format!("host={}", endpoint.addr.ip)
-                    .parse()
-                    .map_err(|e: InvalidHeaderValue| HealthError::GenericError(e.to_string()))?,
-            );
-            headers
-        } else {
-            HeaderMap::new()
-        };
-
-        let bmc = Arc::new(HttpBmc::with_custom_headers(
-            client,
-            bmc_url,
-            endpoint.credentials.clone().into(),
-            CacheSettings::with_capacity(health_options.cache_size),
-            headers,
-        ));
+        let bmc = create_bmc(client, &endpoint, health_options)?;
 
         let mut runner = C::new_runner(bmc, endpoint.clone(), config)?;
 
@@ -395,34 +403,7 @@ impl Collector {
         let cancel_token = CancellationToken::new();
         let cancel_clone = cancel_token.clone();
 
-        let bmc_url = match &health_options.bmc_proxy_url {
-            Some(url) => url.clone(),
-            None => endpoint
-                .addr
-                .to_url()
-                .map_err(|e| HealthError::GenericError(e.to_string()))?,
-        };
-
-        let headers = if health_options.bmc_proxy_url.is_some() {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::FORWARDED,
-                format!("host={}", endpoint.addr.ip)
-                    .parse()
-                    .map_err(|e: InvalidHeaderValue| HealthError::GenericError(e.to_string()))?,
-            );
-            headers
-        } else {
-            HeaderMap::new()
-        };
-
-        let bmc = Arc::new(HttpBmc::with_custom_headers(
-            client,
-            bmc_url,
-            endpoint.credentials.clone().into(),
-            CacheSettings::with_capacity(health_options.cache_size),
-            headers,
-        ));
+        let bmc = create_bmc(client, &endpoint, health_options)?;
 
         let mut collector = S::new_runner(bmc, endpoint.clone(), config)?;
         let event_context = EventContext::from_endpoint(&endpoint, collector.collector_type());
