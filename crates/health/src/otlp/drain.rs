@@ -93,15 +93,24 @@ impl OtlpDrainTask {
     }
 
     async fn connect(&self) -> Option<LogsServiceClient<Channel>> {
+        let endpoint = match Channel::from_shared(self.endpoint.clone()) {
+            Ok(e) => e,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    endpoint = %self.endpoint,
+                    "invalid otlp endpoint uri, stopping drain"
+                );
+                return None;
+            }
+        };
+
         let mut backoff = ExponentialBackoff::new(&BackoffConfig {
             initial: Duration::from_secs(1),
             max: Duration::from_secs(30),
         });
 
         loop {
-            let endpoint = Channel::from_shared(self.endpoint.clone())
-                .expect("valid endpoint uri");
-
             tokio::select! {
                 _ = self.cancel.cancelled() => return None,
                 result = endpoint.connect() => {
