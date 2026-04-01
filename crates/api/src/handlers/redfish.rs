@@ -46,52 +46,13 @@ pub async fn redfish_browse(
 ) -> Result<tonic::Response<::rpc::forge::RedfishBrowseResponse>, tonic::Status> {
     log_request_data(&request);
 
-    let request = request.into_inner();
-    let uri: http::Uri = match request.uri.clone().parse() {
-        Ok(uri) => uri,
-        Err(err) => {
-            return Err(CarbideError::internal(format!("Parsing uri failed: {err}")).into());
-        }
-    };
+    let uri: http::Uri = request
+        .into_inner()
+        .uri
+        .parse()
+        .map_err(|err| CarbideError::internal(format!("Parsing uri failed: {err}")))?;
 
-    let (metadata, new_uri, headers, http_client) = create_client(
-        uri,
-        &api.database_connection,
-        api.credential_manager.as_ref(),
-        &api.dynamic_settings.bmc_proxy,
-    )
-    .await?;
-
-    let response = match http_client
-        .request(http::Method::GET, new_uri.to_string())
-        .basic_auth(metadata.user.clone(), Some(metadata.password.clone()))
-        .headers(headers)
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            return Err(CarbideError::internal(format!("Http request failed: {e:?}")).into());
-        }
-    };
-
-    let headers = response
-        .headers()
-        .iter()
-        .map(|(x, y)| {
-            (
-                x.to_string(),
-                String::from_utf8_lossy(y.as_bytes()).to_string(),
-            )
-        })
-        .collect::<HashMap<String, String>>();
-
-    let status = response.status();
-    let text = response.text().await.map_err(|e| {
-        CarbideError::internal(format!(
-            "Error reading response body: {e}, Status: {status}"
-        ))
-    })?;
+    let (text, headers, _status) = redfish_proxy_get(api, uri).await?;
 
     Ok(tonic::Response::new(::rpc::forge::RedfishBrowseResponse {
         text,
@@ -204,7 +165,9 @@ async fn redfish_proxy_mutate(
 
     let status = response.status().to_string();
     let text = response.text().await.map_err(|e| {
-        CarbideError::internal(format!("Error reading response body: {e}, Status: {status}"))
+        CarbideError::internal(format!(
+            "Error reading response body: {e}, Status: {status}"
+        ))
     })?;
 
     Ok((text, response_headers, status))
@@ -243,7 +206,9 @@ async fn redfish_proxy_get(
 
     let status = response.status().to_string();
     let text = response.text().await.map_err(|e| {
-        CarbideError::internal(format!("Error reading response body: {e}, Status: {status}"))
+        CarbideError::internal(format!(
+            "Error reading response body: {e}, Status: {status}"
+        ))
     })?;
 
     Ok((text, response_headers, status))
@@ -263,7 +228,7 @@ pub async fn redfish_proxy(
             return Err(CarbideError::InvalidArgument(format!(
                 "unsupported redfish proxy method: {other} (must be GET, POST, or PATCH)"
             ))
-            .into())
+            .into());
         }
     };
 
@@ -816,8 +781,7 @@ mod tests {
 
     #[test]
     fn uri_allowlist_id_placeholder_matches_any_segment() {
-        let patterns =
-            vec!["/redfish/v1/Managers/BMC/NodeManager/Domains/{id}".to_string()];
+        let patterns = vec!["/redfish/v1/Managers/BMC/NodeManager/Domains/{id}".to_string()];
         assert!(uri_matches_allowlist(
             "/redfish/v1/Managers/BMC/NodeManager/Domains/42",
             &patterns,
@@ -845,8 +809,7 @@ mod tests {
 
     #[test]
     fn uri_allowlist_segment_count_mismatch_rejects() {
-        let patterns =
-            vec!["/redfish/v1/Managers/BMC/NodeManager/Domains/{id}".to_string()];
+        let patterns = vec!["/redfish/v1/Managers/BMC/NodeManager/Domains/{id}".to_string()];
         assert!(!uri_matches_allowlist(
             "/redfish/v1/Managers/BMC/NodeManager/Domains",
             &patterns,
@@ -865,10 +828,7 @@ mod tests {
 
     #[test]
     fn uri_allowlist_multiple_patterns_any_match_suffices() {
-        let patterns = vec![
-            "/redfish/v1/A".to_string(),
-            "/redfish/v1/B".to_string(),
-        ];
+        let patterns = vec!["/redfish/v1/A".to_string(), "/redfish/v1/B".to_string()];
         assert!(uri_matches_allowlist("/redfish/v1/B", &patterns));
         assert!(!uri_matches_allowlist("/redfish/v1/C", &patterns));
     }
@@ -916,37 +876,29 @@ mod tests {
     fn allowlist_external_user_always_passes() {
         let config = HashMap::new();
         let req = external_user_request(());
-        assert!(check_redfish_proxy_allowlist(
-            &config,
-            &req,
-            "/any/uri",
-            &http::Method::POST,
-        )
-        .is_ok());
+        assert!(
+            check_redfish_proxy_allowlist(&config, &req, "/any/uri", &http::Method::POST,).is_ok()
+        );
     }
 
     #[test]
     fn allowlist_spiffe_allowed_post_uri() {
-        let config = make_config(
-            vec!["/redfish/v1/Managers/BMC/NodeManager/Domains"],
-            vec![],
-        );
+        let config = make_config(vec!["/redfish/v1/Managers/BMC/NodeManager/Domains"], vec![]);
         let req = spiffe_request("power-provisioning-agent", ());
-        assert!(check_redfish_proxy_allowlist(
-            &config,
-            &req,
-            "/redfish/v1/Managers/BMC/NodeManager/Domains",
-            &http::Method::POST,
-        )
-        .is_ok());
+        assert!(
+            check_redfish_proxy_allowlist(
+                &config,
+                &req,
+                "/redfish/v1/Managers/BMC/NodeManager/Domains",
+                &http::Method::POST,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn allowlist_spiffe_denied_post_uri() {
-        let config = make_config(
-            vec!["/redfish/v1/Managers/BMC/NodeManager/Domains"],
-            vec![],
-        );
+        let config = make_config(vec!["/redfish/v1/Managers/BMC/NodeManager/Domains"], vec![]);
         let req = spiffe_request("power-provisioning-agent", ());
         let result = check_redfish_proxy_allowlist(
             &config,
@@ -965,21 +917,20 @@ mod tests {
             vec!["/redfish/v1/Managers/BMC/NodeManager/Domains/{id}"],
         );
         let req = spiffe_request("power-provisioning-agent", ());
-        assert!(check_redfish_proxy_allowlist(
-            &config,
-            &req,
-            "/redfish/v1/Managers/BMC/NodeManager/Domains/42",
-            &http::Method::PATCH,
-        )
-        .is_ok());
+        assert!(
+            check_redfish_proxy_allowlist(
+                &config,
+                &req,
+                "/redfish/v1/Managers/BMC/NodeManager/Domains/42",
+                &http::Method::PATCH,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn allowlist_post_patterns_not_checked_for_patch() {
-        let config = make_config(
-            vec!["/redfish/v1/Managers/BMC/NodeManager/Domains"],
-            vec![],
-        );
+        let config = make_config(vec!["/redfish/v1/Managers/BMC/NodeManager/Domains"], vec![]);
         let req = spiffe_request("power-provisioning-agent", ());
         let result = check_redfish_proxy_allowlist(
             &config,
@@ -1026,20 +977,24 @@ mod tests {
     fn allowlist_star_pattern_grants_full_access() {
         let config = make_config(vec!["*"], vec!["*"]);
         let req = spiffe_request("power-provisioning-agent", ());
-        assert!(check_redfish_proxy_allowlist(
-            &config,
-            &req,
-            "/literally/any/path",
-            &http::Method::POST,
-        )
-        .is_ok());
+        assert!(
+            check_redfish_proxy_allowlist(
+                &config,
+                &req,
+                "/literally/any/path",
+                &http::Method::POST,
+            )
+            .is_ok()
+        );
         let req2 = spiffe_request("power-provisioning-agent", ());
-        assert!(check_redfish_proxy_allowlist(
-            &config,
-            &req2,
-            "/literally/any/other/path",
-            &http::Method::PATCH,
-        )
-        .is_ok());
+        assert!(
+            check_redfish_proxy_allowlist(
+                &config,
+                &req2,
+                "/literally/any/other/path",
+                &http::Method::PATCH,
+            )
+            .is_ok()
+        );
     }
 }

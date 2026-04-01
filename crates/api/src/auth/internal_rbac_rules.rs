@@ -850,9 +850,7 @@ impl RuleInfo {
                         "carbide-dsx-exchange-consumer".to_string(),
                     ),
                     RulePrincipal::PowerProvisioningAgent => {
-                        Principal::SpiffeServiceIdentifier(
-                            "power-provisioning-agent".to_string(),
-                        )
+                        Principal::SpiffeServiceIdentifier("power-provisioning-agent".to_string())
                     }
                     RulePrincipal::Anonymous => Principal::Anonymous,
                 })
