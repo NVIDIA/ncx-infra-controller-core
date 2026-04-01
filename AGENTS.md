@@ -31,6 +31,11 @@ ncx-infra-controller-core/
 │                        # and their purpose, run `ls crates/` or see the
 │                        # [workspace] members list in `Cargo.toml` — each
 │                        # crate's own `Cargo.toml` has a `description` field.
+│                        # Note: the directory name does NOT always equal the
+│                        # crate name (e.g. crates/api/ → crate carbide-api).
+│                        # Use `grep '^name =' crates/<dir>/Cargo.toml | head -1`
+│                        # to get the actual crate name before running
+│                        # `cargo test -p <name>` or similar.
 ├── book/                # mdBook documentation
 ├── deploy/              # Kubernetes deployment configs and Kustomization overlays
 ├── dev/                 # Local dev tools (Dockerfiles, test configs, certs)
@@ -119,42 +124,6 @@ cargo make format-nightly      # Also sort imports
 
 See [`STYLE_GUIDE.md`](STYLE_GUIDE.md) for detailed Rust coding conventions.
 Make sure to review it to ensure changes meet the expected style of the codebase.
-
-## Commit Guidelines
-
-All commits **must** meet two signing requirements:
-
-1. **DCO sign-off** — certifies the Developer Certificate of Origin:
-   ```bash
-   git commit -s -m "Your commit message"
-   ```
-   DCO compliance is enforced automatically; unsigned commits block merging.
-
-2. **Cryptographic signing** — commits must be signed with a GPG or SSH key
-   so they appear as **Verified** on GitHub. Configure SSH signing once:
-   ```bash
-   git config --global gpg.format ssh
-   git config --global user.signingkey ~/.ssh/id_ed25519.pub
-   git config --global commit.gpgsign true
-   ```
-
-## Pull Request Guidelines
-
-- Write PR descriptions as if the audience has no context: explain the *why*.
-- Reference related issues.
-- Keep PRs focused on a single change.
-- Do not land unused code unless the PR is too large to review otherwise.
-- Ensure all CI checks pass before requesting review.
-
-## CI / CD
-
-The primary CI workflow (`.github/workflows/ci.yaml`) runs on pushes to `main`
-and release branches. It performs:
-
-- Build and test for x86_64 and aarch64
-- Clippy, format, license, and ban checks
-- Secret scanning, CodeQL analysis, and Trivy container scanning
-- Helm chart validation
 
 ## Further Reading
 
