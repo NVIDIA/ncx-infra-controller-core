@@ -70,7 +70,7 @@ async fn clear_rv_labels(
 ) -> Result<(), StateHandlerError> {
     let mut txn = ctx.services.db_pool.begin().await?;
 
-    let machines = get_machines_from_injested_rack(rack, &mut *txn).await?;
+    let machines = get_machines_from_injested_rack(rack, &mut txn).await?;
 
     for machine in machines.into_iter() {
         let mut metadata = machine.metadata;
@@ -107,7 +107,7 @@ async fn load_partition_summary(
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<RackPartitionSummary, StateHandlerError> {
     let mut txn = ctx.services.db_pool.begin().await?;
-    let machines = get_machines_from_injested_rack(rack, &mut *txn).await?;
+    let machines = get_machines_from_injested_rack(rack, &mut txn).await?;
     txn.commit().await?;
 
     tracing::debug!("Rack {} has {} machines", rack_id, machines.len());
@@ -124,7 +124,7 @@ async fn find_rv_run_id(
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<Option<String>, StateHandlerError> {
     let mut txn = ctx.services.db_pool.begin().await?;
-    let machines = get_machines_from_injested_rack(rack, &mut *txn).await?;
+    let machines = get_machines_from_injested_rack(rack, &mut txn).await?;
     txn.commit().await?;
 
     let run_label = MachineRvLabels::RunId.as_str();

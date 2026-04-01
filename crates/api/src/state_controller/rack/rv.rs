@@ -33,7 +33,7 @@ use crate::state_controller::state_handler::StateHandlerError;
 /// already clean.
 pub fn strip_rv_labels(metadata: &mut Metadata) -> bool {
     let before = metadata.labels.len();
-    metadata.labels.retain(|k, _| {!k.starts_with("rv.")});
+    metadata.labels.retain(|k, _| !k.starts_with("rv."));
     let after = metadata.labels.len();
 
     after != before
