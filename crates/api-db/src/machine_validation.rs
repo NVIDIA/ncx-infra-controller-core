@@ -83,13 +83,21 @@ pub async fn update_status(
     uuid: &Uuid,
     status: MachineValidationStatus,
 ) -> DatabaseResult<()> {
-    let query = "UPDATE machine_validation SET state=$2 WHERE id=$1 RETURNING *";
-    let _id = sqlx::query_as::<_, MachineValidation>(query)
+    let query = "UPDATE machine_validation SET state=$2 WHERE id=$1";
+    if sqlx::query(query)
         .bind(uuid)
         .bind(status.state.to_string())
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_validation",
+            id: uuid.to_string(),
+        });
+    }
     Ok(())
 }
 pub async fn update_end_time(
@@ -97,13 +105,21 @@ pub async fn update_end_time(
     uuid: &Uuid,
     status: &MachineValidationStatus,
 ) -> DatabaseResult<()> {
-    let query = "UPDATE machine_validation SET end_time=NOW(),state=$2 WHERE id=$1 RETURNING *";
-    let _id = sqlx::query_as::<_, MachineValidation>(query)
+    let query = "UPDATE machine_validation SET end_time=NOW(),state=$2 WHERE id=$1";
+    if sqlx::query(query)
         .bind(uuid)
         .bind(status.state.to_string())
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_validation",
+            id: uuid.to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -113,14 +129,23 @@ pub async fn update_run(
     total: i32,
     duration_to_complete: i64,
 ) -> DatabaseResult<()> {
-    let query = "UPDATE machine_validation SET duration_to_complete=$2,total=$3,completed=0  WHERE id=$1 RETURNING *";
-    let _id = sqlx::query_as::<_, MachineValidation>(query)
+    let query =
+        "UPDATE machine_validation SET duration_to_complete=$2,total=$3,completed=0  WHERE id=$1";
+    if sqlx::query(query)
         .bind(uuid)
         .bind(duration_to_complete)
         .bind(total)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_validation",
+            id: uuid.to_string(),
+        });
+    }
     Ok(())
 }
 pub async fn create_new_run(

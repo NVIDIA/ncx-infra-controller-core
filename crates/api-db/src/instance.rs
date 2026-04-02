@@ -249,15 +249,21 @@ pub async fn use_custom_ipxe_on_next_boot(
     boot_with_custom_ipxe: bool,
     txn: &mut PgConnection,
 ) -> Result<(), DatabaseError> {
-    let query = "UPDATE instances SET use_custom_pxe_on_boot=$1::bool WHERE machine_id=$2 RETURNING machine_id";
-    // Fetch one to make sure atleast one row is updated.
-    let _: (MachineId,) = sqlx::query_as(query)
+    let query = "UPDATE instances SET use_custom_pxe_on_boot=$1::bool WHERE machine_id=$2";
+    if sqlx::query(query)
         .bind(boot_with_custom_ipxe)
         .bind(machine_id)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
-
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "instance",
+            id: machine_id.to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -270,14 +276,21 @@ pub async fn set_custom_pxe_reboot_requested(
     requested: bool,
     txn: &mut PgConnection,
 ) -> Result<(), DatabaseError> {
-    let query = "UPDATE instances SET custom_pxe_reboot_requested=$1::bool WHERE machine_id=$2 RETURNING machine_id";
-    let _: (MachineId,) = sqlx::query_as(query)
+    let query = "UPDATE instances SET custom_pxe_reboot_requested=$1::bool WHERE machine_id=$2";
+    if sqlx::query(query)
         .bind(requested)
         .bind(machine_id)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
-
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "instance",
+            id: machine_id.to_string(),
+        });
+    }
     Ok(())
 }
 

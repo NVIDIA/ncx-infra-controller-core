@@ -105,13 +105,21 @@ pub async fn trigger_host_reprovisioning_request(
     };
 
     // The WHERE on controller state means that we'll update it in the case where we were in ready, but not when assigned.
-    let query = r#"UPDATE machines SET host_reprovisioning_requested=$2, update_complete = false WHERE id=$1 RETURNING id"#;
-    let _id = sqlx::query_as::<_, MachineId>(query)
+    let query = r#"UPDATE machines SET host_reprovisioning_requested=$2, update_complete = false WHERE id=$1"#;
+    if sqlx::query(query)
         .bind(machine_id)
         .bind(sqlx::types::Json(req))
-        .fetch_one(&mut *txn)
+        .execute(&mut *txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine",
+            id: machine_id.to_string(),
+        });
+    }
 
     Ok(())
 }
@@ -120,12 +128,20 @@ pub async fn clear_host_reprovisioning_request(
     txn: &mut PgConnection,
     machine_id: &MachineId,
 ) -> Result<(), DatabaseError> {
-    let query = "UPDATE machines SET host_reprovisioning_requested = NULL WHERE id=$1 RETURNING id";
-    let _id = sqlx::query_as::<_, MachineId>(query)
+    let query = "UPDATE machines SET host_reprovisioning_requested = NULL WHERE id=$1";
+    if sqlx::query(query)
         .bind(machine_id)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine",
+            id: machine_id.to_string(),
+        });
+    }
 
     Ok(())
 }
@@ -136,13 +152,21 @@ pub async fn reset_host_reprovisioning_request(
     clear_reset: bool,
 ) -> Result<(), DatabaseError> {
     // The WHERE on controller state means that we'll update it in the case where we were in ready, but not when assigned.
-    let query = r#"UPDATE machines SET host_reprovisioning_requested = jsonb_set(host_reprovisioning_requested, '{request_reset}', $2::jsonb) WHERE id=$1 RETURNING id"#;
-    let _id = sqlx::query_as::<_, MachineId>(query)
+    let query = r#"UPDATE machines SET host_reprovisioning_requested = jsonb_set(host_reprovisioning_requested, '{request_reset}', $2::jsonb) WHERE id=$1"#;
+    if sqlx::query(query)
         .bind(machine_id)
         .bind(sqlx::types::Json(!clear_reset))
-        .fetch_one(&mut *txn)
+        .execute(&mut *txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine",
+            id: machine_id.to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -150,13 +174,20 @@ pub async fn set_manual_firmware_upgrade_completed(
     txn: &mut PgConnection,
     machine_id: &MachineId,
 ) -> Result<(), DatabaseError> {
-    let query =
-        "UPDATE machines SET manual_firmware_upgrade_completed = NOW() WHERE id = $1 RETURNING id";
-    let _id = sqlx::query_as::<_, MachineId>(query)
+    let query = "UPDATE machines SET manual_firmware_upgrade_completed = NOW() WHERE id = $1";
+    if sqlx::query(query)
         .bind(machine_id)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine",
+            id: machine_id.to_string(),
+        });
+    }
 
     Ok(())
 }

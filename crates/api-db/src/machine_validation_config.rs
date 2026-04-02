@@ -41,16 +41,24 @@ pub async fn save(
     description: &str,
     config: &Vec<u8>,
 ) -> DatabaseResult<()> {
-    let query = "INSERT INTO machine_validation_external_config (name, description, config, version) VALUES ($1, $2, $3, $4) RETURNING name";
+    let query = "INSERT INTO machine_validation_external_config (name, description, config, version) VALUES ($1, $2, $3, $4)";
 
-    sqlx::query_as::<_, ()>(query)
+    if sqlx::query(query)
         .bind(name)
         .bind(description)
         .bind(config.as_slice())
         .bind(ConfigVersion::initial())
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_validation_external_config",
+            id: name.to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -60,15 +68,23 @@ async fn update(
     config: &Vec<u8>,
     next_version: ConfigVersion,
 ) -> DatabaseResult<()> {
-    let query = "UPDATE machine_validation_external_config SET config=$2, version=$3 WHERE name=$1 RETURNING name";
+    let query = "UPDATE machine_validation_external_config SET config=$2, version=$3 WHERE name=$1";
 
-    sqlx::query_as::<_, ()>(query)
+    if sqlx::query(query)
         .bind(name)
         .bind(config.as_slice())
         .bind(next_version)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_validation_external_config",
+            id: name.to_string(),
+        });
+    }
 
     Ok(())
 }

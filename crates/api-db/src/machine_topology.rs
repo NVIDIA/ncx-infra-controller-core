@@ -332,14 +332,21 @@ pub async fn set_topology_update_needed(
     machine_id: &MachineId,
     value: bool,
 ) -> Result<(), DatabaseError> {
-    let query = "UPDATE machine_topologies SET topology_update_needed=$2 WHERE machine_id=$1 RETURNING machine_id";
-    let _id = sqlx::query_as::<_, MachineId>(query)
+    let query = "UPDATE machine_topologies SET topology_update_needed=$2 WHERE machine_id=$1";
+    if sqlx::query(query)
         .bind(machine_id)
         .bind(value)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))?;
-
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_topology",
+            id: machine_id.to_string(),
+        });
+    }
     Ok(())
 }
 

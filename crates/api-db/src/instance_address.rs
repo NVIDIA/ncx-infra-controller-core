@@ -108,10 +108,10 @@ pub async fn find_by_segment_id(
 
 pub async fn delete(txn: &mut PgConnection, instance_id: InstanceId) -> Result<(), DatabaseError> {
     // Lock MUST be taken by calling function.
-    let query = "DELETE FROM instance_addresses WHERE instance_id=$1 RETURNING id";
-    let _: Vec<(InstanceId,)> = sqlx::query_as(query)
+    let query = "DELETE FROM instance_addresses WHERE instance_id=$1";
+    sqlx::query(query)
         .bind(instance_id)
-        .fetch_all(txn)
+        .execute(txn)
         .await
         .map_err(|e| DatabaseError::query(query, e))?;
     Ok(())

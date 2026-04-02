@@ -174,21 +174,24 @@ pub async fn update_bmc_credentials<'a>(
     bmc_username: String,
     bmc_password: String,
 ) -> DatabaseResult<&'a mut ExpectedMachine> {
-    let query = "UPDATE expected_machines SET bmc_username=$1, bmc_password=$2 WHERE bmc_mac_address=$3 RETURNING bmc_mac_address";
+    let query =
+        "UPDATE expected_machines SET bmc_username=$1, bmc_password=$2 WHERE bmc_mac_address=$3";
 
-    sqlx::query_as::<_, ()>(query)
+    if sqlx::query(query)
         .bind(&bmc_username)
         .bind(&bmc_password)
         .bind(value.bmc_mac_address)
-        .fetch_one(txn)
+        .execute(txn)
         .await
-        .map_err(|err: sqlx::Error| match err {
-            sqlx::Error::RowNotFound => DatabaseError::NotFoundError {
-                kind: "expected_machine",
-                id: value.bmc_mac_address.to_string(),
-            },
-            _ => DatabaseError::query(query, err),
-        })?;
+        .map_err(|e| DatabaseError::query(query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "expected_machine",
+            id: value.bmc_mac_address.to_string(),
+        });
+    }
 
     value.data.bmc_username = bmc_username;
     value.data.bmc_password = bmc_password;

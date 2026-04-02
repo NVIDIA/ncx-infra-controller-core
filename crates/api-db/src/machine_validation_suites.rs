@@ -248,10 +248,18 @@ pub async fn save(
         &test_id,
         "User",
     )?;
-    sqlx::query_as::<_, ()>(&query)
-        .fetch_one(txn)
+    if sqlx::query(&query)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(&query, e))?;
+        .map_err(|e| DatabaseError::query(&query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_validation_test",
+            id: test_id.clone(),
+        });
+    }
     Ok(test_id)
 }
 
@@ -278,10 +286,18 @@ pub async fn update(
         "User",
     )?;
 
-    sqlx::query_as::<_, ()>(&query)
-        .fetch_one(txn)
+    if sqlx::query(&query)
+        .execute(txn)
         .await
-        .map_err(|e| DatabaseError::query(&query, e))?;
+        .map_err(|e| DatabaseError::query(&query, e))?
+        .rows_affected()
+        != 1
+    {
+        return Err(DatabaseError::NotFoundError {
+            kind: "machine_validation_test",
+            id: req.test_id.clone(),
+        });
+    }
     Ok(req.test_id)
 }
 
