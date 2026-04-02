@@ -191,6 +191,7 @@ pwhash = "1.0.0"
 quick-xml = "0.31"
 quote = { default-features = false, version = "1.0" }
 rand = "0.9"
+rand_core = "0.6"
 ratatui = "0.29.0"
 rcgen = "0.13.1"
 regex = "1.11.2"
