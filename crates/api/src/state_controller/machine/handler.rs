@@ -3093,7 +3093,7 @@ async fn reprovision_dpu_power_cycle_grace_grace(
         return Ok(GraceGraceDpuPowerCycleOutcome::NotApplicable);
     }
 
-    let dpus_for_reprov: Vec<_> = state
+    let dpus_for_reprovision: Vec<_> = state
         .dpu_snapshots
         .iter()
         .filter(|dpu| dpu.reprovision_requested.is_some())
@@ -3101,7 +3101,7 @@ async fn reprovision_dpu_power_cycle_grace_grace(
 
     // Phase 2: If power cycle was already issued for all DPUs, check if enough time
     // has elapsed and then issue the chassis reset.
-    let all_power_cycled = dpus_for_reprov.iter().all(|dpu| {
+    let all_power_cycled = dpus_for_reprovision.iter().all(|dpu| {
         dpu.reprovision_requested
             .as_ref()
             .and_then(|r| r.dpu_power_cycle_issued_at)
@@ -3109,17 +3109,16 @@ async fn reprovision_dpu_power_cycle_grace_grace(
     });
 
     if all_power_cycled {
-        // Check if we still need to wait for the delay to elapse.
-        let earliest_issued = dpus_for_reprov
+        let last_issued = dpus_for_reprovision
             .iter()
             .filter_map(|dpu| {
                 dpu.reprovision_requested
                     .as_ref()
                     .and_then(|r| r.dpu_power_cycle_issued_at)
             })
-            .min();
+            .max();
 
-        if let Some(issued_at) = earliest_issued
+        if let Some(issued_at) = last_issued
             && Utc::now() < issued_at + GRACE_GRACE_POWER_CYCLE_DELAY
         {
             return Ok(GraceGraceDpuPowerCycleOutcome::Wait(format!(
@@ -3129,47 +3128,70 @@ async fn reprovision_dpu_power_cycle_grace_grace(
         }
 
         // Delay has elapsed — issue chassis reset for all DPUs.
-        for dpu in &dpus_for_reprov {
+        // If a DPU's BMC is unreachable (e.g. already powered off), skip it.
+        for dpu in &dpus_for_reprovision {
             let bmc_ip = dpu
                 .bmc_addr()
                 .map_or_else(|| "unknown".to_string(), |a| a.to_string());
-            let dpu_bmc_client = ctx.services.create_redfish_client_from_machine(dpu).await?;
-            dpu_bmc_client
+            let dpu_bmc_client = match ctx.services.create_redfish_client_from_machine(dpu).await {
+                Ok(client) => client,
+                Err(e) => {
+                    tracing::warn!(
+                        dpu_id = %dpu.id,
+                        bmc_ip = %bmc_ip,
+                        error = %e,
+                        "Skipping DPU chassis reset: BMC is unreachable (DPU may be powered off)"
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = dpu_bmc_client
                 .chassis_reset("Bluefield_ERoT", SystemPowerControl::GracefulRestart)
                 .await
-                .map_err(|e| {
-                    StateHandlerError::GenericError(eyre::eyre!(
-                        "chassis_reset_dpu failed for DPU {} (BMC: {}): {e}",
-                        dpu.id,
-                        bmc_ip,
-                    ))
-                })?;
+            {
+                tracing::warn!(
+                    dpu_id = %dpu.id,
+                    bmc_ip = %bmc_ip,
+                    error = %e,
+                    "Skipping DPU chassis reset: command failed (DPU may be powered off)"
+                );
+            }
         }
         return Ok(GraceGraceDpuPowerCycleOutcome::Done);
     }
 
     // Phase 1: Issue PowerCycle for all DPUs and record the timestamp.
-    for dpu in &dpus_for_reprov {
+    // If a DPU's BMC is unreachable (e.g. already powered off), skip it.
+    for dpu in &dpus_for_reprovision {
         let bmc_ip = dpu
             .bmc_addr()
             .map_or_else(|| "unknown".to_string(), |a| a.to_string());
-        let dpu_bmc_client = ctx.services.create_redfish_client_from_machine(dpu).await?;
-        dpu_bmc_client
-            .power(SystemPowerControl::PowerCycle)
-            .await
-            .map_err(|e| {
-                StateHandlerError::GenericError(eyre::eyre!(
-                    "power_cycle_dpu failed for DPU {} (BMC: {}): {e}",
-                    dpu.id,
-                    bmc_ip,
-                ))
-            })?;
+        let dpu_bmc_client = match ctx.services.create_redfish_client_from_machine(dpu).await {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::warn!(
+                    dpu_id = %dpu.id,
+                    bmc_ip = %bmc_ip,
+                    error = %e,
+                    "Skipping DPU power cycle: BMC is unreachable (DPU may be powered off)"
+                );
+                continue;
+            }
+        };
+        if let Err(e) = dpu_bmc_client.power(SystemPowerControl::PowerCycle).await {
+            tracing::warn!(
+                dpu_id = %dpu.id,
+                bmc_ip = %bmc_ip,
+                error = %e,
+                "Skipping DPU power cycle: power command failed (DPU may be powered off)"
+            );
+        }
     }
 
     let now = Utc::now();
     let mut txn = ctx.services.db_pool.begin().await?;
 
-    for dpu in &dpus_for_reprov {
+    for dpu in &dpus_for_reprovision {
         db::machine::set_dpu_reprovision_power_cycle_issued_at(&dpu.id, now, &mut txn).await?;
     }
     txn.commit().await?;
