@@ -29,7 +29,7 @@ pub async fn copy_bfb(api_client: &ApiClient, args: Args) -> CarbideCliResult<()
             .first()
             .and_then(|ep| ep.report.as_ref())
             .map(|report| {
-                report.systems.first().map_or(false, |s| s.id == "Bluefield")
+                report.systems.first().is_some_and(|s| s.id == "Bluefield")
                     && report.chassis.iter().any(|c| {
                         c.model
                             .as_deref()
