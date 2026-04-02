@@ -283,6 +283,8 @@ impl TestEnvOverrides {
                             internal: false,
                             route_target_imports: vec![],
                             route_targets_on_exports: vec![],
+                            leak_default_route_from_underlay: false,
+                            leak_tenant_host_routes_to_underlay: false,
                         },
                     ),
                     (
@@ -291,6 +293,8 @@ impl TestEnvOverrides {
                             internal: true,
                             route_target_imports: vec![],
                             route_targets_on_exports: vec![],
+                            leak_default_route_from_underlay: false,
+                            leak_tenant_host_routes_to_underlay: false,
                         },
                     ),
                 ]),
@@ -1192,7 +1196,6 @@ pub fn get_config() -> CarbideConfig {
         }),
         mlxconfig_profiles: None,
         rack_management_enabled: false,
-        force_dpu_nic_mode: false,
         rms_api_url: Some(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080).to_string(),
         ),
@@ -1206,7 +1209,7 @@ pub fn get_config() -> CarbideConfig {
         },
         machine_identity: crate::cfg::file::MachineIdentityConfig::default(),
         dsx_exchange_event_bus: None,
-        use_onboard_nic: Arc::new(false.into()),
+        force_dpu_nic_mode: Arc::new(false.into()),
         dpf: crate::cfg::file::DpfConfig::default(),
         x86_pxe_boot_url_override: None,
         arm_pxe_boot_url_override: None,
@@ -1654,7 +1657,7 @@ pub async fn create_test_env_with_overrides(
             create_switches: Arc::new(true.into()),
             switches_created_per_run: 1,
             rotate_switch_nvos_credentials: Arc::new(false.into()),
-            use_onboard_nic: Arc::new(false.into()),
+            force_dpu_nic_mode: Arc::new(false.into()),
             // Tests use MockEndpointExplorer. So this doesn't affect anything.
             explore_mode: SiteExplorerExploreMode::NvRedfish,
         },

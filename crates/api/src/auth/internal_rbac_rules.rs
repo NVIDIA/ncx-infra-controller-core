@@ -101,6 +101,7 @@ impl InternalRBACRules {
         x.perm("FindIBPartitionIds", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("FindIBPartitionsByIds", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("CreateIBPartition", vec![SiteAgent]);
+        x.perm("UpdateIBPartition", vec![SiteAgent]);
         x.perm("DeleteIBPartition", vec![SiteAgent]);
         x.perm("IBPartitionsForTenant", vec![]);
         x.perm("FindIBFabricIds", vec![ForgeAdminCLI, SiteAgent]);
@@ -263,7 +264,7 @@ impl InternalRBACRules {
         x.perm("UpdateInstancePhoneHomeLastContact", vec![Agent]);
         x.perm("SetHostUefiPassword", vec![ForgeAdminCLI]);
         x.perm("ClearHostUefiPassword", vec![ForgeAdminCLI]);
-        x.perm("AddExpectedMachine", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("AddExpectedMachine", vec![ForgeAdminCLI, SiteAgent, Rla]);
         x.perm("DeleteExpectedMachine", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("UpdateExpectedMachine", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("CreateExpectedMachines", vec![ForgeAdminCLI, SiteAgent]);
@@ -471,6 +472,9 @@ impl InternalRBACRules {
         x.perm("UfmBrowse", vec![ForgeAdminCLI]);
         x.perm("NmxmBrowse", vec![ForgeAdminCLI]);
         x.perm("UpdateMachineMetadata", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("UpdateRackMetadata", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("UpdateSwitchMetadata", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("UpdatePowerShelfMetadata", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("CreateNetworkSecurityGroup", vec![ForgeAdminCLI, SiteAgent]);
         x.perm(
             "FindNetworkSecurityGroupIds",
@@ -583,9 +587,17 @@ impl InternalRBACRules {
             vec![ForgeAdminCLI, SiteAgent],
         );
         x.perm("FindPowerShelves", vec![ForgeAdminCLI, Machineatron, Rla]);
+        x.perm("FindPowerShelfIds", vec![ForgeAdminCLI, Machineatron, Rla]);
+        x.perm(
+            "FindPowerShelvesByIds",
+            vec![ForgeAdminCLI, Machineatron, Rla],
+        );
         x.perm("CreatePowerShelf", vec![ForgeAdminCLI, Machineatron]);
         x.perm("DeletePowerShelf", vec![ForgeAdminCLI, Machineatron]);
-        x.perm("AddExpectedPowerShelf", vec![ForgeAdminCLI, Machineatron]);
+        x.perm(
+            "AddExpectedPowerShelf",
+            vec![ForgeAdminCLI, Machineatron, Rla],
+        );
         x.perm(
             "DeleteExpectedPowerShelf",
             vec![ForgeAdminCLI, Machineatron],
@@ -622,9 +634,17 @@ impl InternalRBACRules {
             "FindSwitches",
             vec![ForgeAdminCLI, Machineatron, Rla, Health],
         );
+        x.perm(
+            "FindSwitchIds",
+            vec![ForgeAdminCLI, Machineatron, Rla, Health],
+        );
+        x.perm(
+            "FindSwitchesByIds",
+            vec![ForgeAdminCLI, Machineatron, Rla, Health],
+        );
         x.perm("CreateSwitch", vec![ForgeAdminCLI, Machineatron]);
         x.perm("DeleteSwitch", vec![ForgeAdminCLI, Machineatron]);
-        x.perm("AddExpectedSwitch", vec![ForgeAdminCLI, Machineatron]);
+        x.perm("AddExpectedSwitch", vec![ForgeAdminCLI, Machineatron, Rla]);
         x.perm("DeleteExpectedSwitch", vec![ForgeAdminCLI, Machineatron]);
         x.perm("UpdateExpectedSwitch", vec![ForgeAdminCLI, Machineatron]);
         x.perm("GetExpectedSwitch", vec![ForgeAdminCLI, Machineatron, Rla]);

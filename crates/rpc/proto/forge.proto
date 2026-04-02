@@ -79,15 +79,21 @@ service Forge {
   rpc FindIBPartitionsByIds(IBPartitionsByIdsRequest) returns (IBPartitionList);
   // Create a IB partition
   rpc CreateIBPartition(IBPartitionCreationRequest) returns (IBPartition);
+  // Update a IB partition
+  rpc UpdateIBPartition(IBPartitionUpdateRequest) returns (IBPartition);
   // Delete a IB partition
   rpc DeleteIBPartition(IBPartitionDeletionRequest) returns (IBPartitionDeletionResult);
   // Find all IB partitions under a specified tenant
   rpc IBPartitionsForTenant(TenantSearchQuery) returns (IBPartitionList);
 
   rpc FindPowerShelves(PowerShelfQuery) returns (PowerShelfList);
+  rpc FindPowerShelfIds(PowerShelfSearchFilter) returns (PowerShelfIdList);
+  rpc FindPowerShelvesByIds(PowerShelvesByIdsRequest) returns (PowerShelfList);
   rpc DeletePowerShelf(PowerShelfDeletionRequest) returns (PowerShelfDeletionResult);
 
   rpc FindSwitches(SwitchQuery) returns (SwitchList);
+  rpc FindSwitchIds(SwitchSearchFilter) returns (SwitchIdList);
+  rpc FindSwitchesByIds(SwitchesByIdsRequest) returns (SwitchList);
   rpc DeleteSwitch(SwitchDeletionRequest) returns (SwitchDeletionResult);
 
   // InfiniBand Fabrics
@@ -270,6 +276,15 @@ service Forge {
 
   // Update the Metadata of a Machine
   rpc UpdateMachineMetadata(MachineMetadataUpdateRequest) returns (google.protobuf.Empty);
+
+  // Update the Metadata of a Rack
+  rpc UpdateRackMetadata(RackMetadataUpdateRequest) returns (google.protobuf.Empty);
+
+  // Update the Metadata of a Switch
+  rpc UpdateSwitchMetadata(SwitchMetadataUpdateRequest) returns (google.protobuf.Empty);
+
+  // Update the Metadata of a PowerShelf
+  rpc UpdatePowerShelfMetadata(PowerShelfMetadataUpdateRequest) returns (google.protobuf.Empty);
 
   // Update the NVLink Info of a Machine
   rpc UpdateMachineNvLinkInfo(UpdateMachineNvLinkInfoRequest) returns (google.protobuf.Empty);
@@ -1647,6 +1662,17 @@ message IBPartitionCreationRequest {
   Metadata metadata = 3;
 }
 
+message IBPartitionUpdateRequest {
+  common.IBPartitionId id = 1; 
+ 
+  // New IBPartitionConfig to be applied to the IBPartition.
+  IBPartitionConfig config = 2;
+
+  optional string if_version_match = 3;
+
+  Metadata metadata = 4;
+}
+
 message IBPartitionDeletionRequest {
   common.IBPartitionId id = 1;
 }
@@ -1693,6 +1719,8 @@ message PowerShelfStatus {
   optional string power_state = 4;
   // Health status: "ok", "warning", "critical"
   optional string health_status = 5;
+  // The controller state machine state (e.g. "initializing", "ready", "error")
+  optional string controller_state = 6;
 }
 
 // Describe a PowerShelf configuration and status
@@ -1706,7 +1734,16 @@ message PowerShelf {
   // Timestamp when the power shelf was marked as deleted
   optional google.protobuf.Timestamp deleted = 4;
 
+  // Deprecated: use status.controller_state instead
   string controller_state = 5;
+
+  Metadata metadata = 6;
+  string version = 7;
+
+  BmcInfo bmc_info = 8;
+
+  // Version string for the current controller state (e.g. "V3-T1774905143273055").
+  string state_version = 9;
 }
 
 message PowerShelfList {
@@ -1749,6 +1786,30 @@ message PowerShelfStateHistoryRecords {
 message PowerShelfQuery {
   optional string name = 1;
   common.PowerShelfId power_shelf_id = 2;
+}
+
+// Filter for controlling whether deleted resources are included in search results.
+enum DeletedFilter {
+  // Exclude deleted resources (default behavior)
+  DELETED_FILTER_EXCLUDE = 0;
+  // Return only deleted resources
+  DELETED_FILTER_ONLY = 1;
+  // Include both deleted and non-deleted resources
+  DELETED_FILTER_INCLUDE = 2;
+}
+
+message PowerShelfSearchFilter {
+  optional common.RackId rack_id = 1;
+  // Controls whether deleted power shelves are included. Defaults to EXCLUDE.
+  DeletedFilter deleted = 2;
+  // Filter by controller state (e.g. "ready", "initializing", "error")
+  optional string controller_state = 3;
+  // Filter by BMC MAC address via machine_interfaces
+  optional string bmc_mac = 4;
+}
+
+message PowerShelvesByIdsRequest {
+  repeated common.PowerShelfId power_shelf_ids = 1;
 }
 
 message ExpectedPowerShelf {
@@ -1816,6 +1877,8 @@ message SwitchStatus {
   optional string power_state = 4;
   // Health status: "ok", "warning", "critical"
   optional string health_status = 5;
+  // The controller state machine state (e.g. "initializing", "ready", "error")
+  optional string controller_state = 6;
 }
 
 // Describe a Switch configuration and status
@@ -1829,9 +1892,16 @@ message Switch {
   // Timestamp when the switch was marked as deleted
   optional google.protobuf.Timestamp deleted = 4;
 
+  // Deprecated: use status.controller_state instead
   string controller_state = 5;
 
   BmcInfo bmc_info = 6;
+
+  // Version string for the current controller state (e.g. "V3-T1774905143273055").
+  string state_version = 7;
+
+  Metadata metadata = 8;
+  string version = 9;
 }
 
 message SwitchList {
@@ -1876,6 +1946,20 @@ message SwitchStateHistoryRecords {
 message SwitchQuery {
   optional string name = 1;
   common.SwitchId switch_id = 2;
+}
+
+message SwitchSearchFilter {
+  optional common.RackId rack_id = 1;
+  // Controls whether deleted switches are included. Defaults to EXCLUDE.
+  DeletedFilter deleted = 2;
+  // Filter by controller state (e.g. "ready", "initializing", "error")
+  optional string controller_state = 3;
+  // Filter by BMC MAC address via machine_interfaces
+  optional string bmc_mac = 4;
+}
+
+message SwitchesByIdsRequest {
+  repeated common.SwitchId switch_ids = 1;
 }
 
 message ExpectedSwitch {
@@ -2860,9 +2944,7 @@ message Machine {
 
   // Other machine ids associated with this machine
   optional common.MachineId associated_host_machine_id = 19;
-  // Deprecated, use associated_dpu_machine_ids. For now, this is filled in with the first DPU ID.
-  // TODO: Once all admin CLI clients have updated, drop this and stop filling it in.
-  optional common.MachineId associated_dpu_machine_id = 20;
+  reserved 20; /* previously: optional common.MachineId associated_dpu_machine_id = 20; */
 
   optional MachineInventory inventory = 21;
   optional google.protobuf.Timestamp last_reboot_requested_time = 22;
@@ -2952,6 +3034,48 @@ message MachineMetadataUpdateRequest {
   optional string if_version_match = 2;
 
   // New Metadata to be utilized by the Machine
+  Metadata metadata = 3;
+}
+
+message RackMetadataUpdateRequest {
+  // The ID of the Rack for which the Metadata update will apply
+  common.RackId rack_id = 1;
+
+  // If the field here is set, the update will only be applied if the version
+  // is equivalent to the current Rack `version` on the Forge Site.
+  // If a concurrent update changed the site configuration, the API will return
+  // a `ConcurrentModificationError`.
+  optional string if_version_match = 2;
+
+  // New Metadata to be utilized by the Rack
+  Metadata metadata = 3;
+}
+
+message SwitchMetadataUpdateRequest {
+  // The ID of the Switch for which the Metadata update will apply
+  common.SwitchId switch_id = 1;
+
+  // If the field here is set, the update will only be applied if the version
+  // is equivalent to the current Switch `version` on the Forge Site.
+  // If a concurrent update changed the site configuration, the API will return
+  // a `ConcurrentModificationError`.
+  optional string if_version_match = 2;
+
+  // New Metadata to be utilized by the Switch
+  Metadata metadata = 3;
+}
+
+message PowerShelfMetadataUpdateRequest {
+  // The ID of the PowerShelf for which the Metadata update will apply
+  common.PowerShelfId power_shelf_id = 1;
+
+  // If the field here is set, the update will only be applied if the version
+  // is equivalent to the current PowerShelf `version` on the Forge Site.
+  // If a concurrent update changed the site configuration, the API will return
+  // a `ConcurrentModificationError`.
+  optional string if_version_match = 2;
+
+  // New Metadata to be utilized by the PowerShelf
   Metadata metadata = 3;
 }
 
@@ -6043,6 +6167,8 @@ message Rack {
   google.protobuf.Timestamp deleted = 11;
   health.HealthReport health = 12;
   repeated HealthOverrideOrigin health_overrides = 13;
+  Metadata metadata = 14;
+  string version = 15;
 }
 
 message RackStateHistoryRecord {
@@ -6736,6 +6862,8 @@ enum RoutingProfileType {
 message RoutingProfile {
   repeated common.RouteTarget route_target_imports     = 1;
   repeated common.RouteTarget route_targets_on_exports = 2;
+  bool leak_default_route_from_underlay                = 3;
+  bool leak_tenant_host_routes_to_underlay             = 4;
 }
 
 // ============================================================================

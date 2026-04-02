@@ -17,7 +17,6 @@
 
 pub mod metrics;
 
-use std::collections::HashMap;
 use std::panic::Location;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -288,6 +287,13 @@ impl Forge for Api {
         crate::handlers::ib_partition::delete(self, request).await
     }
 
+    async fn update_ib_partition(
+        &self,
+        request: Request<rpc::IbPartitionUpdateRequest>,
+    ) -> Result<Response<rpc::IbPartition>, Status> {
+        crate::handlers::ib_partition::update(self, request).await
+    }
+
     async fn ib_partitions_for_tenant(
         &self,
         request: Request<rpc::TenantSearchQuery>,
@@ -302,6 +308,20 @@ impl Forge for Api {
         crate::handlers::power_shelf::find_power_shelf(self, request).await
     }
 
+    async fn find_power_shelf_ids(
+        &self,
+        request: Request<rpc::PowerShelfSearchFilter>,
+    ) -> Result<Response<rpc::PowerShelfIdList>, Status> {
+        crate::handlers::power_shelf::find_ids(self, request).await
+    }
+
+    async fn find_power_shelves_by_ids(
+        &self,
+        request: Request<rpc::PowerShelvesByIdsRequest>,
+    ) -> Result<Response<rpc::PowerShelfList>, Status> {
+        crate::handlers::power_shelf::find_by_ids(self, request).await
+    }
+
     async fn delete_power_shelf(
         &self,
         request: Request<rpc::PowerShelfDeletionRequest>,
@@ -314,6 +334,20 @@ impl Forge for Api {
         request: Request<rpc::SwitchQuery>,
     ) -> Result<Response<rpc::SwitchList>, Status> {
         crate::handlers::switch::find_switch(self, request).await
+    }
+
+    async fn find_switch_ids(
+        &self,
+        request: Request<rpc::SwitchSearchFilter>,
+    ) -> Result<Response<rpc::SwitchIdList>, Status> {
+        crate::handlers::switch::find_ids(self, request).await
+    }
+
+    async fn find_switches_by_ids(
+        &self,
+        request: Request<rpc::SwitchesByIdsRequest>,
+    ) -> Result<Response<rpc::SwitchList>, Status> {
+        crate::handlers::switch::find_by_ids(self, request).await
     }
 
     async fn delete_switch(
@@ -711,84 +745,16 @@ impl Forge for Api {
 
     async fn find_switch_state_histories(
         &self,
-        _request: Request<rpc::SwitchStateHistoriesRequest>,
+        request: Request<rpc::SwitchStateHistoriesRequest>,
     ) -> Result<Response<rpc::SwitchStateHistories>, Status> {
-        Err(Status::unimplemented(
-            "not implemented yet -- under construction",
-        ))
+        crate::handlers::switch::find_switch_state_histories(self, request).await
     }
 
     async fn find_machine_health_histories(
         &self,
         request: Request<rpc::MachineHealthHistoriesRequest>,
     ) -> std::result::Result<Response<rpc::MachineHealthHistories>, Status> {
-        log_request_data(&request);
-        let request_inner = request.into_inner();
-
-        // Check if time range filtering is requested
-        if let (Some(start_time), Some(end_time)) =
-            (request_inner.start_time, request_inner.end_time)
-        {
-            // Time-filtered query path
-            let machine_id = request_inner.machine_ids.first().ok_or_else(|| {
-                CarbideError::InvalidArgument("machine_id is required".to_string())
-            })?;
-
-            // Convert protobuf timestamps to chrono DateTime
-            let start_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                start_time.seconds,
-                start_time.nanos as u32,
-            )
-            .ok_or_else(|| {
-                CarbideError::InvalidArgument("Invalid start_time timestamp".to_string())
-            })?;
-            let end_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                end_time.seconds,
-                end_time.nanos as u32,
-            )
-            .ok_or_else(|| {
-                CarbideError::InvalidArgument("Invalid end_time timestamp".to_string())
-            })?;
-
-            // Start database transaction
-            let mut txn = self.txn_begin().await?;
-
-            // Call database function to get health history records with time filter
-            let db_records = db::machine_health_history::find_by_time_range(
-                &mut txn, machine_id, &start_dt, &end_dt,
-            )
-            .await?;
-
-            // Convert database records to MachineHealthHistories format
-            let response_records: Vec<rpc::MachineHealthHistoryRecord> = db_records
-                .into_iter()
-                .map(|db_rec| rpc::MachineHealthHistoryRecord {
-                    health: Some(db_rec.health.into()),
-                    time: Some(db_rec.time.into()),
-                })
-                .collect();
-
-            // Put records in a map keyed by machine ID string
-            let machine_id_str = machine_id.to_string();
-            let mut histories = HashMap::new();
-            histories.insert(
-                machine_id_str,
-                rpc::MachineHealthHistoryRecords {
-                    records: response_records,
-                },
-            );
-
-            txn.commit().await?;
-
-            Ok(Response::new(rpc::MachineHealthHistories { histories }))
-        } else {
-            // Original behavior: no time filtering
-            crate::handlers::machine::find_machine_health_histories(
-                self,
-                Request::new(request_inner),
-            )
-            .await
-        }
+        crate::handlers::machine::find_machine_health_histories(self, request).await
     }
 
     async fn find_interfaces(
@@ -993,6 +959,27 @@ impl Forge for Api {
         request: Request<rpc::MachineMetadataUpdateRequest>,
     ) -> std::result::Result<Response<()>, Status> {
         crate::handlers::machine::update_machine_metadata(self, request).await
+    }
+
+    async fn update_rack_metadata(
+        &self,
+        request: Request<rpc::RackMetadataUpdateRequest>,
+    ) -> std::result::Result<Response<()>, Status> {
+        crate::handlers::rack::update_rack_metadata(self, request).await
+    }
+
+    async fn update_switch_metadata(
+        &self,
+        request: Request<rpc::SwitchMetadataUpdateRequest>,
+    ) -> std::result::Result<Response<()>, Status> {
+        crate::handlers::switch::update_switch_metadata(self, request).await
+    }
+
+    async fn update_power_shelf_metadata(
+        &self,
+        request: Request<rpc::PowerShelfMetadataUpdateRequest>,
+    ) -> std::result::Result<Response<()>, Status> {
+        crate::handlers::power_shelf::update_power_shelf_metadata(self, request).await
     }
 
     async fn update_machine_nv_link_info(

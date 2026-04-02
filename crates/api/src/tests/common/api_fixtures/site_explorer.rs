@@ -408,9 +408,16 @@ impl<'a> MockExploredHost<'a> {
         self.test_env
             .run_machine_state_controller_iteration_until_state_matches(
                 &host_machine_id,
-                10,
-                ManagedHostState::HostInit {
-                    machine_state: MachineState::EnableIpmiOverLan,
+                35,
+                ManagedHostState::DPUInit {
+                    dpu_states: model::machine::DpuInitStates {
+                        states: self
+                            .dpu_machine_ids
+                            .clone()
+                            .into_values()
+                            .map(|machine_id| (machine_id, DpuInitState::WaitingForNetworkConfig))
+                            .collect::<HashMap<MachineId, DpuInitState>>(),
+                    },
                 },
             )
             .await;
@@ -1502,6 +1509,7 @@ pub async fn new_power_shelf(
     let new_power_shelf = NewPowerShelf {
         id: power_shelf_id,
         config,
+        metadata: None,
     };
 
     let _power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf)
@@ -1608,6 +1616,7 @@ impl TestRackDbBuilder {
             self.expected_compute_trays.clone(),
             self.expected_switches.clone(),
             self.expected_power_shelves.clone(),
+            None,
         )
         .await?;
 
@@ -1670,6 +1679,7 @@ pub async fn new_switch(
         id: switch_id,
         config,
         bmc_mac_address: Some(expected_switch.bmc_mac_address),
+        metadata: None,
     };
 
     let _switch = db_switch::create(&mut txn, &new_switch)
@@ -1736,7 +1746,7 @@ pub async fn new_mock_host_with_dpf(
     // these futures. Prior to this we were hitting stack space limits (going over 2MB in stack) in
     // unit tests. This buys us some savings so that we don't have to fiddle with adjusting the
     // default stack size.
-    mock_explored_host
+    mock_explored_host = mock_explored_host
         // ...Then run host BMC's DHCP
         .discover_dhcp_host_bmc(|_, _| Ok(()))
         .boxed()
@@ -1756,7 +1766,16 @@ pub async fn new_mock_host_with_dpf(
         .await?
         .dpu_state_controller_iterations_with_dpf()
         .boxed()
-        .await
+        .await;
+
+    let dpu_ids: Vec<MachineId> = mock_explored_host
+        .dpu_machine_ids
+        .values()
+        .copied()
+        .collect();
+    network_configured(env, &dpu_ids).await;
+
+    mock_explored_host
         .discover_machine(|_, _| Ok(()))
         .boxed()
         .await?
