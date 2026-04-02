@@ -991,6 +991,13 @@ mod rbac_rule_tests {
             )]
         ));
 
+        assert!(InternalRBACRules::allowed_from_static(
+            "SetMaintenance",
+            &[Principal::SpiffeServiceIdentifier(
+                "carbide-rla".to_string()
+            )]
+        ));
+
         // Ensure Ssh and SshRs both have identical permissions. (ssh-console-rs is a rust rewrite
         // of ssh-console, and to keep things straightforward, it has its own set of DNS names,
         // SPIFFE identifiers, etc. We don't want to play any tricks by reusing principals here, so
