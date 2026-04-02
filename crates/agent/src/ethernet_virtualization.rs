@@ -1521,7 +1521,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_tenant_nvue() -> Result<(), Box<dyn std::error::Error>> {
-        let virtualization_type = VpcVirtualizationType::EthernetVirtualizerWithNvue;
+        let virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
 
         // Test without an NSG to make sure there are no changes for pre-FNN users
         // if they don't opt-in to a network security group.
@@ -1558,7 +1558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_tenant_nvue_with_bridge() -> Result<(), Box<dyn std::error::Error>> {
-        let virtualization_type = VpcVirtualizationType::EthernetVirtualizerWithNvue;
+        let virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
 
         // Both interfaces are L2 segments, so IncludeBridge is true and the bridge block is emitted.
         let network_config = netconf(virtualization_type, 32, 24, false, None, true, false);
@@ -1594,7 +1594,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_tenant_nvue_quarantined() -> Result<(), Box<dyn std::error::Error>> {
-        let virtualization_type = VpcVirtualizationType::EthernetVirtualizerWithNvue;
+        let virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
 
         let network_config = {
             let mut cfg = netconf(virtualization_type, 32, 24, true, None, false, false);
@@ -1721,7 +1721,7 @@ mod tests {
     #[tokio::test]
     async fn test_with_tenant_nvue_with_nsg() -> Result<(), Box<dyn std::error::Error>> {
         // Test WITH an NSG
-        let virtualization_type = VpcVirtualizationType::EthernetVirtualizerWithNvue;
+        let virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
 
         let network_config = netconf(virtualization_type, 32, 24, true, None, false, false);
 
@@ -1757,7 +1757,7 @@ mod tests {
     #[tokio::test]
     async fn test_with_tenant_nvue_with_empty_nsg_default_deny()
     -> Result<(), Box<dyn std::error::Error>> {
-        let virtualization_type = VpcVirtualizationType::EthernetVirtualizerWithNvue;
+        let virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
         let mut network_config = netconf(virtualization_type, 32, 24, true, None, false, false);
 
         // Empty out all NSG rules.  This should result in config that
@@ -1998,7 +1998,7 @@ mod tests {
         let svi_ip2: IpAddr = IpAddr::from_str("10.217.5.164").unwrap();
 
         let vpc_peer_vnis = match virtualization_type {
-            VpcVirtualizationType::EthernetVirtualizerWithNvue => {
+            VpcVirtualizationType::EthernetVirtualizer => {
                 vec![]
             }
             _ => {
@@ -2397,7 +2397,7 @@ mod tests {
     }
 
     fn test_nvue_is_yaml_inner(is_fnn: bool) -> Result<(), Box<dyn std::error::Error>> {
-        let vpc_virtualization_type = VpcVirtualizationType::EthernetVirtualizerWithNvue;
+        let vpc_virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
 
         let network_security_groups = vec![nvue::NetworkSecurityGroup {
             id: "7777f270-dd02-11ef-80d2-9f8689fc7df7".to_string(),

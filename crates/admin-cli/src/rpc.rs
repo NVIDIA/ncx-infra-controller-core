@@ -810,7 +810,7 @@ impl ApiClient {
                 tenant_organization_id: "devenv_test_org".to_string(),
                 tenant_keyset_id: None,
                 network_virtualization_type: Some(
-                    VpcVirtualizationType::EthernetVirtualizerWithNvue.into(),
+                    VpcVirtualizationType::EthernetVirtualizer.into(),
                 ),
                 id: Some(vpc_id),
                 metadata: Some(rpc::Metadata {

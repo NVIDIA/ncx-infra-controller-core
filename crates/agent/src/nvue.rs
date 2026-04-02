@@ -36,13 +36,14 @@ const TMPL_ETV_WITH_NVUE: &str = include_str!("../templates/nvue_startup_etv.con
 const TMPL_FNN: &str = include_str!("../templates/nvue_startup_fnn.conf");
 
 /// Returns the NVUE template for the given virtualization type.
+/// EthernetVirtualizerWithNvue is hanging around for a bit longer in here
+/// just for an extra sense of security and compatibilty; it all goes
+/// to EthernetVirtualizer.
 pub fn template_for(vtype: VpcVirtualizationType) -> eyre::Result<&'static str> {
     match vtype {
-        VpcVirtualizationType::EthernetVirtualizerWithNvue => Ok(TMPL_ETV_WITH_NVUE),
+        VpcVirtualizationType::EthernetVirtualizer
+        | VpcVirtualizationType::EthernetVirtualizerWithNvue => Ok(TMPL_ETV_WITH_NVUE),
         VpcVirtualizationType::Fnn => Ok(TMPL_FNN),
-        VpcVirtualizationType::EthernetVirtualizer => Err(eyre::eyre!(
-            "Legacy EthernetVirtualizer is no longer supported"
-        )),
     }
 }
 
@@ -1455,11 +1456,11 @@ mod tests {
     }
 
     /// Helper to build a minimal NvueConfig for template rendering tests.
-    /// Uses EthernetVirtualizerWithNvue (ETV) by default.
+    /// Uses EthernetVirtualizer (ETV) by default.
     fn minimal_nvue_config() -> NvueConfig {
         NvueConfig {
             is_fnn: false,
-            vpc_virtualization_type: VpcVirtualizationType::EthernetVirtualizerWithNvue,
+            vpc_virtualization_type: VpcVirtualizationType::EthernetVirtualizer,
             use_admin_network: false,
             loopback_ip: "10.0.0.1".to_string(),
             asn: 65000,
@@ -1498,22 +1499,19 @@ mod tests {
     }
 
     #[test]
-    fn test_template_for_etv_nvue() {
+    fn test_template_for_etv() {
+        assert!(template_for(VpcVirtualizationType::EthernetVirtualizer).is_ok());
+    }
+
+    #[test]
+    fn test_template_for_etv_with_nvue() {
+        // EthernetVirtualizerWithNvue is kept for wire compat with older API servers
         assert!(template_for(VpcVirtualizationType::EthernetVirtualizerWithNvue).is_ok());
     }
 
     #[test]
     fn test_template_for_fnn() {
         assert!(template_for(VpcVirtualizationType::Fnn).is_ok());
-    }
-
-    #[test]
-    fn test_template_for_rejects_legacy_etv() {
-        let err = template_for(VpcVirtualizationType::EthernetVirtualizer).unwrap_err();
-        assert!(
-            err.to_string().contains("EthernetVirtualizer"),
-            "unexpected error: {err}"
-        );
     }
 
     /// Helper to compare build() output against a golden file, using the same
@@ -1529,15 +1527,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_rejects_legacy_ethernet_virtualizer() {
+    fn test_build_accepts_ethernet_virtualizer() {
         let mut conf = minimal_nvue_config();
         conf.vpc_virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
-        let err = build(conf).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("EthernetVirtualizer"),
-            "unexpected error message: {msg}"
-        );
+        assert!(build(conf).is_ok());
     }
 
     #[test]
