@@ -30,6 +30,8 @@ pub mod discovery;
 pub mod endpoint;
 pub mod limiter;
 pub mod metrics;
+pub mod otlp;
+pub mod pipeline;
 pub mod processor;
 pub mod sharding;
 pub mod sink;
@@ -42,6 +44,8 @@ use crate::config::Configurable;
 use crate::endpoint::{CompositeEndpointSource, EndpointSource, StaticEndpointSource};
 use crate::limiter::{BucketLimiter, NoopLimiter, RateLimiter};
 use crate::metrics::{MetricsManager, run_metrics_server};
+use crate::otlp::drain::OtlpDrainTask;
+use crate::pipeline::EventPipeline;
 use crate::processor::{
     EventProcessingPipeline, EventProcessor, HealthReportProcessor, LeakEventProcessor,
     RackLeakProcessor,
@@ -80,6 +84,9 @@ pub enum HealthError {
 
     #[error("HTTP(S) error: {0}")]
     HttpError(String),
+
+    #[error("Redfish SSE not available: {0}")]
+    SseNotAvailable(String),
 }
 
 impl From<String> for HealthError {
@@ -137,10 +144,16 @@ fn build_endpoint_wiring(config: &Config) -> Result<EndpointWiring, HealthError>
     })
 }
 
-fn build_data_sink(
+struct PipelineHandle {
+    pipeline: Arc<EventPipeline>,
+    drain_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+fn build_event_pipeline(
     config: &Config,
     metrics_manager: Arc<MetricsManager>,
-) -> Result<Option<Arc<dyn DataSink>>, HealthError> {
+    cancel_token: &tokio_util::sync::CancellationToken,
+) -> Result<Option<PipelineHandle>, HealthError> {
     let mut sinks: Vec<Arc<dyn DataSink>> = Vec::new();
     let mut processors: Vec<Arc<dyn EventProcessor>> = Vec::new();
 
@@ -155,7 +168,6 @@ fn build_data_sink(
         )?));
     }
 
-    // Enable HealthReport processor only if it has consumers
     if config.sinks.tracing.is_enabled()
         || config.sinks.health_override.is_enabled()
         || config.processors.leak_detection.is_enabled()
@@ -183,24 +195,33 @@ fn build_data_sink(
         sinks.push(Arc::new(RackHealthOverrideSink::new(sink_cfg)?));
     }
 
-    let data_sink = if sinks.is_empty() {
-        None
-    } else {
-        let composite_sink: Arc<dyn DataSink> =
-            Arc::new(CompositeDataSink::new(sinks, metrics_manager.clone()));
+    if sinks.is_empty() {
+        return Ok(None);
+    }
 
-        if processors.is_empty() {
-            Some(composite_sink)
-        } else {
-            Some(Arc::new(EventProcessingPipeline::new(
-                processors,
-                composite_sink,
-                metrics_manager,
-            )) as Arc<dyn DataSink>)
-        }
+    let composite_sink: Arc<dyn DataSink> =
+        Arc::new(CompositeDataSink::new(sinks, metrics_manager.clone()));
+    let inner = EventProcessingPipeline::new(processors, composite_sink, metrics_manager);
+
+    let (otlp_sender, drain_handle) = if let Configurable::Enabled(ref otlp_cfg) = config.sinks.otlp
+    {
+        let (tx, rx) = tokio::sync::mpsc::channel(otlp_cfg.channel_capacity);
+        let drain = OtlpDrainTask::new(
+            rx,
+            cancel_token.clone(),
+            otlp_cfg.endpoint.clone(),
+            otlp_cfg.batch_size,
+            otlp_cfg.flush_interval,
+        );
+        (Some(tx), Some(tokio::spawn(drain.run())))
+    } else {
+        (None, None)
     };
 
-    Ok(data_sink)
+    Ok(Some(PipelineHandle {
+        pipeline: Arc::new(EventPipeline::new(inner, otlp_sender)),
+        drain_handle,
+    }))
 }
 
 pub async fn run_service(config: Config) -> Result<(), HealthError> {
@@ -238,7 +259,9 @@ pub async fn run_service(config: Config) -> Result<(), HealthError> {
         source: endpoint_source,
     } = build_endpoint_wiring(&config)?;
 
-    let data_sink = build_data_sink(&config, metrics_manager.clone())?;
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let pipeline_handle = build_event_pipeline(&config, metrics_manager.clone(), &cancel_token)?;
+    let event_pipeline = pipeline_handle.as_ref().map(|h| h.pipeline.clone());
 
     let config_arc = Arc::new(config);
 
@@ -262,7 +285,7 @@ pub async fn run_service(config: Config) -> Result<(), HealthError> {
         let active_endpoints_gauge = active_endpoints_gauge.clone();
         let discovery_endpoints_gauge = discovery_endpoints_gauge.clone();
         let endpoint_source = endpoint_source.clone();
-        let data_sink = data_sink.clone();
+        let event_pipeline = event_pipeline.clone();
 
         let mut ctx = DiscoveryLoopContext::new(limiter, metrics_manager, config.clone())?;
 
@@ -272,7 +295,7 @@ pub async fn run_service(config: Config) -> Result<(), HealthError> {
                     endpoint_source.clone(),
                     &shard_manager,
                     &mut ctx,
-                    data_sink.clone(),
+                    event_pipeline.clone(),
                     &config.metrics.prefix,
                 )
                 .await?;
@@ -326,6 +349,15 @@ pub async fn run_service(config: Config) -> Result<(), HealthError> {
             }
         }
     };
+
+    cancel_token.cancel();
+
+    if let Some(handle) = pipeline_handle.and_then(|h| h.drain_handle) {
+        let drain_timeout = Duration::from_secs(30);
+        if tokio::time::timeout(drain_timeout, handle).await.is_err() {
+            tracing::warn!("otlp drain task did not finish within {drain_timeout:?}");
+        }
+    }
 
     Ok(())
 }

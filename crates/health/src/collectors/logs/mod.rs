@@ -15,22 +15,8 @@
  * limitations under the License.
  */
 
-mod firmware;
-mod logs;
-mod nmxt;
-mod nvue;
-mod runtime;
-mod sensors;
+mod periodic;
+mod sse;
 
-pub use firmware::{FirmwareCollector, FirmwareCollectorConfig};
-pub use logs::{
-    LogFileWriter, LogsCollector, LogsCollectorConfig, SseLogCollector, SseLogCollectorConfig,
-    create_log_file_writer,
-};
-pub use nmxt::{NmxtCollector, NmxtCollectorConfig};
-pub use nvue::rest::collector::{NvueRestCollector, NvueRestCollectorConfig};
-pub use runtime::{
-    BackoffConfig, Collector, CollectorStartContext, EventStream, ExponentialBackoff,
-    IterationResult, PeriodicCollector, StreamMetrics, StreamingCollector, open_sse_stream,
-};
-pub use sensors::{SensorCollector, SensorCollectorConfig};
+pub use periodic::{LogFileWriter, LogsCollector, LogsCollectorConfig, create_log_file_writer};
+pub use sse::{SseLogCollector, SseLogCollectorConfig};

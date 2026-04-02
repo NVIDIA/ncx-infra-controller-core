@@ -32,14 +32,15 @@ use tokio::sync::Mutex;
 use crate::HealthError;
 use crate::collectors::{IterationResult, PeriodicCollector};
 use crate::endpoint::{BmcEndpoint, EndpointMetadata};
-use crate::sink::{CollectorEvent, DataSink, EventContext, LogRecord};
+use crate::pipeline::EventPipeline;
+use crate::sink::{CollectorEvent, EventContext, LogRecord};
 
 /// Configuration for logs collector
 pub struct LogsCollectorConfig {
     pub state_file_path: PathBuf,
     pub service_refresh_interval: Duration,
-    pub log_writer: Arc<Mutex<LogFileWriter>>,
-    pub data_sink: Option<Arc<dyn DataSink>>,
+    pub log_writer: Option<Arc<Mutex<LogFileWriter>>>,
+    pub pipeline: Option<Arc<EventPipeline>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -163,33 +164,40 @@ impl LogFileWriter {
             tracing::error!(error = ?e, "Failed to flush log file before rotation");
         }
 
-        for i in (1..self.max_backups).rev() {
-            let from_path = self.rotated_log_path(i);
-            let to_path = self.rotated_log_path(i + 1);
+        let current_path = self.current_log_path();
 
-            if tokio::fs::metadata(&from_path).await.is_ok()
-                && let Err(e) = tokio::fs::rename(&from_path, &to_path).await
-            {
-                tracing::warn!(
+        if self.max_backups == 0 {
+            if let Err(e) = tokio::fs::remove_file(&current_path).await {
+                tracing::error!(
                     error = ?e,
-                    from = ?from_path,
-                    to = ?to_path,
-                    "Failed to rotate backup log file"
+                    "Failed to remove current log file, will continue with new file"
                 );
             }
-        }
+        } else {
+            for i in (1..self.max_backups).rev() {
+                let from_path = self.rotated_log_path(i);
+                let to_path = self.rotated_log_path(i + 1);
 
-        let current_path = self.current_log_path();
-        let backup_path = self.rotated_log_path(1);
+                if tokio::fs::metadata(&from_path).await.is_ok()
+                    && let Err(e) = tokio::fs::rename(&from_path, &to_path).await
+                {
+                    tracing::warn!(
+                        error = ?e,
+                        from = ?from_path,
+                        to = ?to_path,
+                        "Failed to rotate backup log file"
+                    );
+                }
+            }
 
-        if let Err(e) = tokio::fs::rename(&current_path, &backup_path).await {
-            tracing::error!(
-                error = ?e,
-                "Failed to rotate current log file, will continue with new file"
-            );
-        }
+            let backup_path = self.rotated_log_path(1);
+            if let Err(e) = tokio::fs::rename(&current_path, &backup_path).await {
+                tracing::error!(
+                    error = ?e,
+                    "Failed to rotate current log file, will continue with new file"
+                );
+            }
 
-        if self.max_backups > 0 {
             let oldest_path = self.rotated_log_path(self.max_backups + 1);
             if tokio::fs::metadata(&oldest_path).await.is_ok() {
                 let _ = tokio::fs::remove_file(&oldest_path).await;
@@ -240,8 +248,8 @@ pub struct LogsCollector<B: Bmc> {
     state_file_path: PathBuf,
     state: Option<LogsCollectorState<B>>,
     service_refresh_interval: Duration,
-    log_writer: Arc<Mutex<LogFileWriter>>,
-    data_sink: Option<Arc<dyn DataSink>>,
+    log_writer: Option<Arc<Mutex<LogFileWriter>>>,
+    pipeline: Option<Arc<EventPipeline>>,
 }
 
 impl<B: Bmc + 'static> PeriodicCollector<B> for LogsCollector<B> {
@@ -261,7 +269,7 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for LogsCollector<B> {
             state: None,
             service_refresh_interval: config.service_refresh_interval,
             log_writer: config.log_writer,
-            data_sink: config.data_sink,
+            pipeline: config.pipeline,
         })
     }
 
@@ -477,7 +485,7 @@ impl<B: Bmc + 'static> LogsCollector<B> {
                     Ok(Some(v)) => {
                         tracing::info!(
                             %service_id,
-                            endpont=?self.endpoint.addr,
+                            endpoint=?self.endpoint.addr,
                             "Last seen id is empty, fetching all entries");
                         v
                     }
@@ -527,7 +535,7 @@ impl<B: Bmc + 'static> LogsCollector<B> {
 
                 let mut attributes = HashMap::new();
                 attributes.insert(
-                    "machineid".to_string(),
+                    "machine_id".to_string(),
                     JsonValue::String(machine_id.clone()),
                 );
                 attributes.insert("type".to_string(), JsonValue::String("bmc_log".to_string()));
@@ -578,8 +586,8 @@ impl<B: Bmc + 'static> LogsCollector<B> {
                     }
                     .into(),
                 );
-                if let Some(sink) = &self.data_sink {
-                    sink.handle_event(&self.event_context, &log_event);
+                if let Some(pipeline) = &self.pipeline {
+                    pipeline.handle_event(&self.event_context, &log_event).await;
                 }
 
                 if let Ok(entry_id) = entry.base.id.parse::<i32>() {
@@ -587,19 +595,21 @@ impl<B: Bmc + 'static> LogsCollector<B> {
                 }
             }
 
-            if let Err(e) = self.log_writer.lock().await.write_logs(&records).await {
+            if let Some(log_writer) = &self.log_writer
+                && let Err(e) = log_writer.lock().await.write_logs(&records).await
+            {
                 tracing::error!(
                     error = ?e,
                     "Failed to write log entries to file"
                 );
-            } else {
-                if max_id > last_seen_id.unwrap_or(0) {
-                    state
-                        .last_seen_ids
-                        .insert(service.odata_id().clone(), max_id);
-                }
-                total_log_count += entries.len();
             }
+
+            if max_id > last_seen_id.unwrap_or(0) {
+                state
+                    .last_seen_ids
+                    .insert(service.odata_id().clone(), max_id);
+            }
+            total_log_count += entries.len();
         }
 
         Ok((total_log_count, fetch_failures))

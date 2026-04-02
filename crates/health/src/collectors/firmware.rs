@@ -24,16 +24,17 @@ use nv_redfish::core::Bmc;
 use crate::HealthError;
 use crate::collectors::{IterationResult, PeriodicCollector};
 use crate::endpoint::BmcEndpoint;
-use crate::sink::{CollectorEvent, DataSink, EventContext, FirmwareInfo};
+use crate::pipeline::EventPipeline;
+use crate::sink::{CollectorEvent, EventContext, FirmwareInfo};
 
 pub struct FirmwareCollectorConfig {
-    pub data_sink: Option<Arc<dyn DataSink>>,
+    pub pipeline: Option<Arc<EventPipeline>>,
 }
 
 pub struct FirmwareCollector<B: Bmc> {
     bmc: Arc<B>,
     event_context: EventContext,
-    data_sink: Option<Arc<dyn DataSink>>,
+    pipeline: Option<Arc<EventPipeline>>,
 }
 
 impl<B: Bmc + 'static> PeriodicCollector<B> for FirmwareCollector<B> {
@@ -48,7 +49,7 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for FirmwareCollector<B> {
         Ok(Self {
             bmc,
             event_context,
-            data_sink: config.data_sink,
+            pipeline: config.pipeline,
         })
     }
 
@@ -62,9 +63,9 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for FirmwareCollector<B> {
 }
 
 impl<B: Bmc + 'static> FirmwareCollector<B> {
-    fn emit_event(&self, event: CollectorEvent) {
-        if let Some(data_sink) = &self.data_sink {
-            data_sink.handle_event(&self.event_context, &event);
+    async fn emit_event(&self, event: CollectorEvent) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.handle_event(&self.event_context, &event).await;
         }
     }
 
@@ -102,7 +103,8 @@ impl<B: Bmc + 'static> FirmwareCollector<B> {
                 component,
                 version,
                 attributes,
-            }));
+            }))
+            .await;
             firmware_count += 1;
         }
 

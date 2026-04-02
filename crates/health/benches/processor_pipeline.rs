@@ -315,11 +315,67 @@ fn bench_pipeline_rack_leak(c: &mut Criterion) {
     group.finish();
 }
 
+fn emit_metric_batch_collect(
+    pipeline: &EventProcessingPipeline,
+    context: &EventContext,
+    events: &[CollectorEvent],
+) {
+    let _ = pipeline.handle_and_collect(context, &CollectorEvent::MetricCollectionStart);
+    for event in events {
+        let _ = pipeline.handle_and_collect(context, event);
+    }
+    let _ = pipeline.handle_and_collect(context, &CollectorEvent::MetricCollectionEnd);
+}
+
+fn bench_handle_and_collect_overhead(c: &mut Criterion) {
+    let mut group = c.benchmark_group("handle_and_collect_overhead");
+    let batch_size = 2_000usize;
+    group.throughput(Throughput::Elements(batch_size as u64));
+
+    let processors: Vec<Arc<dyn EventProcessor>> = vec![
+        Arc::new(HealthReportProcessor::new()),
+        Arc::new(LeakEventProcessor::new(1)),
+    ];
+    let context = event_context();
+    let events = metric_events(batch_size, 64, true);
+
+    let metrics_manager: Arc<MetricsManager> =
+        Arc::new(MetricsManager::new("bench").expect("metrics manager should initialize"));
+    let pipeline_sync = EventProcessingPipeline::new(
+        processors.clone(),
+        make_composite_sink(2, metrics_manager.clone()),
+        metrics_manager.clone(),
+    );
+    group.bench_with_input(
+        BenchmarkId::new("handle_event", "sync_only"),
+        &events,
+        |b, events| {
+            b.iter(|| emit_metric_batch(&pipeline_sync, &context, events));
+        },
+    );
+
+    let pipeline_collect = EventProcessingPipeline::new(
+        processors,
+        make_composite_sink(2, metrics_manager.clone()),
+        metrics_manager,
+    );
+    group.bench_with_input(
+        BenchmarkId::new("handle_and_collect", "with_vec"),
+        &events,
+        |b, events| {
+            b.iter(|| emit_metric_batch_collect(&pipeline_collect, &context, events));
+        },
+    );
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_pipeline_baseline,
     bench_pipeline_health_processors,
     bench_pipeline_loop_guard,
-    bench_pipeline_rack_leak
+    bench_pipeline_rack_leak,
+    bench_handle_and_collect_overhead,
 );
 criterion_main!(benches);

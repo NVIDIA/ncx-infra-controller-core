@@ -25,7 +25,8 @@ use crate::HealthError;
 use crate::collectors::{IterationResult, PeriodicCollector};
 use crate::config::NvueRestConfig;
 use crate::endpoint::{BmcCredentials, BmcEndpoint, EndpointMetadata};
-use crate::sink::{CollectorEvent, DataSink, EventContext, SensorHealthData};
+use crate::pipeline::EventPipeline;
+use crate::sink::{CollectorEvent, EventContext, SensorHealthData};
 
 const COLLECTOR_NAME: &str = "nvue_rest";
 
@@ -65,14 +66,14 @@ fn diagnostic_opcode_to_f64(code: &str) -> f64 {
 
 pub struct NvueRestCollectorConfig {
     pub rest_config: NvueRestConfig,
-    pub data_sink: Option<Arc<dyn DataSink>>,
+    pub pipeline: Option<Arc<EventPipeline>>,
 }
 
 pub struct NvueRestCollector {
     client: RestClient,
     switch_id: String,
     event_context: EventContext,
-    data_sink: Option<Arc<dyn DataSink>>,
+    pipeline: Option<Arc<EventPipeline>>,
 }
 
 impl<B: Bmc + 'static> PeriodicCollector<B> for NvueRestCollector {
@@ -112,19 +113,20 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NvueRestCollector {
             client,
             switch_id,
             event_context,
-            data_sink: config.data_sink,
+            pipeline: config.pipeline,
         })
     }
 
     async fn run_iteration(&mut self) -> Result<IterationResult, HealthError> {
-        self.emit_event(CollectorEvent::MetricCollectionStart);
+        self.emit_event(CollectorEvent::MetricCollectionStart).await;
         let mut entity_count = 0usize;
         let mut fetch_failures = 0usize;
 
         match self.client.get_system_health().await {
             Ok(Some(health)) => {
                 let value = system_health_to_f64(health.status.as_deref());
-                self.emit_metric("system_health", None, value, "state", vec![]);
+                self.emit_metric("system_health", None, value, "state", vec![])
+                    .await;
                 entity_count += 1;
             }
             Ok(None) => {}
@@ -148,7 +150,8 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NvueRestCollector {
                         value,
                         "state",
                         vec![(Cow::Borrowed("app_name"), name.clone())],
-                    );
+                    )
+                    .await;
                     entity_count += 1;
                 }
             }
@@ -180,14 +183,16 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NvueRestCollector {
                         health_value,
                         "state",
                         partition_labels.clone(),
-                    );
+                    )
+                    .await;
                     self.emit_metric(
                         "partition_gpu",
                         Some(part_id),
                         gpu_count,
                         "count",
                         partition_labels,
-                    );
+                    )
+                    .await;
                     entity_count += 1;
                 }
             }
@@ -216,7 +221,8 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NvueRestCollector {
                             (Cow::Borrowed("opcode"), diag.code.clone()),
                             (Cow::Borrowed("diagnostic_status"), diag.status.clone()),
                         ],
-                    );
+                    )
+                    .await;
                     entity_count += 1;
                 }
             }
@@ -230,7 +236,7 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NvueRestCollector {
             }
         }
 
-        self.emit_event(CollectorEvent::MetricCollectionEnd);
+        self.emit_event(CollectorEvent::MetricCollectionEnd).await;
 
         tracing::debug!(
             switch_id = %self.switch_id,
@@ -251,13 +257,13 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NvueRestCollector {
 }
 
 impl NvueRestCollector {
-    fn emit_event(&self, event: CollectorEvent) {
-        if let Some(data_sink) = &self.data_sink {
-            data_sink.handle_event(&self.event_context, &event);
+    async fn emit_event(&self, event: CollectorEvent) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.handle_event(&self.event_context, &event).await;
         }
     }
 
-    fn emit_metric(
+    async fn emit_metric(
         &self,
         metric_type: &str,
         entity_qualifier: Option<&str>,
@@ -287,7 +293,8 @@ impl NvueRestCollector {
                 context: None,
             }
             .into(),
-        ));
+        ))
+        .await;
     }
 }
 

@@ -24,7 +24,8 @@ use crate::HealthError;
 use crate::collectors::{IterationResult, PeriodicCollector};
 use crate::config::NmxtCollectorConfig as NmxtCollectorOptions;
 use crate::endpoint::{BmcEndpoint, EndpointMetadata};
-use crate::sink::{CollectorEvent, DataSink, EventContext, SensorHealthData};
+use crate::pipeline::EventPipeline;
+use crate::sink::{CollectorEvent, EventContext, SensorHealthData};
 
 /// default NMX-T port
 const NMXT_PORT: u16 = 9352;
@@ -134,7 +135,7 @@ async fn scrape_switch_nmxt_metrics(
 
 pub struct NmxtCollectorConfig {
     pub nmxt_config: NmxtCollectorOptions,
-    pub data_sink: Option<Arc<dyn DataSink>>,
+    pub pipeline: Option<Arc<EventPipeline>>,
 }
 
 /// NMX-T collector for a single switch/endpoint
@@ -143,7 +144,7 @@ pub struct NmxtCollector {
     switch_id: String,
     http_client: reqwest::Client,
     event_context: EventContext,
-    data_sink: Option<Arc<dyn DataSink>>,
+    pipeline: Option<Arc<EventPipeline>>,
 }
 
 impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
@@ -173,7 +174,7 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
             switch_id,
             http_client,
             event_context,
-            data_sink: config.data_sink,
+            pipeline: config.pipeline,
         })
     }
 
@@ -192,9 +193,9 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for NmxtCollector {
 }
 
 impl NmxtCollector {
-    fn emit_event(&self, event: CollectorEvent) {
-        if let Some(data_sink) = &self.data_sink {
-            data_sink.handle_event(&self.event_context, &event);
+    async fn emit_event(&self, event: CollectorEvent) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.handle_event(&self.event_context, &event).await;
         }
     }
 
@@ -203,7 +204,7 @@ impl NmxtCollector {
 
         let metrics = scrape_switch_nmxt_metrics(&self.http_client, &switch_ip).await?;
 
-        self.emit_event(CollectorEvent::MetricCollectionStart);
+        self.emit_event(CollectorEvent::MetricCollectionStart).await;
 
         for sample in metrics {
             let NmxtMetricSample {
@@ -244,10 +245,11 @@ impl NmxtCollector {
                     context: None,
                 }
                 .into(),
-            ));
+            ))
+            .await;
         }
 
-        self.emit_event(CollectorEvent::MetricCollectionEnd);
+        self.emit_event(CollectorEvent::MetricCollectionEnd).await;
 
         Ok(())
     }
