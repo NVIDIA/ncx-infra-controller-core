@@ -36,6 +36,7 @@ pub async fn list_racks(api_client: &ApiClient, config: &RuntimeConfig) -> Resul
             let mut table = Table::new();
             let headers = vec![
                 "Rack ID",
+                "Location",
                 "Rack State",
                 "Expected Compute Trays",
                 "Current Compute Tray IDs",
@@ -48,6 +49,7 @@ pub async fn list_racks(api_client: &ApiClient, config: &RuntimeConfig) -> Resul
                 headers.into_iter().map(Cell::new).collect::<Vec<Cell>>(),
             ));
             for r in racks {
+                let location = r.location.as_deref().unwrap_or("N/A");
                 let expected_compute_trays = r.expected_compute_trays.join("\n");
                 let current_compute_trays: String = r
                     .compute_trays
@@ -71,6 +73,7 @@ pub async fn list_racks(api_client: &ApiClient, config: &RuntimeConfig) -> Resul
                     .join("\n");
                 table.add_row(prettytable::row![
                     r.id.map(|id| id.to_string()).unwrap_or_default(),
+                    location,
                     r.rack_state.as_str(),
                     expected_compute_trays,
                     current_compute_trays,

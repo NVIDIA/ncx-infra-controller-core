@@ -115,7 +115,7 @@ async fn fetch_power_shelves(
                     .voltage
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "N/A".to_string()),
-                location: config.location.unwrap_or_else(|| "N/A".to_string()),
+                location: shelf.location.unwrap_or_else(|| "N/A".to_string()),
             }
         })
         .collect();

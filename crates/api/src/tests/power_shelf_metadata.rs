@@ -35,8 +35,8 @@ async fn test_power_shelf_metadata_defaults(
             name: "shelf-serial-001".to_string(),
             capacity: Some(100),
             voltage: Some(240),
-            location: None,
         },
+        location: None,
         metadata: None,
     };
 
@@ -74,8 +74,8 @@ async fn test_power_shelf_metadata_from_expected(
             name: "shelf-serial-002".to_string(),
             capacity: Some(100),
             voltage: Some(240),
-            location: None,
         },
+        location: None,
         metadata: Some(expected_metadata),
     };
 
@@ -103,8 +103,8 @@ async fn test_power_shelf_metadata_update(
             name: "shelf-serial-003".to_string(),
             capacity: Some(100),
             voltage: Some(240),
-            location: None,
         },
+        location: None,
         metadata: None,
     };
 
@@ -154,8 +154,8 @@ async fn test_power_shelf_metadata_version_conflict(
             name: "shelf-serial-004".to_string(),
             capacity: Some(100),
             voltage: Some(240),
-            location: None,
         },
+        location: None,
         metadata: None,
     };
 

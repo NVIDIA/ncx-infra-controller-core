@@ -1501,7 +1501,6 @@ pub async fn new_power_shelf(
         name: power_shelf_name,
         capacity: capacity.or(Some(100)),
         voltage: voltage.or(Some(240)),
-        location: location.or(Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string())),
     };
 
     // Create the power shelf
@@ -1510,6 +1509,7 @@ pub async fn new_power_shelf(
         config,
         metadata: None,
         rack_id: None,
+        location: location.or(Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string())),
     };
 
     let _power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf)
@@ -1628,7 +1628,6 @@ pub async fn new_switch(
         name: expected_switch.metadata.name.clone(),
         enable_nmxc: false,
         fabric_manager_config: None,
-        location: location.or(Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string())),
     };
 
     let new_switch = NewSwitch {
@@ -1637,6 +1636,7 @@ pub async fn new_switch(
         bmc_mac_address: Some(expected_switch.bmc_mac_address),
         metadata: None,
         rack_id: None,
+        location: location.or(Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string())),
     };
 
     let _switch = db_switch::create(&mut txn, &new_switch)

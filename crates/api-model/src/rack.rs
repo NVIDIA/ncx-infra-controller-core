@@ -152,6 +152,7 @@ impl From<Rack> for rpc::forge::Rack {
             health_overrides,
             metadata: Some(value.metadata.into()),
             version: value.version.version_string(),
+            location: value.config.location,
         }
     }
 }
@@ -485,6 +486,10 @@ pub struct RackConfig {
     /// because a tray was replaced (rack topology change).
     #[serde(default)]
     pub topology_changed: bool,
+
+    /// Physical location of the rack
+    #[serde(default)]
+    pub location: Option<String>,
 }
 
 // ============================================================================

@@ -144,19 +144,12 @@ async fn test_delete_power_shelf_success(
     let env = create_test_env(pool).await;
 
     // First create a power shelf
-    let power_shelf_config = rpc::forge::PowerShelfConfig {
-        name: "Delete Test Power Shelf".to_string(),
-        capacity: Some(5000),
-        voltage: Some(240),
-        location: Some("Rack 3".to_string()),
-    };
-
     let power_shelf_id = new_power_shelf(
         &env,
-        Some(power_shelf_config.name),
-        Some(power_shelf_config.capacity.unwrap_or(5000) as u32),
-        Some(power_shelf_config.voltage.unwrap_or(240) as u32),
-        power_shelf_config.location,
+        Some("Delete Test Power Shelf".to_string()),
+        Some(5000),
+        Some(240),
+        Some("Rack 3".to_string()),
     )
     .await?;
 
@@ -228,7 +221,6 @@ async fn test_power_shelf_database_operations(
         name: "Database Test Power Shelf".to_string(),
         capacity: Some(6000),
         voltage: Some(480),
-        location: Some("High Voltage Rack".to_string()),
     };
 
     let power_shelf_id = PowerShelfId::from(uuid::Uuid::new_v4());
@@ -237,6 +229,7 @@ async fn test_power_shelf_database_operations(
         config: config.clone(),
         metadata: None,
         rack_id: None,
+        location: Some("High Voltage Rack".to_string()),
     };
 
     let created_power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -246,7 +239,7 @@ async fn test_power_shelf_database_operations(
     assert_eq!(created_power_shelf.config.capacity, Some(6000));
     assert_eq!(created_power_shelf.config.voltage, Some(480));
     assert_eq!(
-        created_power_shelf.config.location,
+        created_power_shelf.location,
         Some("High Voltage Rack".to_string())
     );
 
@@ -284,7 +277,6 @@ async fn test_power_shelf_status_update(
         name: "Status Test Power Shelf".to_string(),
         capacity: Some(5000),
         voltage: Some(240),
-        location: Some("Status Test Rack".to_string()),
     };
 
     let power_shelf_id = PowerShelfId::from(uuid::Uuid::new_v4());
@@ -293,6 +285,7 @@ async fn test_power_shelf_status_update(
         config: config.clone(),
         metadata: None,
         rack_id: None,
+        location: Some("Status Test Rack".to_string()),
     };
 
     let mut power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -329,7 +322,6 @@ async fn test_power_shelf_controller_state_transitions(
         name: "Controller State Test Power Shelf".to_string(),
         capacity: Some(5000),
         voltage: Some(240),
-        location: Some("Controller Test Rack".to_string()),
     };
 
     let power_shelf_id = PowerShelfId::from(uuid::Uuid::new_v4());
@@ -338,6 +330,7 @@ async fn test_power_shelf_controller_state_transitions(
         config: config.clone(),
         metadata: None,
         rack_id: None,
+        location: Some("Controller Test Rack".to_string()),
     };
 
     let power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -427,7 +420,6 @@ async fn test_power_shelf_conversion_roundtrip(
         name: "Conversion Test Power Shelf".to_string(),
         capacity: Some(5000),
         voltage: Some(240),
-        location: Some("Conversion Test Rack".to_string()),
     };
 
     let power_shelf_id = PowerShelfId::from(uuid::Uuid::new_v4());
@@ -436,6 +428,7 @@ async fn test_power_shelf_conversion_roundtrip(
         config: config.clone(),
         metadata: None,
         rack_id: None,
+        location: Some("Conversion Test Rack".to_string()),
     };
 
     let mut power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -501,7 +494,6 @@ async fn test_power_shelf_list_segment_ids(
             name: name.to_string(),
             capacity: Some(capacity),
             voltage: Some(voltage),
-            location: Some("List Test Rack".to_string()),
         };
 
         let power_shelf_id = PowerShelfId::from(uuid::Uuid::new_v4());
@@ -510,6 +502,7 @@ async fn test_power_shelf_list_segment_ids(
             config: config.clone(),
             metadata: None,
             rack_id: None,
+            location: Some("List Test Rack".to_string()),
         };
 
         let power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -543,7 +536,6 @@ async fn test_power_shelf_controller_state_outcome(
         name: "Outcome Test Power Shelf".to_string(),
         capacity: Some(5000),
         voltage: Some(240),
-        location: Some("Outcome Test Rack".to_string()),
     };
 
     let power_shelf_id = PowerShelfId::from(uuid::Uuid::new_v4());
@@ -552,6 +544,7 @@ async fn test_power_shelf_controller_state_outcome(
         config: config.clone(),
         metadata: None,
         rack_id: None,
+        location: Some("Outcome Test Rack".to_string()),
     };
 
     let _power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;

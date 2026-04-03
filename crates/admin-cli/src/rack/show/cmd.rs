@@ -187,6 +187,7 @@ fn show_table(racks: &[Rack]) {
     table.set_titles(row![
         "ID",
         "Name",
+        "Location",
         "State",
         "Compute Trays",
         "Power Shelves",
@@ -200,9 +201,12 @@ fn show_table(racks: &[Rack]) {
             .map(|m| m.name.as_str())
             .unwrap_or("N/A");
 
+        let location = r.location.as_deref().unwrap_or("N/A");
+
         table.add_row(row![
             r.id.as_ref().map(|id| id.to_string()).unwrap_or_default(),
             name,
+            location,
             r.rack_state,
             format!(
                 "{} / {}",

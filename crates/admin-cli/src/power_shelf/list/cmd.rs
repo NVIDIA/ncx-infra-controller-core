@@ -73,11 +73,14 @@ pub async fn list_power_shelves(
 
         let controller_state = shelf.controller_state.as_str();
 
+        let location = shelf.location.as_deref().unwrap_or("N/A");
+
         println!(
-            "{}. {} (ID: {}) - Power: {}, Health: {}, State: {}",
+            "{}. {} (ID: {}) - Location: {}, Power: {}, Health: {}, State: {}",
             i + 1,
             name,
             id,
+            location,
             power_state,
             health,
             controller_state
