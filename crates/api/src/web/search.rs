@@ -247,6 +247,7 @@ async fn find_ip(state: Arc<Api>, ip: &str) -> impl IntoResponse {
             InstanceAddress => ("Instance", format!("/admin/instance/{owner}")),
             MachineAddress => ("Machine", format!("/admin/machine/{owner}")),
             BmcIp => ("BMC IP", format!("/admin/machine/{owner}")),
+            StaticBmcIp => ("Static BMC IP", format!("/admin/machine/{owner}")),
             ExploredEndpoint => (
                 "Explored Endpoint",
                 format!("/admin/explored-endpoint/{owner}"),

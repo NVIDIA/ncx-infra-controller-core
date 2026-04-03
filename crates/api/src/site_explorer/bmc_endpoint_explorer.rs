@@ -703,7 +703,15 @@ impl EndpointExplorer for BmcEndpointExplorer {
                 tracing::error!(%bmc_ip_address, "Failed to probe Redfish service root endpoint: {e}");
                 //This is workaround for Lite-On power shelf BMCs
                 // that do not support the Redfish service root endpoint
-                let credentials = self.get_bmc_root_credentials(bmc_mac_address).await?;
+                let credentials = match self.get_bmc_root_credentials(bmc_mac_address).await {
+                    Ok(creds) => creds,
+                    Err(EndpointExplorationError::MissingCredentials { .. }) 
+                    | Err(EndpointExplorationError::SecretsEngineError { .. }) => {
+                        tracing::debug!(%bmc_ip_address, "No credentials available for Lite-On workaround, returning original probe error");
+                        return Err(e);
+                    }
+                    Err(other) => return Err(other),
+                };
                 let (username, password) = match credentials.clone() {
                     Credentials::UsernamePassword { username, password } => (username, password),
                 };

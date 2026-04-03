@@ -388,3 +388,64 @@ async fn test_identify_serial(db_pool: sqlx::PgPool) -> Result<(), eyre::Report>
 
     Ok(())
 }
+
+/// Test that static BMC IPs are correctly classified as IpTypeStaticBmcIp
+#[crate::sqlx_test]
+async fn test_static_bmc_ip_finder(db_pool: sqlx::PgPool) -> Result<(), eyre::Report> {
+    use std::net::IpAddr;
+
+    let env = create_test_env(db_pool.clone()).await;
+    
+    // Get the underlay network segment that was already created by create_test_env
+    let mut txn = db_pool.begin().await.unwrap();
+    let segment = db::network_segment::find_by_name(txn.as_mut(), "UNDERLAY")
+        .await
+        .unwrap();
+
+    let static_ip: IpAddr = "10.178.160.100".parse().unwrap();
+    let bmc_mac = "AA:BB:CC:DD:EE:99".parse().unwrap();
+    
+    // Create a machine interface with static IP flag
+    let _interface_snapshot = db::machine_interface::create_with_specific_ip(
+        &mut txn,
+        &segment,
+        &bmc_mac,
+        None, // domain_id
+        true, // is_primary_interface
+        static_ip,
+    )
+    .await
+    .expect("Failed to create machine interface with static IP");
+
+    txn.commit().await.unwrap();
+
+    // Query the IP via finder
+    let req = rpc::forge::FindIpAddressRequest {
+        ip: "10.178.160.100".to_string(),
+    };
+    let res = env
+        .api
+        .find_ip_address(tonic::Request::new(req))
+        .await
+        .expect("find_ip_address should succeed")
+        .into_inner();
+
+    assert!(!res.matches.is_empty(), "Should find at least one match");
+    
+    // Debug: print what we actually got
+    for (i, m) in res.matches.iter().enumerate() {
+        eprintln!("Match {}: ip_type={:?} ({})", i, IpType::try_from(m.ip_type), m.ip_type);
+    }
+    
+    // Verify it's classified as StaticBmcIp
+    let has_static_bmc_ip = res.matches.iter().any(|m| {
+        m.ip_type == IpType::StaticBmcIp as i32
+    });
+
+    assert!(
+        has_static_bmc_ip,
+        "Static IP should be classified as IpTypeStaticBmcIp"
+    );
+
+    Ok(())
+}

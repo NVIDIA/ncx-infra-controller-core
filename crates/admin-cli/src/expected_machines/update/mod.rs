@@ -63,6 +63,7 @@ impl Run for Args {
                 expected_machine.rack_id,
                 expected_machine.default_pause_ingestion_and_poweron,
                 expected_machine.dpf_enabled,
+                expected_machine.ip_address,
             )
             .await?;
         Ok(())
