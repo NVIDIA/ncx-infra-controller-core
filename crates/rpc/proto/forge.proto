@@ -596,6 +596,9 @@ service Forge {
   // On demand Machine-Validation
   rpc OnDemandMachineValidation(MachineValidationOnDemandRequest) returns (MachineValidationOnDemandResponse);
 
+  // On-demand rack maintenance (full rack or partial)
+  rpc OnDemandRackMaintenance(RackMaintenanceOnDemandRequest) returns (RackMaintenanceOnDemandResponse);
+
   // TPM CA certs Management
   //rpc TpmDeleteCaCert(TpmCaCertDetails) returns (google.protobuf.Empty);
   rpc TpmAddCaCert(TpmCaCert) returns (TpmCaAddedCaStatus);
@@ -5089,6 +5092,18 @@ message MachineValidationOnDemandRequest {
 message MachineValidationOnDemandResponse {
   common.UUID validation_id = 1;
 }
+
+// On-demand rack maintenance – supports full-rack or partial (subset of
+// machines, switches, power shelves).  When all device-id lists are empty
+// the full rack is maintained.
+message RackMaintenanceOnDemandRequest {
+  common.RackId rack_id = 1;
+  repeated string machine_ids = 2;
+  repeated string switch_ids = 3;
+  repeated string power_shelf_ids = 4;
+}
+
+message RackMaintenanceOnDemandResponse {}
 
 message AdminPowerControlRequest {
   enum SystemPowerControl {

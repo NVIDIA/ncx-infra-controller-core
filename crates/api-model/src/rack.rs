@@ -17,7 +17,10 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 
+use carbide_uuid::machine::MachineId;
+use carbide_uuid::power_shelf::PowerShelfId;
 use carbide_uuid::rack::RackId;
+use carbide_uuid::switch::SwitchId;
 use chrono::{DateTime, Utc};
 use config_version::{ConfigVersion, Versioned};
 use rpc::Timestamp;
@@ -463,6 +466,27 @@ pub struct RackStateHistory {
     pub state_version: ConfigVersion,
 }
 
+/// Specifies which devices in the rack should be included in an
+/// on-demand maintenance cycle. When `None` (or when all three
+/// device-id lists are empty), the full rack is maintained.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MaintenanceScope {
+    #[serde(default)]
+    pub machine_ids: Vec<MachineId>,
+    #[serde(default)]
+    pub switch_ids: Vec<SwitchId>,
+    #[serde(default)]
+    pub power_shelf_ids: Vec<PowerShelfId>,
+}
+
+impl MaintenanceScope {
+    /// Returns `true` when no specific devices were selected, meaning the
+    /// maintenance applies to every device in the rack.
+    pub fn is_full_rack(&self) -> bool {
+        self.machine_ids.is_empty() && self.switch_ids.is_empty() && self.power_shelf_ids.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct RackConfig {
     /// rack_type is the name of the rack type (e.g. "NVL72") that maps to
@@ -485,6 +509,13 @@ pub struct RackConfig {
     /// because a tray was replaced (rack topology change).
     #[serde(default)]
     pub topology_changed: bool,
+
+    /// On-demand maintenance request. When `Some`, the Ready state handler
+    /// transitions the rack to `Maintenance(FirmwareUpgrade(Start))`. The
+    /// scope controls whether the full rack or a subset of devices is
+    /// maintained.
+    #[serde(default)]
+    pub maintenance_requested: Option<MaintenanceScope>,
 }
 
 // ============================================================================

@@ -185,14 +185,27 @@ pub async fn handle_maintenance(
             rack_firmware_upgrade,
         } => match rack_firmware_upgrade {
             FirmwareUpgradeState::Start => {
-                tracing::info!(
-                    "Rack {} firmware upgrade starting — issuing reprovisioning requests",
-                    id
-                );
+                let scope = state.config.maintenance_requested.take();
+                if scope.as_ref().is_some_and(|s| !s.is_full_rack()) {
+                    let s = scope.as_ref().unwrap();
+                    tracing::info!(
+                        "Rack {} firmware upgrade starting (partial: {} machines, {} switches, {} power shelves)",
+                        id,
+                        s.machine_ids.len(),
+                        s.switch_ids.len(),
+                        s.power_shelf_ids.len(),
+                    );
+                } else {
+                    tracing::info!(
+                        "Rack {} firmware upgrade starting — issuing reprovisioning requests (full rack)",
+                        id
+                    );
+                }
+
                 let (m_bmc_pairs, m_intfs, switch_endpoints, power_shelf_endpoints) = {
                     let mut txn = ctx.services.db_pool.begin().await?;
 
-                    let machine_ids = db_machine::find_machine_ids(
+                    let all_machine_ids = db_machine::find_machine_ids(
                         txn.as_mut(),
                         MachineSearchConfig {
                             rack_id: Some(id.clone()),
@@ -200,6 +213,20 @@ pub async fn handle_maintenance(
                         },
                     )
                     .await?;
+                    let machine_ids: Vec<_> = if let Some(ref s) = scope {
+                        if !s.machine_ids.is_empty() {
+                            all_machine_ids
+                                .into_iter()
+                                .filter(|mid| s.machine_ids.contains(mid))
+                                .collect()
+                        } else if s.is_full_rack() {
+                            all_machine_ids
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        all_machine_ids
+                    };
                     for machine_id in machine_ids.iter() {
                         db_host_machine_update::trigger_host_reprovisioning_request(
                             txn.as_mut(),
@@ -209,7 +236,7 @@ pub async fn handle_maintenance(
                         .await?;
                     }
 
-                    let switch_ids = db_switch::find_ids(
+                    let all_switch_ids = db_switch::find_ids(
                         txn.as_mut(),
                         model::switch::SwitchSearchFilter {
                             rack_id: Some(id.clone()),
@@ -217,6 +244,20 @@ pub async fn handle_maintenance(
                         },
                     )
                     .await?;
+                    let switch_ids: Vec<_> = if let Some(ref s) = scope {
+                        if !s.switch_ids.is_empty() {
+                            all_switch_ids
+                                .into_iter()
+                                .filter(|sid| s.switch_ids.contains(sid))
+                                .collect()
+                        } else if s.is_full_rack() {
+                            all_switch_ids
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        all_switch_ids
+                    };
                     for switch_id in switch_ids.iter() {
                         db_switch::set_switch_reprovisioning_requested(
                             txn.as_mut(),
@@ -226,7 +267,7 @@ pub async fn handle_maintenance(
                         .await?;
                     }
 
-                    let power_shelf_ids = db_power_shelf::find_ids(
+                    let all_power_shelf_ids = db_power_shelf::find_ids(
                         txn.as_mut(),
                         model::power_shelf::PowerShelfSearchFilter {
                             rack_id: Some(id.clone()),
@@ -234,6 +275,20 @@ pub async fn handle_maintenance(
                         },
                     )
                     .await?;
+                    let power_shelf_ids: Vec<_> = if let Some(ref s) = scope {
+                        if !s.power_shelf_ids.is_empty() {
+                            all_power_shelf_ids
+                                .into_iter()
+                                .filter(|pid| s.power_shelf_ids.contains(pid))
+                                .collect()
+                        } else if s.is_full_rack() {
+                            all_power_shelf_ids
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        all_power_shelf_ids
+                    };
 
                     let bmc_pairs = db_machine_topology::find_machine_bmc_pairs_by_machine_id(
                         txn.as_mut(),
@@ -250,6 +305,9 @@ pub async fn handle_maintenance(
                         &power_shelf_ids,
                     )
                     .await?;
+
+                    // Persist the cleared maintenance_requested flag
+                    db_rack::update(txn.as_mut(), id, &state.config).await?;
 
                     txn.commit().await?;
                     (bmc_pairs, intfs, s_ep, p_ep)

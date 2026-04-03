@@ -18,7 +18,10 @@ use std::str::FromStr;
 
 use ::rpc::errors::RpcDataConversionError;
 use ::rpc::forge::{self as rpc, HealthReportOverride};
+use carbide_uuid::machine::MachineId;
+use carbide_uuid::power_shelf::PowerShelfId;
 use carbide_uuid::rack::RackId;
+use carbide_uuid::switch::SwitchId;
 use db::{
     ObjectColumnFilter, WithTransaction, expected_machine as db_expected_machine,
     expected_power_shelf as db_expected_power_shelf, expected_switch as db_expected_switch,
@@ -28,6 +31,7 @@ use futures_util::FutureExt;
 use health_report::OverrideMode;
 use model::machine::machine_search_config::MachineSearchConfig;
 use model::metadata::Metadata;
+use model::rack::{MaintenanceScope, RackState};
 use tonic::{Request, Response, Status};
 
 use crate::CarbideError;
@@ -429,4 +433,72 @@ pub(crate) async fn update_rack_metadata(
     txn.commit().await?;
 
     Ok(tonic::Response::new(()))
+}
+
+pub(crate) async fn on_demand_rack_maintenance(
+    api: &Api,
+    request: Request<rpc::RackMaintenanceOnDemandRequest>,
+) -> Result<Response<rpc::RackMaintenanceOnDemandResponse>, Status> {
+    log_request_data(&request);
+
+    let req = request.into_inner();
+
+    let rack_id = req
+        .rack_id
+        .ok_or_else(|| CarbideError::InvalidArgument("rack_id is required".into()))?;
+
+    let rack = db_rack::get(&api.database_connection, &rack_id)
+        .await
+        .map_err(CarbideError::from)?;
+
+    if !matches!(
+        *rack.controller_state,
+        RackState::Ready | RackState::Error { .. }
+    ) {
+        return Err(CarbideError::InvalidArgument(format!(
+            "Rack {} is not in Ready or Error state (current: {:?}). Maintenance can only be requested when the rack is Ready or in Error.",
+            rack_id, *rack.controller_state
+        ))
+        .into());
+    }
+
+    if rack.config.maintenance_requested.is_some() {
+        return Err(CarbideError::InvalidArgument(format!(
+            "On-demand maintenance for rack {} is already scheduled.",
+            rack_id,
+        ))
+        .into());
+    }
+
+    let scope = MaintenanceScope {
+        machine_ids: req
+            .machine_ids
+            .iter()
+            .map(|s| MachineId::from_str(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CarbideError::InvalidArgument(format!("Invalid machine_id: {e}")))?,
+        switch_ids: req
+            .switch_ids
+            .iter()
+            .map(|s| SwitchId::from_str(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CarbideError::InvalidArgument(format!("Invalid switch_id: {e}")))?,
+        power_shelf_ids: req
+            .power_shelf_ids
+            .iter()
+            .map(|s| PowerShelfId::from_str(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CarbideError::InvalidArgument(format!("Invalid power_shelf_id: {e}")))?,
+    };
+
+    let mut updated_config = rack.config.clone();
+    updated_config.maintenance_requested = Some(scope);
+
+    let mut txn = api.txn_begin().await?;
+    db_rack::update(&mut txn, &rack_id, &updated_config).await?;
+    txn.commit().await?;
+
+    tracing::info!("On-demand maintenance scheduled for rack {}", rack_id,);
+
+    Ok(Response::new(rpc::RackMaintenanceOnDemandResponse {}))
 }
