@@ -257,13 +257,22 @@ pub async fn discover_dhcp(
     )
     .await?;
 
-    // If the interface exists but has no addresses (e.g., after a lease
-    // expiration cleaned up the allocation), re-allocate from the segment.
-    if machine_interface.addresses.is_empty() {
+    // If the interface has no address for the requested address family
+    // (e.g., after a lease expiration cleaned up the DHCP allocation,
+    // or this is a new address family for a dual-stack interface),
+    // re-allocate from the segment.
+    if !db::machine_interface_address::has_address_for_family(
+        &mut txn,
+        machine_interface.id,
+        address_family,
+    )
+    .await?
+    {
         tracing::info!(
             interface_id = %machine_interface.id,
             %parsed_mac,
-            "Interface has no addresses, re-allocating from segment"
+            ?address_family,
+            "Interface missing address for family, re-allocating from segment"
         );
         let segment = db::network_segment::for_relay(&mut txn, parsed_relay)
             .await?
@@ -272,7 +281,13 @@ pub async fn discover_dhcp(
                     "No network segment defined for relay address: {parsed_relay}"
                 ))
             })?;
-        db::machine_interface::allocate_addresses(&mut txn, machine_interface.id, &segment).await?;
+        db::machine_interface::allocate_address_for_family(
+            &mut txn,
+            machine_interface.id,
+            &segment,
+            address_family,
+        )
+        .await?;
     }
 
     if let Some(machine_id) = machine_interface.machine_id {

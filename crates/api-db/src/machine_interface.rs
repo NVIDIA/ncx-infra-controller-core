@@ -18,6 +18,7 @@
 use std::net::IpAddr;
 use std::str::FromStr;
 
+use carbide_network::ip::IdentifyAddressFamily;
 use carbide_uuid::domain::DomainId;
 use carbide_uuid::machine::{MachineId, MachineInterfaceId};
 use carbide_uuid::network::{NetworkPrefixId, NetworkSegmentId};
@@ -28,6 +29,7 @@ use ipnetwork::IpNetwork;
 use lazy_static::lazy_static;
 use mac_address::MacAddress;
 use model::address_selection_strategy::AddressSelectionStrategy;
+use model::allocation_type::AllocationType;
 use model::expected_machine::ExpectedHostNic;
 use model::hardware_info::HardwareInfo;
 use model::machine::MachineInterfaceSnapshot;
@@ -419,21 +421,24 @@ pub async fn create(
     primary_interface: bool,
     address_strategy: AddressSelectionStrategy,
 ) -> DatabaseResult<MachineInterfaceSnapshot> {
-    if matches!(
-        address_strategy,
-        AddressSelectionStrategy::NextAvailableIp | AddressSelectionStrategy::Automatic
-    ) {
-        create_fast_path(txn, segment, macaddr, domain_id, primary_interface).await
-    } else {
-        create_slow_path(
-            txn,
-            segment,
-            macaddr,
-            domain_id,
-            primary_interface,
-            address_strategy,
-        )
-        .await
+    match address_strategy {
+        AddressSelectionStrategy::NextAvailableIp | AddressSelectionStrategy::Automatic => {
+            create_fast_path(txn, segment, macaddr, domain_id, primary_interface).await
+        }
+        AddressSelectionStrategy::StaticAddress(addr) => {
+            create_static_path(txn, segment, macaddr, domain_id, primary_interface, addr).await
+        }
+        AddressSelectionStrategy::NextAvailablePrefix(_) => {
+            create_slow_path(
+                txn,
+                segment,
+                macaddr,
+                domain_id,
+                primary_interface,
+                address_strategy,
+            )
+            .await
+        }
     }
 }
 
@@ -492,6 +497,34 @@ async fn create_fast_path(
         "unable to create machine interface in fast path for segment {} after {} retries",
         segment.id, FAST_PATH_MAX_RETRIES
     )))
+}
+
+/// Create a machine interface with a specific static IP address.
+/// A perfect compliment to create_fast_path and create_slow_path.
+async fn create_static_path(
+    txn: &mut PgConnection,
+    segment: &NetworkSegment,
+    macaddr: &MacAddress,
+    domain_id: Option<DomainId>,
+    primary_interface: bool,
+    address: IpAddr,
+) -> DatabaseResult<MachineInterfaceSnapshot> {
+    let interface_id = create_inner(
+        txn,
+        segment,
+        macaddr,
+        domain_id,
+        primary_interface,
+        &[address],
+        AllocationType::Static,
+    )
+    .await?;
+
+    Ok(
+        find_by(txn, ObjectColumnFilter::One(IdColumn, &interface_id))
+            .await?
+            .remove(0),
+    )
 }
 
 /// Create a machine interface and allocate IP addresses, slow path for whole-prefix allocation.
@@ -554,6 +587,7 @@ pub async fn create_slow_path(
         domain_id,
         primary_interface,
         &allocated_addresses,
+        AllocationType::Dhcp,
     )
     .await?;
     inner_txn.commit().await?;
@@ -586,6 +620,7 @@ async fn try_create_fast_path(
         domain_id,
         primary_interface,
         &allocated_addresses,
+        AllocationType::Dhcp,
     )
     .await
 }
@@ -612,6 +647,7 @@ async fn create_inner(
     domain_id: Option<DomainId>,
     primary_interface: bool,
     allocated_addresses: &[IpAddr],
+    allocation_type: AllocationType,
 ) -> DatabaseResult<MachineInterfaceId> {
     // Prefer IPv4 for hostname (more human-readable), fall back to
     // an IPv6-derived hostname otherwise.
@@ -643,7 +679,7 @@ async fn create_inner(
     .await?;
 
     for address in allocated_addresses {
-        insert_machine_interface_address(txn, &interface_id, address).await?;
+        insert_machine_interface_address(txn, &interface_id, address, allocation_type).await?;
     }
 
     Ok(interface_id)
@@ -865,11 +901,13 @@ async fn insert_machine_interface_address(
     txn: &mut PgConnection,
     interface_id: &MachineInterfaceId,
     address: &IpAddr,
+    allocation_type: model::allocation_type::AllocationType,
 ) -> DatabaseResult<()> {
-    let query = "INSERT INTO machine_interface_addresses (interface_id, address) VALUES ($1::uuid, $2::inet)";
+    let query = "INSERT INTO machine_interface_addresses (interface_id, address, allocation_type) VALUES ($1::uuid, $2::inet, $3)";
     sqlx::query(query)
         .bind(interface_id)
         .bind(address)
+        .bind(allocation_type)
         .execute(txn)
         .await
         .map_err(|e| DatabaseError::query(query, e))?;
@@ -1087,22 +1125,37 @@ pub async fn find_by_machine_and_segment(
         .map(|interfaces| interfaces.into_iter().collect())
 }
 
-/// Allocate new IP addresses for an existing interface that
-/// has lost its addresses (e.g. after a lease expiration, because
-/// maybe it was offline for a while). Uses the same allocation
-/// logic as initial interface creation.
+/// Allocate new DHCP-based IP addresses for a specific address family
+/// on an existing interface that has lost its addresses (e.g. after a
+/// lease expiration, because maybe it was offline for a while, etc --
+/// basically anything that caused a lease expiration to be cleaned up,
+/// probably from ExpireDhcpLease being called). This uses the same
+/// allocation logic that we use for allocating initial addresses, and
+/// only allocates from prefixes matching the requested family (IPv4
+/// or IPv6).
 #[allow(txn_held_across_await)]
-pub async fn allocate_addresses(
+pub async fn allocate_address_for_family(
     txn: &mut PgConnection,
     interface_id: MachineInterfaceId,
     segment: &NetworkSegment,
+    family: carbide_network::ip::IpAddressFamily,
 ) -> DatabaseResult<()> {
     let mut fast_txn = Transaction::begin_inner(txn).await?;
     lock_network_segment_shared(&mut fast_txn, segment).await?;
 
-    let addresses = allocate_addresses_from_segment(&mut fast_txn, segment).await?;
-    for address in &addresses {
-        insert_machine_interface_address(fast_txn.as_pgconn(), &interface_id, address).await?;
+    for prefix in segment
+        .prefixes
+        .iter()
+        .filter(|p| p.prefix.is_address_family(family))
+    {
+        let address = allocate_next_ip_with_retry(&mut fast_txn, segment, prefix).await?;
+        insert_machine_interface_address(
+            fast_txn.as_pgconn(),
+            &interface_id,
+            &address,
+            AllocationType::Dhcp,
+        )
+        .await?;
     }
 
     fast_txn.commit().await?;

@@ -34,6 +34,7 @@ use mac_address::MacAddress;
 use serde::{Deserialize, Serialize};
 
 pub mod address_selection_strategy;
+pub mod allocation_type;
 pub mod attestation;
 pub mod bmc_info;
 pub mod compute_allocation;

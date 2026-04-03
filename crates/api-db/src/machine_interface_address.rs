@@ -16,6 +16,7 @@
  */
 use std::net::IpAddr;
 
+use carbide_network::ip::IpAddressFamily;
 use carbide_uuid::machine::{MachineId, MachineInterfaceId};
 use model::network_segment::NetworkSegmentType;
 use sqlx::{FromRow, PgConnection};
@@ -71,24 +72,42 @@ pub async fn delete(
         .map_err(|e| DatabaseError::query(query, e))
 }
 
-/// Delete the IP address allocation for the given address. Returns true if
-/// an allocation was found and deleted, false if no allocation existed.
-///
-/// Note: This intentionally does NOT delete the parent machine_interface.
-/// The interface may be associated with a machine, and deleting it would
-/// break the discovered machine linkage. We leave the interface, and let
-/// the DHCP discover flow handle re-allocating an address to any existing
-/// interface that doesn't have one (due to expiration or otherwise).
+/// Delete an address allocation of the given type. Returns true if a
+/// matching allocation was found and deleted, false otherwise.
 pub async fn delete_by_address(
     txn: &mut PgConnection,
     address: IpAddr,
+    allocation_type: model::allocation_type::AllocationType,
 ) -> Result<bool, DatabaseError> {
-    let query = "DELETE FROM machine_interface_addresses WHERE address = $1::inet";
+    let query =
+        "DELETE FROM machine_interface_addresses WHERE address = $1::inet AND allocation_type = $2";
     sqlx::query(query)
         .bind(address)
+        .bind(allocation_type)
         .execute(txn)
         .await
         .map(|r| r.rows_affected() > 0)
+        .map_err(|e| DatabaseError::query(query, e))
+}
+
+/// Check whether an interface has any address assigned for the
+/// given address family.
+///
+/// This is used by the DHCPDISCOVER flow to decide whether to
+/// re-allocate after a lease expiration. If the interface still
+/// has an address for the family (static or DHCP), no re-allocation
+// is needed.
+pub async fn has_address_for_family(
+    txn: &mut PgConnection,
+    interface_id: MachineInterfaceId,
+    family: IpAddressFamily,
+) -> Result<bool, DatabaseError> {
+    let query = "SELECT EXISTS(SELECT 1 FROM machine_interface_addresses WHERE interface_id = $1 AND family(address) = $2)";
+    sqlx::query_scalar(query)
+        .bind(interface_id)
+        .bind(family.pg_family())
+        .fetch_one(txn)
+        .await
         .map_err(|e| DatabaseError::query(query, e))
 }
 
