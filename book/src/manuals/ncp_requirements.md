@@ -4,13 +4,13 @@ This section outplines the NCP (Network Control Platform) requirements for NCX I
 
 Here is an overview of the requirements, which will be detailed in the following sections:
 
-- **VNIs**: Datacenter-unique VNIs allocated based on the expected number of VPCs.
-- **ASNs**: Globally-unique 32-bit ASNs allocated based on the expected number of DPUs.
-- **IPv4 prefixes**: A single, globally-unique IPv4 prefix with a total number of IP allocation based on the following formula: `(expected number of servers + the expected number of DPUs) * 2 + 2`
-  - One or more additional, globally-unique IPv4 prefixes with a total IP allocation amount based on the following formula: `expected number of DPUs * 2`.  Minimum individual prefix size is /31.
-- **Routing**: A mechanism for route-propagation and a default route for the tenant EVPN overlay network. Options for providing this include the following:
-  - Allowing additional L2VPN-EVPN sessions with LEAF TORs and configuring the same sessions at each tier of the network (refer to simplified diagram below for reference).
-  - Configuring a new set of devices to act as tenant gateways with an isolated tenant VRF, peering the new gateways with the core routers, and applying necessary route-leaking to inject a
+* **VNIs**: Datacenter-unique VNIs allocated based on the expected number of VPCs.
+* **ASNs**: Globally-unique 32-bit ASNs allocated based on the expected number of DPUs.
+* **IPv4 prefixes**: A single, globally-unique IPv4 prefix with a total number of IP allocation based on the following formula: `(expected number of servers + the expected number of DPUs) * 2 + 2`
+  * One or more additional, globally-unique IPv4 prefixes with a total IP allocation amount based on the following formula: `expected number of DPUs * 2`.  Minimum individual prefix size is /31.
+* **Routing**: A mechanism for route-propagation and a default route for the tenant EVPN overlay network. Options for providing this include the following:
+  * Allowing additional L2VPN-EVPN sessions with LEAF TORs and configuring the same sessions at each tier of the network (refer to simplified diagram below for reference).
+  * Configuring a new set of devices to act as tenant gateways with an isolated tenant VRF, peering the new gateways with the core routers, and applying necessary route-leaking to inject a
     default route into the tenant VRF.
 
 ![Simplified diagram of the network topology](../images/ncp_requirements_diagram.png)
