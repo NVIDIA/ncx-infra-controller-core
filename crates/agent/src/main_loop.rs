@@ -1005,18 +1005,12 @@ fn effective_virtualization_type(
         .unwrap_or_else(|| {
             tracing::warn!(
                 "Missing network_virtualization_type, defaulting to {}",
-                VpcVirtualizationType::EthernetVirtualizerWithNvue
+                VpcVirtualizationType::EthernetVirtualizer
             );
-            VpcVirtualizationType::EthernetVirtualizerWithNvue
+            VpcVirtualizationType::EthernetVirtualizer
         });
 
-    match virtualization_type {
-        VpcVirtualizationType::Fnn => Ok(virtualization_type),
-        VpcVirtualizationType::EthernetVirtualizerWithNvue => Ok(virtualization_type),
-        VpcVirtualizationType::EthernetVirtualizer => Err(eyre::eyre!(
-            "EthernetVirtualizer unsupported. This shouldn't have made its way to here at this point."
-        )),
-    }
+    Ok(virtualization_type)
 }
 
 // TODO(chet): We'll eventually want a documented IPv6 address we can

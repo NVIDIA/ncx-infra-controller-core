@@ -1365,7 +1365,9 @@ message VpcCreationRequest {
 enum VpcVirtualizationType {
   ETHERNET_VIRTUALIZER = 0;
   // 1 was previously FORGE_NATIVE_NETWORKING
-  ETHERNET_VIRTUALIZER_WITH_NVUE = 2;
+  // ETHERNET_VIRTUALIZER_WITH_NVUE is deprecated. NVUE is now
+  // implied; just use ETHERNET_VIRTUALIZER.
+  ETHERNET_VIRTUALIZER_WITH_NVUE = 2 [deprecated = true];
   // Deprecated: FN_CLASSIC and FNN_L3 are deprecated now. Use FNN only.
   FNN_CLASSIC = 3;
   FNN_L3 = 4;
