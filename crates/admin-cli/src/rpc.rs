@@ -1473,6 +1473,22 @@ impl ApiClient {
         Ok(self.0.on_demand_machine_validation(request).await?)
     }
 
+    pub async fn on_demand_rack_maintenance(
+        &self,
+        rack_id: RackId,
+        machine_ids: Vec<String>,
+        switch_ids: Vec<String>,
+        power_shelf_ids: Vec<String>,
+    ) -> CarbideCliResult<rpc::RackMaintenanceOnDemandResponse> {
+        let request = rpc::RackMaintenanceOnDemandRequest {
+            rack_id: Some(rack_id),
+            machine_ids,
+            switch_ids,
+            power_shelf_ids,
+        };
+        Ok(self.0.on_demand_rack_maintenance(request).await?)
+    }
+
     pub async fn list_os_image(
         &self,
         tenant_organization_id: Option<String>,
