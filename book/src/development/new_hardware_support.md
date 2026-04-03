@@ -2,6 +2,8 @@
 
 This guide explains how to add or extend hardware support in the NICo stack when new BMC/server hardware arrives that does not work out of the box. The general process is: ingest the hardware, observe where it fails, and patch the appropriate layer based on which of the three scenarios applies.
 
+**Important:** Changes for new hardware must not break support for existing hardware. Guard new behavior behind vendor/model/firmware checks rather than modifying shared code paths.
+
 For background on how NICo uses Redfish end-to-end, see [Redfish Workflow](../architecture/redfish_workflow.md). For the list of currently supported hardware, see the [Hardware Compatibility List](../hcl.md).
 
 ## Overview
@@ -90,8 +92,6 @@ The hardware uses an already-supported BMC vendor but the specific model has qui
 3. **Add model-specific branches** in the vendor module when profiles are not enough. Use the model/product string from `ComputerSystem` to gate behavior.
 
 4. **Handle missing or renamed attributes.** Check the actual BIOS attributes via `GET /redfish/v1/Systems/{id}/Bios` on the target hardware. If an attribute is missing, add a guard that logs and skips rather than failing.
-
-5. **Update `machine_setup_attrs()`** if the new model requires different default BIOS settings.
 
 ### Scenario 3: New Firmware for an Existing Model
 
