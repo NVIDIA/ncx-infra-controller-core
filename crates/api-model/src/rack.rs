@@ -17,7 +17,10 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 
+use carbide_uuid::machine::MachineId;
+use carbide_uuid::power_shelf::PowerShelfId;
 use carbide_uuid::rack::RackId;
+use carbide_uuid::switch::SwitchId;
 use chrono::{DateTime, Utc};
 use config_version::{ConfigVersion, Versioned};
 use rpc::Timestamp;
@@ -504,6 +507,79 @@ impl MachineRvLabels {
 // RACK CONFIG & HISTORY
 // ============================================================================
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RackStateHistory {
+    /// The state that was entered
+    pub state: String,
+    /// The version number associated with the state change
+    pub state_version: ConfigVersion,
+}
+
+/// Individual maintenance activities that can be performed during on-demand
+/// rack maintenance. When the activities list on [`MaintenanceScope`] is
+/// empty, all activities are performed.
+///
+/// Activity-specific configuration is carried inline on the variant
+/// (e.g. `FirmwareUpgrade` holds the optional target firmware version).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MaintenanceActivity {
+    FirmwareUpgrade {
+        /// Target firmware version. `None` means RMS uses its default/latest.
+        #[serde(default)]
+        firmware_version: Option<String>,
+    },
+    ConfigureNmxCluster,
+    PowerSequence,
+}
+
+impl MaintenanceActivity {
+    /// Returns `true` if two activities are the same kind, ignoring
+    /// any per-activity configuration (e.g. firmware version).
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+impl std::fmt::Display for MaintenanceActivity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MaintenanceActivity::FirmwareUpgrade { .. } => write!(f, "FirmwareUpgrade"),
+            MaintenanceActivity::ConfigureNmxCluster => write!(f, "ConfigureNmxCluster"),
+            MaintenanceActivity::PowerSequence => write!(f, "PowerSequence"),
+        }
+    }
+}
+
+/// Specifies which devices in the rack should be included in an
+/// on-demand maintenance cycle. When `None` (or when all three
+/// device-id lists are empty), the full rack is maintained.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MaintenanceScope {
+    #[serde(default)]
+    pub machine_ids: Vec<MachineId>,
+    #[serde(default)]
+    pub switch_ids: Vec<SwitchId>,
+    #[serde(default)]
+    pub power_shelf_ids: Vec<PowerShelfId>,
+    /// Which maintenance activities to perform. Empty means all activities.
+    #[serde(default)]
+    pub activities: Vec<MaintenanceActivity>,
+}
+
+impl MaintenanceScope {
+    /// Returns `true` when no specific devices were selected, meaning the
+    /// maintenance applies to every device in the rack.
+    pub fn is_full_rack(&self) -> bool {
+        self.machine_ids.is_empty() && self.switch_ids.is_empty() && self.power_shelf_ids.is_empty()
+    }
+
+    /// Returns `true` if the given activity should be performed.
+    /// When the activities list is empty, all activities are considered requested.
+    pub fn should_run(&self, activity: &MaintenanceActivity) -> bool {
+        self.activities.is_empty() || self.activities.iter().any(|a| a.same_kind(activity))
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct RackConfig {
     /// rack_type is the name of the rack type (e.g. "NVL72") that maps to
@@ -521,6 +597,21 @@ pub struct RackConfig {
     /// because a tray was replaced (rack topology change).
     #[serde(default)]
     pub topology_changed: bool,
+
+    /// On-demand maintenance request. When `Some`, the Ready state handler
+    /// transitions the rack to `Maintenance(FirmwareUpgrade(Start))`. The
+    /// scope controls whether the full rack or a subset of devices is
+    /// maintained.
+    #[serde(default)]
+    pub maintenance_requested: Option<MaintenanceScope>,
+
+    /// Which maintenance activities to perform during the current maintenance
+    /// cycle. Set when `maintenance_requested` is consumed; cleared on
+    /// `Maintenance(Completed)`. Empty means all activities.
+    /// Activity-specific config (e.g. firmware version) is carried on the
+    /// variant itself.
+    #[serde(default)]
+    pub maintenance_activities: Vec<MaintenanceActivity>,
 }
 
 // ============================================================================

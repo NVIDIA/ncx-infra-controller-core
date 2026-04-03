@@ -24,9 +24,9 @@ use db::{
     switch as db_switch,
 };
 use model::rack::{
-    FirmwareUpgradeDeviceStatus, FirmwareUpgradeState, Rack, RackConfig, RackFirmwareUpgradeState,
-    RackFirmwareUpgradeStatus, RackMaintenanceState, RackPowerState, RackState,
-    RackValidationState,
+    FirmwareUpgradeDeviceStatus, FirmwareUpgradeState, MaintenanceActivity, Rack, RackConfig,
+    RackFirmwareUpgradeState, RackFirmwareUpgradeStatus, RackMaintenanceState, RackPowerState,
+    RackState, RackValidationState,
 };
 
 use crate::rack::firmware_update::{
@@ -372,6 +372,55 @@ async fn rms_get_firmware_upgrade_status(
     Ok(updated)
 }
 
+/// Returns `true` if the given activity should run according to the persisted
+/// `maintenance_activities` on the rack config. An empty list means all
+/// activities are requested. Comparison uses `same_kind` so config data
+/// (e.g. firmware version) on the probe value is ignored.
+fn should_run(config: &RackConfig, activity: &MaintenanceActivity) -> bool {
+    config.maintenance_activities.is_empty()
+        || config
+            .maintenance_activities
+            .iter()
+            .any(|a| a.same_kind(activity))
+}
+
+/// Returns the next `RackState` to transition to after the given phase,
+/// skipping any activities that were not requested.
+fn next_state_after(config: &RackConfig, current: &MaintenanceActivity) -> RackState {
+    let order: [(MaintenanceActivity, RackState); 2] = [
+        (
+            MaintenanceActivity::ConfigureNmxCluster,
+            RackState::Maintenance {
+                maintenance_state: RackMaintenanceState::ConfigureNmxCluster,
+            },
+        ),
+        (
+            MaintenanceActivity::PowerSequence,
+            RackState::Maintenance {
+                maintenance_state: RackMaintenanceState::PowerSequence {
+                    rack_power: RackPowerState::PoweringOn,
+                },
+            },
+        ),
+    ];
+
+    let start = match current {
+        MaintenanceActivity::FirmwareUpgrade { .. } => 0,
+        MaintenanceActivity::ConfigureNmxCluster => 1,
+        MaintenanceActivity::PowerSequence => order.len(),
+    };
+
+    for (activity, state) in order.iter().skip(start) {
+        if should_run(config, activity) {
+            return state.clone();
+        }
+    }
+
+    RackState::Maintenance {
+        maintenance_state: RackMaintenanceState::Completed,
+    }
+}
+
 pub async fn handle_maintenance(
     id: &RackId,
     state: &mut Rack,
@@ -384,6 +433,42 @@ pub async fn handle_maintenance(
             rack_firmware_upgrade,
         } => match rack_firmware_upgrade {
             FirmwareUpgradeState::Start => {
+                let scope = state.config.maintenance_requested.take();
+                state.config.maintenance_activities = scope
+                    .as_ref()
+                    .map(|s| s.activities.clone())
+                    .unwrap_or_default();
+
+                let fw_probe = MaintenanceActivity::FirmwareUpgrade {
+                    firmware_version: None,
+                };
+                if !should_run(&state.config, &fw_probe) {
+                    let next = next_state_after(&state.config, &fw_probe);
+                    tracing::info!(
+                        "Rack {} firmware upgrade not requested, skipping to {:?}",
+                        id,
+                        next,
+                    );
+                    let mut txn = ctx.services.db_pool.begin().await?;
+                    db_rack::update(txn.as_mut(), id, &state.config).await?;
+                    return Ok(StateHandlerOutcome::transition(next).with_txn(txn));
+                }
+
+                if scope.as_ref().is_some_and(|s| !s.is_full_rack()) {
+                    let s = scope.as_ref().unwrap();
+                    tracing::info!(
+                        "Rack {} firmware upgrade starting (partial: {} machines, {} switches, {} power shelves)",
+                        id,
+                        s.machine_ids.len(),
+                        s.switch_ids.len(),
+                        s.power_shelf_ids.len(),
+                    );
+                } else {
+                    tracing::info!(
+                        "Rack {} firmware upgrade starting — issuing reprovisioning requests (full rack)",
+                        id
+                    );
+                }
                 let Some(capabilities) = super::resolve_capabilities(id, config, ctx) else {
                     return Ok(skip_firmware_upgrade_outcome(
                         id,
@@ -396,31 +481,64 @@ pub async fn handle_maintenance(
                         "rack capabilities do not define rack_hardware_type",
                     ));
                 };
-                let default_firmware = match db_rack_firmware::find_default_by_rack_hardware_type(
-                    &ctx.services.db_pool,
-                    rack_hardware_type,
-                )
-                .await
-                {
-                    Ok(firmware) => firmware,
-                    Err(db::DatabaseError::NotFoundError { .. }) => {
-                        return Ok(skip_firmware_upgrade_outcome(
-                            id,
-                            format!(
-                                "no default rack firmware configured for hardware type '{}'",
-                                rack_hardware_type
-                            ),
-                        ));
+                let ondemand_fw_version = state
+                    .config
+                    .maintenance_activities
+                    .iter()
+                    .find_map(|a| match a {
+                        MaintenanceActivity::FirmwareUpgrade { firmware_version } => {
+                            firmware_version.clone()
+                        }
+                        _ => None,
+                    })
+                    .filter(|v| !v.is_empty());
+
+                let firmware = if let Some(ref fw_id) = ondemand_fw_version {
+                    tracing::info!(
+                        "Rack {} firmware upgrade starting (ondemand: {})",
+                        id,
+                        fw_id,
+                    );
+                    match db_rack_firmware::find_by_id(&ctx.services.db_pool, fw_id).await {
+                        Ok(fw) => fw,
+                        Err(db::DatabaseError::NotFoundError { .. }) => {
+                            return Ok(transition_to_rack_error(
+                                id,
+                                format!(
+                                    "on-demand firmware version '{}' not found in rack_firmware",
+                                    fw_id
+                                ),
+                            ));
+                        }
+                        Err(error) => return Err(error.into()),
                     }
-                    Err(error) => return Err(error.into()),
+                } else {
+                    match db_rack_firmware::find_default_by_rack_hardware_type(
+                        &ctx.services.db_pool,
+                        rack_hardware_type,
+                    )
+                    .await
+                    {
+                        Ok(firmware) => firmware,
+                        Err(db::DatabaseError::NotFoundError { .. }) => {
+                            return Ok(skip_firmware_upgrade_outcome(
+                                id,
+                                format!(
+                                    "no default rack firmware configured for hardware type '{}'",
+                                    rack_hardware_type
+                                ),
+                            ));
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 };
 
-                if !default_firmware.available {
+                if !firmware.available {
                     return Ok(skip_firmware_upgrade_outcome(
                         id,
                         format!(
-                            "default rack firmware '{}' exists but is not available",
-                            default_firmware.id
+                            "rack firmware '{}' exists but is not available",
+                            firmware.id
                         ),
                     ));
                 }
@@ -440,7 +558,7 @@ pub async fn handle_maintenance(
                 let firmware_type = firmware_type_for_capabilities(capabilities);
                 let batches = match build_firmware_update_batches(
                     id,
-                    &default_firmware,
+                    &firmware,
                     firmware_type,
                     &inventory,
                 ) {
@@ -455,8 +573,8 @@ pub async fn handle_maintenance(
                         return Ok(transition_to_rack_error(
                             id,
                             format!(
-                                "failed to build firmware update requests for default firmware '{}': {}",
-                                default_firmware.id, error
+                                "failed to build firmware update requests for firmware '{}': {}",
+                                firmware.id, error
                             ),
                         ));
                     }
@@ -468,15 +586,16 @@ pub async fn handle_maintenance(
                 tracing::info!(
                     rack_id = %id,
                     rack_hardware_type = %rack_hardware_type,
-                    default_firmware_id = %default_firmware.id,
+                    firmware_id = %firmware.id,
+                    ondemand = ondemand_fw_version.is_some(),
                     firmware_type,
                     machine_count = inventory.machines.len(),
                     switch_count = inventory.switches.len(),
                     "Rack firmware upgrade starting"
                 );
-                let mut job = rms_start_firmware_upgrade(rms_client.as_ref(), batches).await;
 
                 let mut txn = ctx.services.db_pool.begin().await?;
+                let mut job = rms_start_firmware_upgrade(rms_client.as_ref(), batches).await;
                 trigger_rack_firmware_reprovisioning_requests(
                     txn.as_mut(),
                     id,
@@ -630,30 +749,40 @@ pub async fn handle_maintenance(
                     .with_txn(txn));
                 }
 
+                if completed < total {
+                    db_rack::update_firmware_upgrade_job(txn.as_mut(), id, Some(&job)).await?;
+                    state.firmware_upgrade_job = Some(job);
+                    return Ok(StateHandlerOutcome::wait(format!(
+                        "firmware upgrade: {}/{} devices completed",
+                        completed, total
+                    ))
+                    .with_txn(txn));
+                }
+
+                let fw_probe = MaintenanceActivity::FirmwareUpgrade {
+                    firmware_version: None,
+                };
+                let next = next_state_after(&state.config, &fw_probe);
                 tracing::info!(
-                    "Rack {} firmware upgrade complete ({}/{} devices), advancing to ConfigureNmxCluster",
+                    "Rack {} firmware upgrade complete ({}/{} devices), advancing to {:?}",
                     id,
                     completed,
-                    total
+                    total,
+                    next,
                 );
                 db_rack::update_firmware_upgrade_job(txn.as_mut(), id, None).await?;
                 state.firmware_upgrade_job = None;
-                Ok(StateHandlerOutcome::transition(RackState::Maintenance {
-                    maintenance_state: RackMaintenanceState::ConfigureNmxCluster,
-                })
-                .with_txn(txn))
+                Ok(StateHandlerOutcome::transition(next).with_txn(txn))
             }
         },
         RackMaintenanceState::ConfigureNmxCluster => {
+            let next = next_state_after(&state.config, &MaintenanceActivity::ConfigureNmxCluster);
             tracing::info!(
-                "Rack {} ConfigureNmxCluster - stubbed, advancing to Completed",
-                id
+                "Rack {} ConfigureNmxCluster - stubbed, advancing to {:?}",
+                id,
+                next,
             );
-            Ok(StateHandlerOutcome::transition(RackState::Maintenance {
-                maintenance_state: RackMaintenanceState::PowerSequence {
-                    rack_power: RackPowerState::PoweringOn,
-                },
-            }))
+            Ok(StateHandlerOutcome::transition(next))
         }
         RackMaintenanceState::PowerSequence { rack_power } => match rack_power {
             RackPowerState::PoweringOn => {
@@ -681,6 +810,7 @@ pub async fn handle_maintenance(
                 "Rack {} maintenance completed, clearing rv.* labels and entering Validating(Pending)",
                 id
             );
+            state.config.maintenance_activities.clear();
             clear_rv_labels(state, ctx).await?;
             Ok(StateHandlerOutcome::transition(RackState::Validating {
                 validating_state: RackValidationState::Pending,
