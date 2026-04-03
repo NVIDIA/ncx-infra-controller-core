@@ -590,12 +590,7 @@ async fn display_endpoint(
         table.add_row(row!["Serial Number", system.serial_number()]);
 
         let mut ethernet_interface_table = Table::new();
-        ethernet_interface_table.set_titles(row![
-            "Id",
-            "Mac Address",
-            "Enabled",
-            "Link status"
-        ]);
+        ethernet_interface_table.set_titles(row!["Id", "Mac Address", "Enabled", "Link status"]);
 
         for eth in &system.ethernet_interfaces {
             ethernet_interface_table.add_row(row![
@@ -621,12 +616,7 @@ async fn display_endpoint(
         table.add_row(row!["Id", manager.id]);
 
         let mut ethernet_interface_table = Table::new();
-        ethernet_interface_table.set_titles(row![
-            "Id",
-            "Mac Address",
-            "Enabled",
-            "Link status"
-        ]);
+        ethernet_interface_table.set_titles(row!["Id", "Mac Address", "Enabled", "Link status"]);
 
         for eth in &manager.ethernet_interfaces {
             ethernet_interface_table.add_row(row![
