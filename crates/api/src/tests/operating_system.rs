@@ -816,6 +816,66 @@ async fn test_set_artifacts_cached_url_clear(pool: sqlx::PgPool) {
     assert!(resp.artifacts[0].cached_url.is_none());
 }
 
+#[crate::sqlx_test]
+async fn test_clear_cached_url_demotes_ready_to_provisioning(pool: sqlx::PgPool) {
+    let env = create_test_env(pool).await;
+    let os_id = create_os_with_artifacts(&env).await;
+
+    // Set all CACHED_ONLY artifacts so the OS becomes READY.
+    env.api
+        .update_operating_system_cachable_ipxe_script_artifacts(tonic::Request::new(
+            rpc::forge::UpdateOperatingSystemIpxeScriptArtifactRequest {
+                id: Some(os_id),
+                updates: vec![
+                    rpc::forge::IpxeScriptArtifactUpdateRequest {
+                        name: "kernel".to_string(),
+                        cached_url: Some("http://cache.local/kernel".to_string()),
+                    },
+                    rpc::forge::IpxeScriptArtifactUpdateRequest {
+                        name: "initrd".to_string(),
+                        cached_url: Some("http://cache.local/initrd".to_string()),
+                    },
+                ],
+            },
+        ))
+        .await
+        .unwrap();
+
+    let fetched = env
+        .api
+        .get_operating_system(tonic::Request::new(os_id))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(fetched.status, TenantState::Ready as i32);
+
+    // Clear one CACHED_ONLY artifact's cached_url — status must revert.
+    env.api
+        .update_operating_system_cachable_ipxe_script_artifacts(tonic::Request::new(
+            rpc::forge::UpdateOperatingSystemIpxeScriptArtifactRequest {
+                id: Some(os_id),
+                updates: vec![rpc::forge::IpxeScriptArtifactUpdateRequest {
+                    name: "kernel".to_string(),
+                    cached_url: None,
+                }],
+            },
+        ))
+        .await
+        .unwrap();
+
+    let fetched = env
+        .api
+        .get_operating_system(tonic::Request::new(os_id))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        fetched.status,
+        TenantState::Provisioning as i32,
+        "clearing a CACHED_ONLY artifact's cached_url must demote READY to PROVISIONING"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Compliance: cached_url is stripped on create/update
 // ---------------------------------------------------------------------------

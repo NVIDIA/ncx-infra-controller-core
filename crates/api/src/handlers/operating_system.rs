@@ -571,23 +571,29 @@ pub async fn update_operating_system_cachable_ipxe_script_artifacts(
         consumed[idx] = true;
     }
 
-    // State transition: if the OS is not yet READY and every CACHED_ONLY artifact
-    // now has a non-empty cached_url, promote it to READY.
+    // State transition based on CACHED_ONLY artifacts:
+    //  - Promote to READY when all CACHED_ONLY artifacts have a non-empty cached_url.
+    //  - Demote to PROVISIONING when any CACHED_ONLY artifact loses its cached_url.
     // LOCAL_ONLY artifacts are excluded from this check (their cached_url is inherently set).
     let cached_only: Vec<_> = artifacts
         .iter()
         .filter(|a| a.cache_strategy == rpc::IpxeScriptArtifactCacheStrategy::CachedOnly as i32)
         .collect();
-    let new_status = if existing.status != db::operating_system::OS_STATUS_READY
-        && !cached_only.is_empty()
+    let all_cached_only_have_urls = !cached_only.is_empty()
         && cached_only
             .iter()
-            .all(|a| a.cached_url.as_deref().is_some_and(|u| !u.is_empty()))
-    {
-        Some(db::operating_system::OS_STATUS_READY.to_string())
-    } else {
-        None
-    };
+            .all(|a| a.cached_url.as_deref().is_some_and(|u| !u.is_empty()));
+    let new_status =
+        if existing.status != db::operating_system::OS_STATUS_READY && all_cached_only_have_urls {
+            Some(db::operating_system::OS_STATUS_READY.to_string())
+        } else if existing.status == db::operating_system::OS_STATUS_READY
+            && !cached_only.is_empty()
+            && !all_cached_only_have_urls
+        {
+            Some(db::operating_system::OS_STATUS_PROVISIONING.to_string())
+        } else {
+            None
+        };
 
     let ipxe_artifacts = if artifacts.is_empty() {
         None
