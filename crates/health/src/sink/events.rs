@@ -15,7 +15,10 @@
  * limitations under the License.
  */
 
+use std::sync::Arc;
+
 use carbide_uuid::machine::MachineId;
+use carbide_uuid::rack::RackId;
 use health_report::{
     HealthAlertClassification, HealthProbeAlert, HealthProbeId, HealthProbeSuccess,
     HealthReport as CarbideHealthReport, HealthReportConversionError,
@@ -31,15 +34,17 @@ pub struct EventContext {
     pub addr: BmcAddr,
     pub collector_type: &'static str,
     pub metadata: Option<EndpointMetadata>,
+    pub rack_id: Option<RackId>,
 }
 
 impl EventContext {
     pub fn from_endpoint(endpoint: &BmcEndpoint, collector_type: &'static str) -> Self {
         Self {
-            endpoint_key: endpoint.addr.hash_key().into_owned(),
+            endpoint_key: endpoint.identity().into_owned(),
             addr: endpoint.addr.clone(),
             collector_type,
             metadata: endpoint.metadata.clone(),
+            rack_id: endpoint.rack_id.clone(),
         }
     }
 
@@ -60,19 +65,25 @@ impl EventContext {
             _ => None,
         }
     }
+
+    pub fn rack_id(&self) -> Option<&RackId> {
+        self.rack_id.as_ref()
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct SensorHealthContext {
     pub entity_type: String,
     pub sensor_id: String,
+    pub upper_fatal: Option<f64>,
+    pub lower_fatal: Option<f64>,
     pub upper_critical: Option<f64>,
     pub lower_critical: Option<f64>,
     pub upper_caution: Option<f64>,
     pub lower_caution: Option<f64>,
     pub range_max: Option<f64>,
     pub range_min: Option<f64>,
-    pub bmc_health: Option<BmcHealth>,
+    pub bmc_health: BmcHealth,
 }
 
 #[derive(Clone, Debug)]
@@ -129,20 +140,22 @@ pub enum CollectorEvent {
     MetricCollectionEnd,
     Log(Box<LogRecord>),
     Firmware(FirmwareInfo),
-    HealthReport(HealthReport),
+    HealthReport(Arc<HealthReport>),
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum ReportSource {
-    Health,
+    BmcSensors,
     TrayLeakDetection,
+    RackLeakDetection,
 }
 
 impl ReportSource {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Health => "hardware-health",
-            Self::TrayLeakDetection => "hardware-tray-leak-detection",
+            Self::BmcSensors => "bmc-sensors",
+            Self::TrayLeakDetection => "tray-leak-detection",
+            Self::RackLeakDetection => "rack-leak-detection",
         }
     }
 }
@@ -167,6 +180,7 @@ pub enum Classification {
     SensorOk,
     SensorWarning,
     SensorCritical,
+    SensorFatal,
     SensorFailure,
     Leak,
     LeakDetector,
@@ -178,6 +192,7 @@ impl Classification {
             Self::SensorOk => "SensorOk",
             Self::SensorWarning => "SensorWarning",
             Self::SensorCritical => "SensorCritical",
+            Self::SensorFatal => "SensorFatal",
             Self::SensorFailure => "SensorFailure",
             Self::Leak => "Leak",
             Self::LeakDetector => "LeakDetector",
@@ -201,24 +216,25 @@ impl TryFrom<Classification> for HealthAlertClassification {
     }
 }
 
-impl TryFrom<HealthReportSuccess> for HealthProbeSuccess {
+impl TryFrom<&HealthReportSuccess> for HealthProbeSuccess {
     type Error = HealthReportConversionError;
 
-    fn try_from(value: HealthReportSuccess) -> Result<Self, Self::Error> {
+    fn try_from(value: &HealthReportSuccess) -> Result<Self, Self::Error> {
         Ok(Self {
             id: value.probe_id.try_into()?,
-            target: value.target,
+            target: value.target.clone(),
         })
     }
 }
 
-impl TryFrom<HealthReportAlert> for HealthProbeAlert {
+impl TryFrom<&HealthReportAlert> for HealthProbeAlert {
     type Error = HealthReportConversionError;
 
-    fn try_from(value: HealthReportAlert) -> Result<Self, Self::Error> {
+    fn try_from(value: &HealthReportAlert) -> Result<Self, Self::Error> {
         let classifications = value
             .classifications
-            .into_iter()
+            .iter()
+            .copied()
             .map(TryInto::try_into)
             // Marks report as Hardware, used to filter all reports coming from health service.
             .chain(Some(Ok(HealthAlertClassification::hardware())))
@@ -226,31 +242,33 @@ impl TryFrom<HealthReportAlert> for HealthProbeAlert {
 
         Ok(Self {
             id: value.probe_id.try_into()?,
-            target: value.target,
+            target: value.target.clone(),
             in_alert_since: None,
-            message: value.message,
+            message: value.message.clone(),
             tenant_message: None,
             classifications,
         })
     }
 }
 
-impl TryFrom<HealthReport> for CarbideHealthReport {
+impl TryFrom<&HealthReport> for CarbideHealthReport {
     type Error = HealthReportConversionError;
 
-    fn try_from(value: HealthReport) -> Result<Self, Self::Error> {
+    fn try_from(value: &HealthReport) -> Result<Self, Self::Error> {
+        let source = format!("hardware-health.{}", value.source.as_str());
+
         Ok(Self {
-            source: value.source.as_str().to_string(),
+            source,
             triggered_by: None,
             observed_at: value.observed_at,
             successes: value
                 .successes
-                .into_iter()
+                .iter()
                 .map(TryInto::try_into)
                 .collect::<Result<Vec<_>, _>>()?,
             alerts: value
                 .alerts
-                .into_iter()
+                .iter()
                 .map(TryInto::try_into)
                 .collect::<Result<Vec<_>, _>>()?,
         })

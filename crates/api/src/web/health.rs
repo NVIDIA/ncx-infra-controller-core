@@ -24,6 +24,7 @@ use axum::response::{Html, IntoResponse, Response};
 use carbide_uuid::machine::{MachineId, MachineType};
 use health_report::HealthReport;
 use hyper::http::StatusCode;
+use model::machine::health_override::HealthReportOverrides;
 use rpc::forge::forge_server::Forge;
 use rpc::forge::{
     InsertHealthReportOverrideRequest, MachinesByIdsRequest, OverrideMode,
@@ -42,24 +43,24 @@ struct MachineHealth {
     overrides: Vec<HealthReportOverride>,
     aggregate_health: LabeledHealthReport,
     component_health: Vec<LabeledHealthReport>,
-    history: MachineHealthHistoryTable,
+    history: HealthHistoryTable,
 }
 
 #[derive(Template)]
-#[template(path = "machine_health_history_table.html")]
-pub(super) struct MachineHealthHistoryTable {
-    pub records: Vec<MachineHealthHistoryRecord>,
+#[template(path = "health_history_table.html")]
+pub(super) struct HealthHistoryTable {
+    pub records: Vec<HealthHistoryRecord>,
 }
 
 #[derive(Debug, serde::Serialize)]
-pub(super) struct MachineHealthHistoryRecord {
+pub(super) struct HealthHistoryRecord {
     pub timestamp: String,
     pub health: health_report::HealthReport,
 }
 
-impl MachineHealthHistoryRecord {
-    pub fn from_rpc_convert_invalid(record: ::rpc::forge::MachineHealthHistoryRecord) -> Self {
-        MachineHealthHistoryRecord {
+impl HealthHistoryRecord {
+    pub fn from_rpc_convert_invalid(record: ::rpc::forge::HealthHistoryRecord) -> Self {
+        HealthHistoryRecord {
             timestamp: record.time.map(|time| time.to_string()).unwrap_or_default(),
             health: record
                 .health
@@ -129,7 +130,7 @@ pub async fn health(
     };
 
     let request = tonic::Request::new(machine_id);
-    let mut overrides = match state
+    let mut listed_overrides = match state
         .list_health_report_overrides(request)
         .await
         .map(|response| response.into_inner().overrides)
@@ -141,6 +142,28 @@ pub async fn health(
             return (StatusCode::INTERNAL_SERVER_ERROR, Html(err.to_string())).into_response();
         }
     };
+    let mut hardware_health: Option<health_report::HealthReport> = None;
+    let mut overrides = Vec::new();
+    for override_entry in listed_overrides.drain(..) {
+        let source = override_entry
+            .report
+            .as_ref()
+            .map(|report| report.source.as_str())
+            .unwrap_or_default();
+        if HealthReportOverrides::is_hardware_health_override_source(source) {
+            if let Some(report) = override_entry.report {
+                let report = health_report_from_rpc_convert_invalid(report);
+                if let Some(aggregated) = hardware_health.as_mut() {
+                    aggregated.merge(&report);
+                } else {
+                    hardware_health = Some(report);
+                }
+            }
+            continue;
+        }
+        overrides.push(override_entry);
+    }
+
     // Sort by type first and source name second.
     overrides.sort_by(|a, b| {
         if a.mode() == OverrideMode::Replace {
@@ -160,23 +183,9 @@ pub async fn health(
         .collect();
 
     let mut component_health = Vec::new();
-
-    let request = tonic::Request::new(machine_id);
-    let hw_report = match state
-        .get_hardware_health_report(request)
-        .await
-        .map(|response| response.into_inner().report)
-    {
-        Ok(m) => m,
-        Err(err) if err.code() == tonic::Code::NotFound => None,
-        Err(err) => {
-            tracing::error!(%err, %machine_id, "get_hardware_health_report");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Html(err.to_string())).into_response();
-        }
-    };
     component_health.push(LabeledHealthReport {
         label: "Hardware Health".to_string(),
-        report: hw_report.map(health_report_from_rpc_convert_invalid),
+        report: hardware_health,
     });
 
     if !associated_dpu_machine_ids.is_empty() {
@@ -229,7 +238,7 @@ pub async fn health(
         },
         component_health,
         overrides,
-        history: MachineHealthHistoryTable {
+        history: HealthHistoryTable {
             records: health_records,
         },
     };
@@ -367,8 +376,8 @@ fn health_report_from_rpc_convert_invalid(
 pub(super) async fn fetch_health_history(
     api: &Api,
     machine_id: &MachineId,
-) -> Result<Vec<MachineHealthHistoryRecord>, tonic::Status> {
-    let mut records = api
+) -> Result<Vec<HealthHistoryRecord>, tonic::Status> {
+    let records = api
         .find_machine_health_histories(tonic::Request::new(
             ::rpc::forge::MachineHealthHistoriesRequest {
                 machine_ids: vec![*machine_id],
@@ -382,12 +391,10 @@ pub(super) async fn fetch_health_history(
         .remove(&machine_id.to_string())
         .unwrap_or_default()
         .records;
-    // History is delivered with the oldest Entry First. Reverse for better display ordering
-    records.reverse();
 
     let records = records
         .into_iter()
-        .map(MachineHealthHistoryRecord::from_rpc_convert_invalid)
+        .map(HealthHistoryRecord::from_rpc_convert_invalid)
         .collect();
 
     Ok(records)

@@ -18,23 +18,23 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt::Display;
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::panic::Location;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use carbide_network::sanitized_mac;
 use carbide_uuid::machine::MachineType;
 use carbide_uuid::network::NetworkSegmentId;
 use carbide_uuid::power_shelf::{PowerShelfIdSource, PowerShelfType};
-use carbide_uuid::switch::{SwitchIdSource, SwitchType};
 use chrono::Utc;
 use config_version::ConfigVersion;
 use db::{
     self, DatabaseError, ObjectFilter, Transaction, machine, network_segment as db_network_segment,
-    power_shelf as db_power_shelf, switch as db_switch,
+    power_shelf as db_power_shelf,
 };
-use forge_network::sanitized_mac;
 use futures_util::stream::FuturesUnordered;
 use futures_util::{StreamExt, TryFutureExt};
 use itertools::Itertools;
@@ -50,12 +50,12 @@ use model::power_shelf::{NewPowerShelf, PowerShelfConfig};
 use model::resource_pool::common::CommonPools;
 use model::site_explorer::{
     EndpointExplorationError, EndpointExplorationReport, EndpointType, ExploredDpu,
-    ExploredEndpoint, ExploredManagedHost, MachineExpectation, PowerState, PreingestionState,
-    Service, is_bf3_dpu, is_bf3_supernic, is_bluefield_model,
+    ExploredEndpoint, ExploredManagedHost, ExploredManagedSwitch, MachineExpectation, PowerState,
+    PreingestionState, Service, is_bf3_dpu, is_bf3_supernic, is_bluefield_model,
 };
-use model::switch::{NewSwitch, SwitchConfig};
 use sqlx::PgPool;
-use tokio::sync::oneshot;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use version_compare::Cmp;
 
@@ -87,6 +87,8 @@ use model::expected_machine::ExpectedMachine;
 use model::firmware::FirmwareComponentType;
 use model::machine_interface_address::MachineInterfaceAssociation;
 use model::network_segment::NetworkSegmentType;
+mod switch_creator;
+pub use switch_creator::SwitchCreator;
 
 use self::metrics::{PairingBlockerReason, exploration_error_to_metric_label};
 use crate::site_explorer::explored_endpoint_index::ExploredEndpointIndex;
@@ -132,6 +134,7 @@ pub struct SiteExplorer {
     firmware_config: Arc<FirmwareConfig>,
     work_lock_manager_handle: WorkLockManagerHandle,
     machine_creator: MachineCreator,
+    switch_creator: SwitchCreator,
     boot_order_tracker: BootOrderTracker,
     rms_client: Option<Arc<dyn RmsApi>>,
 }
@@ -166,6 +169,10 @@ impl SiteExplorer {
                 common_pools,
                 rms_client.clone(),
             ),
+            switch_creator: SwitchCreator::new(
+                database_connection.clone(),
+                explorer_config.clone(),
+            ),
             database_connection,
             enabled: explorer_config.enabled,
             config: explorer_config,
@@ -179,19 +186,22 @@ impl SiteExplorer {
     }
 
     /// Start the SiteExplorer and return a [sending channel](tokio::sync::oneshot::Sender) that will stop the SiteExplorer when dropped.
-    pub fn start(mut self) -> eyre::Result<oneshot::Sender<i32>> {
-        let (stop_sender, stop_receiver) = oneshot::channel();
-
+    pub fn start(
+        mut self,
+        join_set: &mut JoinSet<()>,
+        cancel_token: CancellationToken,
+    ) -> io::Result<()> {
         if self.enabled {
-            tokio::task::Builder::new()
+            join_set
+                .build_task()
                 .name("site_explorer")
-                .spawn(async move { self.run(stop_receiver).await })?;
+                .spawn(async move { self.run(cancel_token).await })?;
         }
 
-        Ok(stop_sender)
+        Ok(())
     }
 
-    async fn run(&mut self, mut stop_receiver: oneshot::Receiver<i32>) {
+    async fn run(&mut self, cancel_token: CancellationToken) {
         let timer = PeriodicTimer::new(self.config.run_interval);
         loop {
             let tick = timer.tick();
@@ -206,7 +216,7 @@ impl SiteExplorer {
 
             tokio::select! {
                 _ = tick.sleep() => {},
-                _ = &mut stop_receiver => {
+                _ = cancel_token.cancelled() => {
                     tracing::info!("SiteExplorer stop was requested");
                     return;
                 }
@@ -322,8 +332,8 @@ impl SiteExplorer {
 
         // Grab them all because we care about everything,
         // not just the subset in the current run.
-        let explored_endpoints = db::explored_endpoints::find_all(&mut txn).await?;
-        let explored_managed_hosts = db::explored_managed_host::find_all(&mut txn).await?;
+        let explored_endpoints = db::explored_endpoints::find_all(txn.as_pgconn()).await?;
+        let explored_managed_hosts = db::explored_managed_host::find_all(txn.as_pgconn()).await?;
 
         txn.rollback().await?;
 
@@ -541,14 +551,14 @@ impl SiteExplorer {
         }
 
         // Identify and create switches
-        let explored_switches = self
-            .identify_switches_to_ingest(&expected_endpoint_index)
-            .await?;
+        let explored_switches = self.identify_switches_to_ingest().await?;
 
         if self.config.create_switches.load(Ordering::Relaxed) {
             let start_create_switches = std::time::Instant::now();
-            let create_switches_res: Result<(), CarbideError> =
-                self.create_switches(metrics, explored_switches).await;
+            let create_switches_res: Result<(), CarbideError> = self
+                .switch_creator
+                .create_switches(metrics, &explored_switches, &expected_endpoint_index)
+                .await;
             metrics.create_switches_latency = Some(start_create_switches.elapsed());
             create_switches_res?;
         }
@@ -598,35 +608,6 @@ impl SiteExplorer {
                 Ok(false) => {}
                 Err(error) => {
                     tracing::error!(%error, "Failed to create power shelf {:#?}", address)
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Creates a `Switch` object for an identified switch endpoint with initial states
-    async fn create_switches(
-        &self,
-        metrics: &mut SiteExplorationMetrics,
-        explored_switches: Vec<(ExploredEndpoint, &ExpectedSwitch)>,
-    ) -> CarbideResult<()> {
-        for (endpoint, expected_switch) in explored_switches {
-            let address = endpoint.address;
-            match self
-                .create_switch(endpoint, expected_switch, &self.database_connection)
-                .await
-            {
-                Ok(true) => {
-                    metrics.created_switches_count += 1;
-                    if metrics.created_switches_count as u64 == self.config.switches_created_per_run
-                    {
-                        break;
-                    }
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    tracing::error!(%error, "Failed to create switch {:#?}", address)
                 }
             }
         }
@@ -712,13 +693,14 @@ impl SiteExplorer {
         let new_power_shelf = NewPowerShelf {
             id: power_shelf_id,
             config,
+            metadata: Some(expected_shelf.metadata.clone()),
         };
 
         db_power_shelf::create(&mut txn, &new_power_shelf).await?;
 
         let mac_addresses = report.all_mac_addresses();
         for mac_address in mac_addresses {
-            let mi = db::machine_interface::find_by_mac_address(&mut txn, mac_address).await?;
+            let mi = db::machine_interface::find_by_mac_address(&mut *txn, mac_address).await?;
             if let Some(interface) = mi.first() {
                 db::machine_interface::associate_interface_with_machine(
                     &interface.id,
@@ -731,7 +713,7 @@ impl SiteExplorer {
 
         let mac_addresses = report.all_mac_addresses();
         for mac_address in mac_addresses {
-            let mi = db::machine_interface::find_by_mac_address(&mut txn, mac_address).await?;
+            let mi = db::machine_interface::find_by_mac_address(&mut *txn, mac_address).await?;
             if let Some(interface) = mi.first() {
                 db::machine_interface::associate_interface_with_machine(
                     &interface.id,
@@ -742,18 +724,27 @@ impl SiteExplorer {
             }
         }
 
-        if let Some(rack_id) = expected_shelf.rack_id {
+        if let Some(ref rack_id) = expected_shelf.rack_id {
             let rack = match db::rack::get(txn.as_mut(), rack_id).await {
                 Ok(rack) => rack,
-                Err(_) => db::rack::create(
-                    &mut txn,
-                    rack_id,
-                    vec![],
-                    vec![],
-                    vec![expected_shelf.bmc_mac_address],
-                )
-                .await
-                .map_err(CarbideError::from)?,
+                Err(_) => {
+                    let expected_rack_metadata =
+                        db::expected_rack::find_by_rack_id(txn.as_mut(), rack_id)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|er| er.metadata);
+                    db::rack::create(
+                        &mut txn,
+                        rack_id,
+                        vec![],
+                        vec![],
+                        vec![expected_shelf.bmc_mac_address],
+                        expected_rack_metadata.as_ref(),
+                    )
+                    .await
+                    .map_err(CarbideError::from)?
+                }
             };
             let mut config = rack.config.clone();
             config.power_shelves.push(power_shelf_id);
@@ -774,7 +765,7 @@ impl SiteExplorer {
 
         // Register the power shelf with Rack Manager if RMS client is available
         if let Some(rms_client) = &self.rms_client {
-            if let Some(rack_id) = expected_shelf.rack_id {
+            if let Some(ref rack_id) = expected_shelf.rack_id {
                 let new_node_info = NewNodeInfo {
                     rack_id: rack_id.to_string(),
                     node_id: power_shelf_id.to_string(),
@@ -805,158 +796,6 @@ impl SiteExplorer {
                 tracing::warn!(
                     "Cannot add power shelf {} to Rack Manager: rack_id is missing",
                     power_shelf_id
-                );
-            }
-        }
-
-        Ok(true)
-    }
-
-    pub async fn create_switch(
-        &self,
-        explored_endpoint: ExploredEndpoint,
-        expected_switch: &ExpectedSwitch,
-        pool: &PgPool,
-    ) -> CarbideResult<bool> {
-        let mut txn = pool
-            .begin()
-            .await
-            .map_err(|e| DatabaseError::new("begin load create_switch", e))?;
-
-        let metadata = expected_switch.metadata.clone();
-
-        let Some(mac_address) = metadata.labels.get("host_mac_address") else {
-            return Err(CarbideError::InvalidArgument(format!(
-                "no host NVOS MAC address found for switch {}",
-                explored_endpoint.address
-            )));
-        };
-
-        let host_mac_address = MacAddress::try_from(mac_address.as_str())
-            .map_err(|e| CarbideError::InvalidArgument(format!("Invalid MAC address: {}", e)))?;
-
-        let interface =
-            db::machine_interface::find_by_mac_address(&mut txn, host_mac_address).await?;
-
-        let (host_nvos_mac_addresses, host_nvos_ip_addresses) =
-            if let Some(interface) = interface.first() {
-                (
-                    vec![mac_address.clone()],
-                    interface
-                        .addresses
-                        .iter()
-                        .map(|ip| ip.to_string())
-                        .collect::<Vec<String>>(),
-                )
-            } else {
-                (vec![], vec![])
-            };
-
-        // Generate switch_id similar to machine_id using deterministic hashing
-        // Extract switch metadata similar to how machine_id extracts hardware info
-        //TODO fetch these from chassis
-        let switch_serial = expected_switch.serial_number.as_str();
-        let switch_vendor = "NVIDIA"; // Default vendor for switches
-        let switch_model = "Switch"; // Default model identifier
-
-        let switch_id = match model::switch::switch_id::from_hardware_info(
-            switch_serial,
-            switch_vendor,
-            switch_model,
-            SwitchIdSource::ProductBoardChassisSerial,
-            SwitchType::NvLink,
-        ) {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::error!(%e, "Failed to create switch ID");
-                return Err(CarbideError::InvalidArgument(format!(
-                    "Failed to create switch ID: {e}"
-                )));
-            }
-        };
-
-        // TODO: review
-        // Check if a switch with the same SwitchId already exists
-        if let Some(_existing_switch) = db_switch::find_by_id(&mut txn, &switch_id).await? {
-            tracing::info!(
-                "Switch with ID '{}' already exists, skipping creation for endpoint {}",
-                switch_id,
-                explored_endpoint.address
-            );
-            txn.rollback()
-                .await
-                .map_err(|e| DatabaseError::new("rollback create_switch", e))?;
-            return Ok(false);
-        }
-
-        let config = SwitchConfig {
-            name: switch_serial.to_string(), // TODO: use metadata.name if it is not empty
-            enable_nmxc: false,
-            fabric_manager_config: None,
-            location: Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string()),
-        };
-
-        let new_switch = NewSwitch {
-            id: switch_id,
-            config,
-        };
-
-        db_switch::create(&mut txn, &new_switch).await?;
-
-        let mac_addresses = explored_endpoint.report.all_mac_addresses();
-        for mac_address in mac_addresses {
-            let mi = db::machine_interface::find_by_mac_address(&mut txn, mac_address).await?;
-            if let Some(interface) = mi.first() {
-                db::machine_interface::associate_interface_with_machine(
-                    &interface.id,
-                    MachineInterfaceAssociation::Switch(switch_id),
-                    &mut txn,
-                )
-                .await?;
-            }
-        }
-
-        // No need to update the switch name again; it was already set in config above.
-        txn.commit()
-            .await
-            .map_err(|e| DatabaseError::new("end create_switch", e))?;
-
-        tracing::info!(
-            "Created switch {} for endpoint {}",
-            switch_id,
-            explored_endpoint.address,
-        );
-
-        // Register the switch with Rack Manager if RMS client is available
-        if let Some(rms_client) = &self.rms_client {
-            if let Some(rack_id) = expected_switch.rack_id {
-                let bmc_mac_address = expected_switch.bmc_mac_address;
-                let new_node_info = NewNodeInfo {
-                    rack_id: rack_id.to_string(),
-                    node_id: switch_id.to_string(),
-                    mac_address: bmc_mac_address.to_string(),
-                    ip_address: explored_endpoint.address.to_string(),
-                    port: 443,
-                    username: None,
-                    password: None,
-                    r#type: Some(RmsNodeType::Switch.into()),
-                    vault_path: format!("switch_nvos/{bmc_mac_address}/admin"),
-                    host_ip_addresses: host_nvos_ip_addresses,
-                    host_mac_addresses: host_nvos_mac_addresses,
-                };
-                if let Err(e) = rms::add_node_to_rms(rms_client.as_ref(), new_node_info).await {
-                    tracing::warn!("Failed to add switch {} to Rack Manager: {}", switch_id, e);
-                } else {
-                    tracing::info!(
-                        "Added switch {} to Rack Manager for endpoint {}",
-                        switch_id,
-                        explored_endpoint.address,
-                    );
-                }
-            } else {
-                tracing::warn!(
-                    "Cannot add switch {} to Rack Manager: rack_id is missing",
-                    switch_id
                 );
             }
         }
@@ -1002,7 +841,7 @@ impl SiteExplorer {
 
             if ep.report.is_dpu() {
                 // Ignore the DPU if we are using the host NIC instead of the DPU NIC.
-                if self.config.use_onboard_nic.load(Ordering::Relaxed) {
+                if self.config.force_dpu_nic_mode.load(Ordering::Relaxed) {
                     continue;
                 }
                 if self.can_ingest_dpu_endpoint(metrics, &ep).await? {
@@ -1023,7 +862,7 @@ impl SiteExplorer {
         explored_dpus: HashMap<IpAddr, ExploredEndpoint>,
         explored_hosts: HashMap<IpAddr, ExploredEndpoint>,
     ) -> CarbideResult<Vec<(ExploredManagedHost, EndpointExplorationReport)>> {
-        if self.config.use_onboard_nic.load(Ordering::Relaxed) {
+        if self.config.force_dpu_nic_mode.load(Ordering::Relaxed) {
             // Ignore the DPU and ingest the machine as a managed host
             return Ok(explored_hosts
                 .values()
@@ -1400,10 +1239,7 @@ impl SiteExplorer {
         Ok(explored_power_shelves)
     }
 
-    async fn identify_switches_to_ingest<'a>(
-        &self,
-        expected_endpoint_index: &'a ExploredEndpointIndex,
-    ) -> CarbideResult<Vec<(ExploredEndpoint, &'a ExpectedSwitch)>> {
+    async fn identify_switches_to_ingest(&self) -> CarbideResult<Vec<ExploredManagedSwitch>> {
         let mut txn = self
             .database_connection
             .begin()
@@ -1416,20 +1252,17 @@ impl SiteExplorer {
         txn.commit()
             .await
             .map_err(|e| DatabaseError::new("end find_all_preingestion_complete data", e))?;
-
-        Ok(explored_endpoints
-            .into_iter()
-            .filter_map(|ep| {
-                if ep.report.endpoint_type == EndpointType::Bmc
-                    && let Some(expected_switch) =
-                        expected_endpoint_index.matched_expected_switch(&ep.address)
-                {
-                    Some((ep, expected_switch))
-                } else {
-                    None
-                }
+        let managed_switches = explored_endpoints
+            .iter()
+            .filter(|ep| ep.report.endpoint_type == EndpointType::Bmc && ep.report.is_switch())
+            .map(|ep| ExploredManagedSwitch {
+                bmc_ip: ep.address,
+                nv_os_mac_addresses: ep.report.all_mac_addresses(),
+                report: ep.report.clone(),
             })
-            .collect())
+            .collect::<Vec<_>>();
+
+        Ok(managed_switches)
     }
 
     /// Checks if all data that a site exploration run requires is actually configured
@@ -1453,7 +1286,7 @@ impl SiteExplorer {
             db::network_segment::list_segment_ids(&mut txn, Some(NetworkSegmentType::Underlay))
                 .await?;
         let interfaces = db::machine_interface::find_all(&mut txn).await?;
-        let explored_endpoints = db::explored_endpoints::find_all(&mut txn).await?;
+        let explored_endpoints = db::explored_endpoints::find_all(txn.as_pgconn()).await?;
         let expected_switches = db::expected_switch::find_all(&mut txn).await?;
         let expected_machines = db::expected_machine::find_all(&mut txn).await?;
         let expected_power_shelves = db::expected_power_shelf::find_all(&mut txn).await?;
@@ -2226,7 +2059,7 @@ impl SiteExplorer {
         let mut txn = self.txn_begin().await?;
 
         let is_endpoint_in_managed_host =
-            is_endpoint_in_managed_host(bmc_ip_address, &mut txn).await?;
+            is_endpoint_in_managed_host(bmc_ip_address, txn.as_pgconn()).await?;
 
         txn.commit().await?;
 
@@ -2702,27 +2535,11 @@ fn find_host_pf_mac_address(dpu_ep: &ExploredEndpoint) -> Result<MacAddress, Str
     // back to the legacy method via get_sys_image_version.
 
     // Try the explored computer-system base_mac first
-    if let Some(system_mac) = dpu_ep
-        .report
-        .systems
-        .first()
-        .and_then(|s| s.base_mac.clone())
-    {
-        // Once we've got some unsanitized MAC value,
-        // sanitize it (stripping out garbage like spaces, double quotes, etc),
-        // and return a sanitized MA:CA:DD:RE:SS as a MacAddress.
-        match sanitized_mac(&system_mac) {
-            Ok(mac) => return Ok(mac),
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to sanitize ComputerSystem base_mac, falling back to legacy method: {} (source_mac: {})",
-                    e,
-                    system_mac
-                );
-            }
-        }
+    if let Some(system_mac) = dpu_ep.report.systems.first().and_then(|s| s.base_mac) {
+        return Ok(system_mac.to_mac());
     }
 
+    tracing::warn!("ComputerSystem doesn't have base_mac, falling back to legacy method");
     let legacy_mac = get_base_mac_from_sys_image_version(get_sys_image_version(
         dpu_ep.report.service.as_ref(),
     )?)?;
@@ -2741,7 +2558,9 @@ pub async fn get_machine_state_by_bmc_ip(
 ) -> Result<String, DatabaseError> {
     let mut txn = Transaction::begin(database_connection).await?;
 
-    let state = match db::machine_topology::find_machine_id_by_bmc_ip(&mut txn, bmc_ip).await? {
+    let state = match db::machine_topology::find_machine_id_by_bmc_ip(txn.as_pgconn(), bmc_ip)
+        .await?
+    {
         Some(machine_id) => {
             match machine::find_one(&mut txn, &machine_id, MachineSearchConfig::default()).await? {
                 Some(machine) => machine.current_state().to_string(),

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use bmc_mock::{
-    BmcCommand, DpuMachineInfo, HostHardwareType, MachineInfo, SetSystemPowerResult,
+    BmcCommand, DpuMachineInfo, DpuSettings, HostHardwareType, MachineInfo, SetSystemPowerResult,
     SystemPowerControl,
 };
 use eyre::Context;
@@ -36,7 +36,6 @@ use crate::machine_state_machine::{LiveState, MachineStateMachine, OsImage, Pers
 use crate::tui::HostDetails;
 use crate::{MachineConfig, saturating_add_duration_to_instant};
 
-#[derive(Debug)]
 pub struct DpuMachine {
     mat_id: Uuid,
     // The mat_id of the host that owns this DPU
@@ -77,8 +76,7 @@ impl DpuMachine {
             host_mac_address: persisted_dpu_machine.host_mac_address,
             oob_mac_address: persisted_dpu_machine.oob_mac_address,
             serial: persisted_dpu_machine.serial.clone(),
-            nic_mode: persisted_dpu_machine.nic_mode,
-            firmware_versions: persisted_dpu_machine.firmware_versions.clone(),
+            settings: persisted_dpu_machine.settings.clone(),
         };
         let state_machine = MachineStateMachine::from_persisted(
             PersistedMachine::Dpu(persisted_dpu_machine),
@@ -129,8 +127,14 @@ impl DpuMachine {
             .unwrap_or_default()
             .fill_missing_from_desired_firmware(&app_context.desired_firmware_versions);
 
-        let dpu_info =
-            DpuMachineInfo::new(hw_type, config.dpus_in_nic_mode, firmware_versions.into());
+        let dpu_info = DpuMachineInfo::new(
+            hw_type,
+            DpuSettings {
+                nic_mode: config.dpus_in_nic_mode,
+                firmware_versions: firmware_versions.into(),
+                ..Default::default()
+            },
+        );
         let state_machine = MachineStateMachine::new(
             MachineInfo::Dpu(dpu_info.clone()),
             config,
@@ -236,6 +240,9 @@ impl DpuMachine {
                         if let Some(reply) = reply {
                             _ = reply.send(response)
                         }
+                    }
+                    BmcCommand::StateRefreshIndication => {
+                        self.state_machine.update_live_state();
                     }
                 }
             }
@@ -354,7 +361,7 @@ impl DpuMachineHandle {
         // Whether we are up and booted to the agent OS (or if we're nic mode, we don't have to be
         // booted to any OS.)
         live_state.is_up
-            && (self.0.dpu_info.nic_mode
+            && (self.0.dpu_info.settings.nic_mode
                 || matches!(live_state.booted_os.0, Some(OsImage::DpuAgent)))
     }
 
@@ -379,8 +386,9 @@ impl DpuMachineHandle {
         let guard = self.0.live_state.read().unwrap();
         HostDetails {
             mat_id: self.0.mat_id,
+            hw_type: None,
             machine_id: guard.observed_machine_id.as_ref().map(|m| m.to_string()),
-            mat_state: guard.state_string.clone(),
+            mat_state: guard.state_string,
             api_state: guard.api_state.clone(),
             oob_ip: guard.bmc_ip.map(|ip| ip.to_string()).unwrap_or_default(),
             machine_ip: guard
@@ -389,6 +397,7 @@ impl DpuMachineHandle {
                 .unwrap_or_default(),
             dpus: Vec::default(),
             booted_os: guard.booted_os.to_string(),
+            next_boot_kind: guard.ui_next_boot_kind().into(),
             power_state: guard.power_state,
         }
     }
@@ -413,8 +422,7 @@ impl DpuMachineHandle {
             host_mac_address: self.0.dpu_info.host_mac_address,
             oob_mac_address: self.0.dpu_info.oob_mac_address,
             serial: self.0.dpu_info.serial.clone(),
-            nic_mode: self.0.dpu_info.nic_mode,
-            firmware_versions: self.0.dpu_info.firmware_versions.clone(),
+            settings: self.0.dpu_info.settings.clone(),
             installed_os: self.0.live_state.read().unwrap().installed_os,
             dpu_index: self.0.dpu_index,
             bmc_dhcp_id: self.0.bmc_dhcp_id,

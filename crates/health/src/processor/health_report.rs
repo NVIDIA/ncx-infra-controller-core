@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use nv_redfish::resource::Health as BmcHealth;
 
@@ -29,6 +31,7 @@ enum SensorHealth {
     Ok,
     Warning,
     Critical,
+    Fatal,
     SensorFailure,
 }
 
@@ -38,6 +41,7 @@ impl SensorHealth {
             Self::Ok => Classification::SensorOk,
             Self::Warning => Classification::SensorWarning,
             Self::Critical => Classification::SensorCritical,
+            Self::Fatal => Classification::SensorFatal,
             Self::SensorFailure => Classification::SensorFailure,
         }
     }
@@ -54,9 +58,14 @@ struct HealthReportWindow {
     alerts: Vec<HealthReportAlert>,
 }
 
-#[derive(Default)]
 pub struct HealthReportProcessor {
     windows: DashMap<String, HealthReportWindow>,
+}
+
+impl Default for HealthReportProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HealthReportProcessor {
@@ -70,12 +79,78 @@ impl HealthReportProcessor {
         format!("{}::{}", context.endpoint_key(), context.collector_type)
     }
 
-    fn fmt_range(low: Option<f64>, high: Option<f64>) -> String {
-        match (low, high) {
-            (None, None) => "not set".to_string(),
-            (Some(l), Some(h)) => format!("{:.1} to {:.1}", l, h),
-            (Some(l), None) => format!("min {:.1}", l),
-            (None, Some(h)) => format!("max {:.1}", h),
+    fn triggered_condition(
+        health: &SensorHealthContext,
+        reading: f64,
+        state: SensorHealth,
+        unit: &str,
+    ) -> String {
+        match state {
+            SensorHealth::SensorFailure => {
+                if let Some(max) = health.range_max
+                    && reading > max
+                {
+                    return format!("reading {reading} {unit} is above the valid maximum of {max}");
+                }
+                if let Some(min) = health.range_min
+                    && reading < min
+                {
+                    return format!("reading {reading} {unit} is below the valid minimum of {min}");
+                }
+                "reading is outside the valid sensor range".to_string()
+            }
+            SensorHealth::Fatal => {
+                if let Some(max) = health.upper_fatal
+                    && reading >= max
+                {
+                    return format!(
+                        "reading {reading} {unit} reached or exceeded the fatal threshold of {max}"
+                    );
+                }
+                if let Some(min) = health.lower_fatal
+                    && reading <= min
+                {
+                    return format!(
+                        "reading {reading} {unit} reached or fell below the fatal threshold of {min}"
+                    );
+                }
+                "reading reached the fatal threshold".to_string()
+            }
+            SensorHealth::Critical => {
+                if let Some(max) = health.upper_critical
+                    && reading >= max
+                {
+                    return format!(
+                        "reading {reading} {unit} reached or exceeded the critical threshold of {max}"
+                    );
+                }
+                if let Some(min) = health.lower_critical
+                    && reading <= min
+                {
+                    return format!(
+                        "reading {reading} {unit} reached or fell below the critical threshold of {min}"
+                    );
+                }
+                "reading reached the critical threshold".to_string()
+            }
+            SensorHealth::Warning => {
+                if let Some(max) = health.upper_caution
+                    && reading >= max
+                {
+                    return format!(
+                        "reading {reading} {unit} reached or exceeded the warning threshold of {max}"
+                    );
+                }
+                if let Some(min) = health.lower_caution
+                    && reading <= min
+                {
+                    return format!(
+                        "reading {reading} {unit} reached or fell below the warning threshold of {min}"
+                    );
+                }
+                "reading reached the warning threshold".to_string()
+            }
+            SensorHealth::Ok => "reading is within thresholds".to_string(),
         }
     }
 
@@ -90,6 +165,18 @@ impl HealthReportProcessor {
             && reading < min
         {
             return SensorHealth::SensorFailure;
+        }
+
+        if let Some(upper_fatal) = health.upper_fatal
+            && reading >= upper_fatal
+        {
+            return SensorHealth::Fatal;
+        }
+
+        if let Some(lower_fatal) = health.range_min
+            && reading <= lower_fatal
+        {
+            return SensorHealth::Fatal;
         }
 
         if let Some(upper_critical) = health.upper_critical
@@ -123,7 +210,6 @@ impl HealthReportProcessor {
         health: &SensorHealthContext,
     ) -> SensorHealthResult {
         let classification = Self::classify(health, metric.value);
-        let bmc_reports_ok = matches!(health.bmc_health, Some(BmcHealth::Ok));
 
         match classification {
             SensorHealth::Ok => SensorHealthResult::Success(HealthReportSuccess {
@@ -131,16 +217,16 @@ impl HealthReportProcessor {
                 target: Some(health.sensor_id.clone()),
             }),
             state => {
-                if bmc_reports_ok {
+                let reason =
+                    Self::triggered_condition(health, metric.value, state, metric.unit.as_str());
+                if health.bmc_health == BmcHealth::Ok {
                     tracing::warn!(
                         sensor_id = %health.sensor_id,
                         entity_type = %health.entity_type,
                         reading = metric.value,
                         unit = %metric.unit,
                         reading_type = %metric.metric_type,
-                        valid_range = %Self::fmt_range(health.range_min, health.range_max),
-                        caution_range = %Self::fmt_range(health.lower_caution, health.upper_caution),
-                        critical_range = %Self::fmt_range(health.lower_critical, health.upper_critical),
+                        reason,
                         calculated_status = ?state,
                         "Threshold check indicates issue but BMC reports sensor as OK - likely incorrect thresholds, reporting OK"
                     );
@@ -153,21 +239,14 @@ impl HealthReportProcessor {
                 let status = match state {
                     SensorHealth::Warning => "Warning",
                     SensorHealth::Critical => "Critical",
+                    SensorHealth::Fatal => "Fatal",
                     SensorHealth::SensorFailure => "Sensor Failure",
                     SensorHealth::Ok => "Ok",
                 };
 
                 let message = format!(
-                    "{} '{}': {} - reading {:.2}{} ({}), valid range: {}, caution: {}, critical: {}",
-                    health.entity_type,
-                    health.sensor_id,
-                    status,
-                    metric.value,
-                    metric.unit,
-                    metric.metric_type,
-                    Self::fmt_range(health.range_min, health.range_max),
-                    Self::fmt_range(health.lower_caution, health.upper_caution),
-                    Self::fmt_range(health.lower_critical, health.upper_critical),
+                    "{} '{}': {} - {}",
+                    health.entity_type, health.sensor_id, status, reason
                 );
 
                 SensorHealthResult::Alert(HealthReportAlert {
@@ -182,6 +261,10 @@ impl HealthReportProcessor {
 }
 
 impl EventProcessor for HealthReportProcessor {
+    fn processor_type(&self) -> &'static str {
+        "health_report_processor"
+    }
+
     fn process_event(&self, context: &EventContext, event: &CollectorEvent) -> Vec<CollectorEvent> {
         match event {
             CollectorEvent::MetricCollectionStart => {
@@ -203,7 +286,7 @@ impl EventProcessor for HealthReportProcessor {
                     return Vec::new();
                 };
                 let report = HealthReport {
-                    source: ReportSource::Health,
+                    source: ReportSource::BmcSensors,
                     observed_at: Some(chrono::Utc::now()),
                     successes: window.successes,
                     alerts: window.alerts,
@@ -216,7 +299,7 @@ impl EventProcessor for HealthReportProcessor {
                     "Sending hardware health report"
                 );
 
-                return vec![CollectorEvent::HealthReport(report)];
+                return vec![CollectorEvent::HealthReport(Arc::new(report))];
             }
             CollectorEvent::Log(_)
             | CollectorEvent::Firmware(_)
@@ -253,6 +336,7 @@ mod tests {
                     .expect("valid machine id"),
                 machine_serial: None,
             })),
+            rack_id: None,
         }
     }
 
@@ -275,13 +359,15 @@ mod tests {
                     context: Some(SensorHealthContext {
                         entity_type: "sensor".to_string(),
                         sensor_id: "Temp1".to_string(),
+                        upper_fatal: None,
+                        lower_fatal: None,
                         upper_critical: Some(30.0),
                         lower_critical: None,
                         upper_caution: None,
                         lower_caution: None,
                         range_max: None,
                         range_min: None,
-                        bmc_health: Some(BmcHealth::Warning),
+                        bmc_health: BmcHealth::Critical,
                     }),
                 }
                 .into(),
@@ -293,7 +379,7 @@ mod tests {
             panic!("expected health report event");
         };
 
-        assert_eq!(report.source, ReportSource::Health);
+        assert_eq!(report.source, ReportSource::BmcSensors);
         assert!(report.successes.is_empty());
         assert_eq!(report.alerts.len(), 1);
     }

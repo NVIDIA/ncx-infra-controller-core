@@ -50,9 +50,10 @@ IPXE_BANNER_VERSION = { script = [
 BUILD_LOCATION = "/tmp/bfb-dump/initramfs-tmp"
 
 # Detect sudo/doas elevation command from env
+# Prefer doas since if both are present it is likely the intended command.
 ELEVATE = { script = ['''
-  command -v sudo >/dev/null 2>&1 && echo sudo && exit 0
   command -v doas >/dev/null 2>&1 && echo doas && exit 0
+  command -v sudo >/dev/null 2>&1 && echo sudo && exit 0
   echo ""
   '''] }
 
@@ -62,12 +63,49 @@ command = "cp"
 args = ["/tmp/bfb-dump/${BFB_NAME}", "preingestion.bfb"]
 cwd = "static/blobs/internal/aarch64"
 
+[tasks.stage-nvinit]
+condition = { env_not_set = ["SA_ENABLEMENT"] }
+# Note that libnss-exec is located here: https://gitlab-master.nvidia.com/ngcsecurity/nvssh/-/tree/master/ansible/roles/nvssh/files
+description = "Stages files required for nvssh into the mkosi image for installation in postinst script"
+script = '''
+  cp -R ${REPO_ROOT}/pxe/nvinit_setup mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
+  cp -R ${REPO_ROOT}/pxe/debs/libnss-exec_0.2.0-1_amd64.deb mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
+  cp -R ${REPO_ROOT}/pxe/nvinit_setup mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
+  cp -R ${REPO_ROOT}/pxe/debs/libnss-exec_0.2.0-1_arm64.deb mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
+'''
+
 [tasks.stage-disk_imaging-script]
 description = "Copies the disk_imaging.sh script to the qcow profile directories"
 script = '''
   cp ${REPO_ROOT}/pxe/common_files/disk_imaging.sh ${REPO_ROOT}/pxe/mkosi.profiles/qcow-imager/mkosi.extra/opt/forge/disk_imaging.sh
   cp ${REPO_ROOT}/pxe/common_files/disk_imaging.sh ${REPO_ROOT}/pxe/mkosi.profiles/qcow-imager-aarch64/mkosi.extra/opt/forge/disk_imaging.sh
 '''
+
+[tasks.build-qcow-imager-x86]
+category = "qcow-imager"
+description = "Build qcow-imager.efi for x86_64 only (without scout/BFB); output: static/blobs/internal/x86_64/qcow-imager.efi"
+dependencies = [
+  "mkosi-remove-zypper-from-debian-tools",
+  "mkdir-static",
+  "mkosi-generate-build-tmpdir",
+  "stage-disk_imaging-script",
+  "mkosi-build-qcow-imager",
+  "mkosi-copy-qcow-imager-to-webroot-x86_64",
+  "mkosi-clean-qcow-imager",
+]
+
+[tasks.build-qcow-imager-aarch64]
+category = "qcow-imager"
+description = "Build qcow-imager.efi for aarch64 only (without scout/BFB); output: static/blobs/internal/aarch64/qcow-imager.efi"
+dependencies = [
+  "mkosi-remove-zypper-from-debian-tools",
+  "mkdir-static",
+  "mkosi-generate-build-tmpdir",
+  "stage-disk_imaging-script",
+  "mkosi-build-qcow-imager-aarch64",
+  "mkosi-copy-qcow-imager-to-webroot-aarch64",
+  "mkosi-clean-qcow-imager-aarch64",
+]
 
 [tasks.stage-scout-loader-rclocal]
 description = "Copies the rc.local script to the scout loader profile directories"
@@ -89,6 +127,16 @@ script = '''
   cp ${REPO_ROOT}/pxe/common_files/check-scout-updates.sh ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
   cp ${REPO_ROOT}/pxe/common_files/check-scout-updates.service ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
   cp ${REPO_ROOT}/pxe/common_files/check-scout-updates.timer ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
+'''
+
+[tasks.stage-scout-module-loader]
+description = "Copies the scout module loader to build-output"
+script = '''
+  mkdir -p ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
+  cp ${REPO_ROOT}/pxe/common_files/load_modules.sh ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-aarch64/mkosi.extra/build-output/
+
+  mkdir -p ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
+  cp ${REPO_ROOT}/pxe/common_files/load_modules.sh ${REPO_ROOT}/pxe/mkosi.profiles/scout-oss-x86_64/mkosi.extra/build-output/
 '''
 
 [tasks.build-boot-artifacts-x86-host]
@@ -190,6 +238,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-x86_64",
   "mkosi-build-scout-loader-x86_64",
   "mkosi-build-qcow-imager",
@@ -212,6 +261,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-x86_64",
   "mkosi-build-scout-loader-x86_64",
   "mkosi-build-qcow-imager",
@@ -233,6 +283,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-aarch64",
   "mkosi-build-scout-loader-aarch64",
   "mkosi-build-qcow-imager-aarch64",
@@ -255,6 +306,7 @@ dependencies = [
   "stage-disk_imaging-script",
   "stage-scout-loader-rclocal",
   "stage-scout-update-check",
+  "stage-scout-module-loader",
   "mkosi-build-scout-aarch64",
   "mkosi-build-scout-loader-aarch64",
   "mkosi-build-qcow-imager-aarch64",
@@ -780,6 +832,7 @@ dependencies = [
   "bfb-extract-ifconfig",
   "bfb-add-scout-to-bfb-ci",
   "bfb-add-debs-to-bfb",
+  "bfb-add-nvinit-setup-to-bfb",
   "bfb-add-prod-forge-root-ca-to-bfb",
   "download-hbn-installer-to-bfb-sa",                                      # put doca_container_configs.zip in /tmp
   "mkdir-hbn-folder-in-bfb",
@@ -812,6 +865,7 @@ dependencies = [
   "bfb-extract-ifconfig",
   "bfb-add-scout-to-bfb-ci",
   "bfb-add-debs-to-bfb",
+  "bfb-add-nvinit-setup-to-bfb",
   "bfb-add-prod-forge-root-ca-to-bfb",
   "mkdir-hbn-folder-in-bfb",
   "download-hbn-installer-to-bfb",
@@ -845,6 +899,7 @@ dependencies = [
   "bfb-extract-ifconfig",
   "bfb-add-scout-to-bfb",
   "bfb-add-debs-to-bfb",
+  "bfb-add-nvinit-setup-to-bfb",
   "bfb-add-dev-forge-root-ca-to-bfb",
   "mkdir-hbn-folder-in-bfb",
   "download-hbn-installer-to-bfb",
@@ -982,6 +1037,13 @@ script = '''
   ls "${BUILD_LOCATION}/debs/"
 '''
 dependencies = ["download-debs-for-bfb"]
+
+[tasks.bfb-add-nvinit-setup-to-bfb]
+condition = { env_not_set = ["SA_ENABLEMENT"] }
+category = "iPXE Kernel"
+description = "Add nvinit_setup folder to the BFB"
+command = "cp"
+args = ["-R", "${REPO_ROOT}/pxe/nvinit_setup", "${BUILD_LOCATION}"]
 
 [tasks.bfb-add-scout-to-bfb-ci]
 category = "iPXE Kernel"

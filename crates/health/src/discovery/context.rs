@@ -30,7 +30,7 @@ use crate::collectors::Collector;
 use crate::config::{
     Config, Configurable, FirmwareCollectorConfig as FirmwareCollectorOptions,
     LogsCollectorConfig as LogsCollectorOptions, NmxtCollectorConfig as NmxtCollectorOptions,
-    SensorCollectorConfig as SensorCollectorOptions,
+    NvueCollectorConfig as NvueCollectorOptions, SensorCollectorConfig as SensorCollectorOptions,
 };
 use crate::limiter::RateLimiter;
 use crate::metrics::{MetricsManager, operation_duration_buckets_seconds};
@@ -43,22 +43,17 @@ pub(super) enum CollectorKind {
     Logs,
     Firmware,
     Nmxt,
+    NvueRest,
 }
 
 impl CollectorKind {
-    pub(super) const ALL: [CollectorKind; 4] = [
-        CollectorKind::Sensor,
-        CollectorKind::Logs,
-        CollectorKind::Firmware,
-        CollectorKind::Nmxt,
-    ];
-
     pub(super) fn stop_message(self) -> &'static str {
         match self {
             CollectorKind::Sensor => "Stopping sensor collector for removed BMC endpoint",
             CollectorKind::Logs => "Stopping logs collector for removed BMC endpoint",
             CollectorKind::Firmware => "Stopping firmware collector for removed BMC endpoint",
             CollectorKind::Nmxt => "Stopping NMX-T collector for removed BMC endpoint",
+            CollectorKind::NvueRest => "Stopping NVUE REST collector for removed BMC endpoint",
         }
     }
 }
@@ -68,6 +63,7 @@ pub(super) struct CollectorState {
     firmware: HashMap<Cow<'static, str>, Collector>,
     logs: HashMap<Cow<'static, str>, Collector>,
     nmxt: HashMap<Cow<'static, str>, Collector>,
+    nvue_rest: HashMap<Cow<'static, str>, Collector>,
 }
 
 impl CollectorState {
@@ -77,6 +73,7 @@ impl CollectorState {
             firmware: HashMap::new(),
             logs: HashMap::new(),
             nmxt: HashMap::new(),
+            nvue_rest: HashMap::new(),
         }
     }
 
@@ -86,6 +83,7 @@ impl CollectorState {
             CollectorKind::Logs => &self.logs,
             CollectorKind::Firmware => &self.firmware,
             CollectorKind::Nmxt => &self.nmxt,
+            CollectorKind::NvueRest => &self.nvue_rest,
         }
     }
 
@@ -95,6 +93,7 @@ impl CollectorState {
             CollectorKind::Logs => &mut self.logs,
             CollectorKind::Firmware => &mut self.firmware,
             CollectorKind::Nmxt => &mut self.nmxt,
+            CollectorKind::NvueRest => &mut self.nvue_rest,
         }
     }
 
@@ -115,25 +114,24 @@ impl CollectorState {
         self.map(kind).len()
     }
 
-    pub(super) fn map_mut_for_kind(
+    pub(super) fn remove_inactive_collectors(
         &mut self,
-        kind: CollectorKind,
-    ) -> &mut HashMap<Cow<'static, str>, Collector> {
-        self.map_mut(kind)
-    }
-
-    pub(super) fn removed_keys(
-        &self,
-        active_keys: &HashSet<Cow<'static, str>>,
-    ) -> HashSet<Cow<'static, str>> {
-        self.sensors
-            .keys()
-            .chain(self.logs.keys())
-            .chain(self.firmware.keys())
-            .chain(self.nmxt.keys())
-            .filter(|key| !active_keys.contains(*key))
-            .cloned()
-            .collect()
+        active_keys: &HashSet<&str>,
+    ) -> Vec<(CollectorKind, Cow<'static, str>, Collector)> {
+        [
+            (&mut self.sensors, CollectorKind::Sensor),
+            (&mut self.logs, CollectorKind::Logs),
+            (&mut self.firmware, CollectorKind::Firmware),
+            (&mut self.nmxt, CollectorKind::Nmxt),
+            (&mut self.nvue_rest, CollectorKind::NvueRest),
+        ]
+        .into_iter()
+        .flat_map(|(collectors, kind)| {
+            collectors
+                .extract_if(|key, _| !active_keys.contains(key.as_ref()))
+                .map(move |(k, v)| (kind, k, v))
+        })
+        .collect()
     }
 }
 
@@ -149,6 +147,7 @@ pub struct DiscoveryLoopContext {
     pub(crate) logs_config: Configurable<LogsCollectorOptions>,
     pub(crate) firmware_config: Configurable<FirmwareCollectorOptions>,
     pub(crate) nmxt_config: Configurable<NmxtCollectorOptions>,
+    pub(crate) nvue_config: Configurable<NvueCollectorOptions>,
 }
 
 impl DiscoveryLoopContext {
@@ -187,6 +186,7 @@ impl DiscoveryLoopContext {
         let logs_config = config.collectors.logs.clone();
         let firmware_config = config.collectors.firmware.clone();
         let nmxt_config = config.collectors.nmxt.clone();
+        let nvue_config = config.collectors.nvue.clone();
 
         Ok(Self {
             collectors: CollectorState::new(),
@@ -200,6 +200,7 @@ impl DiscoveryLoopContext {
             logs_config,
             firmware_config,
             nmxt_config,
+            nvue_config,
         })
     }
 }

@@ -158,7 +158,7 @@ pub(crate) async fn find_machine_state_histories(
 pub(crate) async fn find_machine_health_histories(
     api: &Api,
     request: Request<rpc::MachineHealthHistoriesRequest>,
-) -> Result<Response<rpc::MachineHealthHistories>, Status> {
+) -> Result<Response<rpc::HealthHistories>, Status> {
     log_request_data(&request);
     let request = request.into_inner();
 
@@ -176,15 +176,34 @@ pub(crate) async fn find_machine_health_histories(
         );
     }
 
+    // Convert protobuf timestamps to chrono DateTime
+    let start_time = request
+        .start_time
+        .map(chrono::DateTime::<chrono::Utc>::try_from)
+        .transpose()
+        .map_err(|_| CarbideError::InvalidArgument("Invalid start_time timestamp".to_string()))?;
+    let end_time = request
+        .end_time
+        .map(chrono::DateTime::<chrono::Utc>::try_from)
+        .transpose()
+        .map_err(|_| CarbideError::InvalidArgument("Invalid end_time timestamp".to_string()))?;
+
     let mut txn = api.txn_begin().await?;
 
-    let results = db::machine_health_history::find_by_machine_ids(&mut txn, &machine_ids).await?;
+    let results = db::health_history::find_by_object_ids(
+        &mut txn,
+        db::health_history::HealthHistoryTableId::Machine,
+        &machine_ids,
+        start_time,
+        end_time,
+    )
+    .await?;
 
-    let mut response = rpc::MachineHealthHistories::default();
+    let mut response = rpc::HealthHistories::default();
     for (machine_id, records) in results {
         response.histories.insert(
             machine_id.to_string(),
-            ::rpc::forge::MachineHealthHistoryRecords {
+            ::rpc::forge::HealthHistoryRecords {
                 records: records.into_iter().map(Into::into).collect(),
             },
         );
@@ -209,7 +228,11 @@ pub(crate) async fn machine_set_auto_update(
     let Some(_machine) =
         db::machine::find_one(&mut txn, &machine_id, MachineSearchConfig::default()).await?
     else {
-        return Err(Status::not_found("The machine ID was not found"));
+        return Err(CarbideError::NotFoundError {
+            kind: "machine",
+            id: request.machine_id.unwrap_or_default().to_string(),
+        }
+        .into());
     };
 
     let state = match request.action() {
@@ -485,18 +508,31 @@ pub(crate) async fn admin_force_delete_machine(
                     machine.id
                 );
             }
-
-            if machine.dpf.used_for_ingestion {
-                api.kube_client_provider
-                    .force_delete_machine(ip, &response.dpu_machine_ids)
-                    .await
-                    .map_err(CarbideError::DpfError)?;
-            }
         } else {
             tracing::warn!(
                 "Failed to unlock this host because Forge could not retrieve the BMC IP address for machine {}",
                 machine.id
             );
+        }
+
+        if let Some(ref ops) = api.dpf_sdk
+            && !dpu_machines.is_empty()
+        {
+            let host_dpf_id = machine
+                .dpf_id()
+                .ok_or_else(|| CarbideError::internal("BMC MAC not set for host".to_string()))?;
+            let node_name = carbide_dpf::dpu_node_cr_name(&host_dpf_id);
+            let dpu_device_names: Vec<String> = dpu_machines
+                .iter()
+                .map(|d| {
+                    d.dpf_id().ok_or_else(|| {
+                        CarbideError::internal("BMC MAC not set for DPU".to_string())
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            ops.force_delete_host(&node_name, &dpu_device_names)
+                .await
+                .map_err(CarbideError::DpfError)?;
         }
     }
 
@@ -649,7 +685,9 @@ pub(crate) async fn get_dpu_info_list(
 
     txn.commit().await?;
 
-    let response = rpc::GetDpuInfoListResponse { dpu_list };
+    let response = rpc::GetDpuInfoListResponse {
+        dpu_list: dpu_list.into_iter().map(rpc::DpuInfo::from).collect(),
+    };
     Ok(Response::new(response))
 }
 

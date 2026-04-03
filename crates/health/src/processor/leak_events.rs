@@ -16,6 +16,7 @@
  */
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use super::{EventContext, EventProcessor};
 use crate::sink::{
@@ -62,6 +63,10 @@ fn leak_details(alerts: &[&HealthReportAlert]) -> String {
 }
 
 impl EventProcessor for LeakEventProcessor {
+    fn processor_type(&self) -> &'static str {
+        "leak_event_processor"
+    }
+
     fn process_event(
         &self,
         _context: &EventContext,
@@ -111,7 +116,7 @@ impl EventProcessor for LeakEventProcessor {
             alerts,
         };
 
-        vec![CollectorEvent::HealthReport(leak_report)]
+        vec![CollectorEvent::HealthReport(Arc::new(leak_report))]
     }
 }
 
@@ -135,6 +140,7 @@ mod tests {
             },
             collector_type: "sensor_collector",
             metadata: None,
+            rack_id: None,
         }
     }
 
@@ -151,13 +157,14 @@ mod tests {
     fn does_not_emit_alert_when_threshold_not_met() {
         let processor = LeakEventProcessor::new(2);
         let report = HealthReport {
-            source: ReportSource::Health,
+            source: ReportSource::BmcSensors,
             observed_at: Some(chrono::Utc::now()),
             successes: Vec::new(),
             alerts: vec![leak_alert("LeakDetector_Probe")],
         };
 
-        let emitted = processor.process_event(&context(), &CollectorEvent::HealthReport(report));
+        let emitted =
+            processor.process_event(&context(), &CollectorEvent::HealthReport(Arc::new(report)));
         assert_eq!(emitted.len(), 1);
 
         let CollectorEvent::HealthReport(derived) = &emitted[0] else {
@@ -173,13 +180,14 @@ mod tests {
     fn emits_derived_leak_report_when_threshold_met() {
         let processor = LeakEventProcessor::new(1);
         let report = HealthReport {
-            source: ReportSource::Health,
+            source: ReportSource::BmcSensors,
             observed_at: Some(chrono::Utc::now()),
             successes: Vec::new(),
             alerts: vec![leak_alert("LeakDetector_Probe")],
         };
 
-        let emitted = processor.process_event(&context(), &CollectorEvent::HealthReport(report));
+        let emitted =
+            processor.process_event(&context(), &CollectorEvent::HealthReport(Arc::new(report)));
         assert_eq!(emitted.len(), 1);
 
         let CollectorEvent::HealthReport(derived) = &emitted[0] else {

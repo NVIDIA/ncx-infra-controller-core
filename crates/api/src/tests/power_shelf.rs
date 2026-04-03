@@ -54,7 +54,7 @@ async fn test_find_power_shelf_by_id(pool: sqlx::PgPool) -> Result<(), Box<dyn s
     let found_power_shelf = &power_shelf_list.power_shelves[0];
     assert_eq!(
         found_power_shelf.id.as_ref().unwrap().to_string(),
-        power_shelf_id.clone().to_string()
+        power_shelf_id.to_string()
     );
     assert_eq!(
         found_power_shelf.config.as_ref().unwrap().name,
@@ -235,6 +235,7 @@ async fn test_power_shelf_database_operations(
     let new_power_shelf = NewPowerShelf {
         id: power_shelf_id,
         config: config.clone(),
+        metadata: None,
     };
 
     let created_power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -290,6 +291,7 @@ async fn test_power_shelf_status_update(
     let new_power_shelf = NewPowerShelf {
         id: power_shelf_id,
         config: config.clone(),
+        metadata: None,
     };
 
     let mut power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -333,6 +335,7 @@ async fn test_power_shelf_controller_state_transitions(
     let new_power_shelf = NewPowerShelf {
         id: power_shelf_id,
         config: config.clone(),
+        metadata: None,
     };
 
     let power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -348,13 +351,16 @@ async fn test_power_shelf_controller_state_transitions(
     let new_state = model::power_shelf::PowerShelfControllerState::Ready;
     let current_version = power_shelf.controller_state.version;
 
-    db_power_shelf::try_update_controller_state(
+    let next_version = current_version.increment();
+    let updated = db_power_shelf::try_update_controller_state(
         &mut txn,
         power_shelf_id,
         current_version,
+        next_version,
         &new_state,
     )
     .await?;
+    assert!(updated, "update with correct version should succeed");
 
     // Verify the state was updated
     let updated_power_shelves = db_power_shelf::find_by(
@@ -370,6 +376,39 @@ async fn test_power_shelf_controller_state_transitions(
         updated_power_shelf.controller_state.value,
         model::power_shelf::PowerShelfControllerState::Ready
     ));
+
+    // Version should have been incremented
+    assert_eq!(
+        updated_power_shelf.controller_state.version.version_nr(),
+        current_version.version_nr() + 1,
+        "version should be incremented after update"
+    );
+
+    // Trying to update with the old version should fail (optimistic lock)
+    let stale_update = db_power_shelf::try_update_controller_state(
+        &mut txn,
+        power_shelf_id,
+        current_version,
+        current_version.increment(),
+        &model::power_shelf::PowerShelfControllerState::Initializing,
+    )
+    .await?;
+    assert!(
+        !stale_update,
+        "update with stale version should be rejected"
+    );
+
+    // Updating with the new version should succeed
+    let new_version = updated_power_shelf.controller_state.version;
+    let updated_again = db_power_shelf::try_update_controller_state(
+        &mut txn,
+        power_shelf_id,
+        new_version,
+        new_version.increment(),
+        &model::power_shelf::PowerShelfControllerState::Initializing,
+    )
+    .await?;
+    assert!(updated_again, "update with current version should succeed");
 
     txn.rollback().await?;
 
@@ -394,6 +433,7 @@ async fn test_power_shelf_conversion_roundtrip(
     let new_power_shelf = NewPowerShelf {
         id: power_shelf_id,
         config: config.clone(),
+        metadata: None,
     };
 
     let mut power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -466,6 +506,7 @@ async fn test_power_shelf_list_segment_ids(
         let new_power_shelf = NewPowerShelf {
             id: power_shelf_id,
             config: config.clone(),
+            metadata: None,
         };
 
         let power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
@@ -506,6 +547,7 @@ async fn test_power_shelf_controller_state_outcome(
     let new_power_shelf = NewPowerShelf {
         id: power_shelf_id,
         config: config.clone(),
+        metadata: None,
     };
 
     let _power_shelf = db_power_shelf::create(&mut txn, &new_power_shelf).await?;
