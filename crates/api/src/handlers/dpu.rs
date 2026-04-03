@@ -153,11 +153,7 @@ pub(crate) async fn get_managed_host_network_config_inner(
     // prevent the host from using the DPU at all.
     let use_admin_network = dpu_snapshot.use_admin_network() || !dpu_has_tenant_interface_config;
 
-    let mut network_virtualization_type = if api.runtime_config.nvue_enabled {
-        VpcVirtualizationType::EthernetVirtualizerWithNvue
-    } else {
-        VpcVirtualizationType::EthernetVirtualizer
-    };
+    let mut network_virtualization_type = VpcVirtualizationType::EthernetVirtualizer;
 
     let mut use_fnn_over_admin_nw = false;
 
@@ -267,24 +263,7 @@ pub(crate) async fn get_managed_host_network_config_inner(
                 None
             };
 
-            // So the network_virtualization_type historically didn't come from the VPC table,
-            // even though the value was being set there, and we're in the process of changing
-            // that. If it's Fnn*, then set it accordingly. If it is EXPLICITLY ETV w/ NVUE,
-            // then set it accordingly. If it's ETV, then check the runtime config to see if
-            // nvue_enabled is true.
-            network_virtualization_type = match vpc.network_virtualization_type {
-                VpcVirtualizationType::Fnn => VpcVirtualizationType::Fnn,
-                VpcVirtualizationType::EthernetVirtualizerWithNvue => {
-                    VpcVirtualizationType::EthernetVirtualizerWithNvue
-                }
-                VpcVirtualizationType::EthernetVirtualizer => {
-                    if api.runtime_config.nvue_enabled {
-                        VpcVirtualizationType::EthernetVirtualizerWithNvue
-                    } else {
-                        VpcVirtualizationType::EthernetVirtualizer
-                    }
-                }
-            };
+            network_virtualization_type = vpc.network_virtualization_type;
 
             vpc_vni = vpc.status.as_ref().and_then(|v| v.vni.map(|x|x as u32));
 
@@ -440,7 +419,6 @@ pub(crate) async fn get_managed_host_network_config_inner(
                         // DPU agent reads loopback ip only from 0th interface.
                         // function build in nvue.rs
                         tenant_loopback_ip.clone(),
-                        api.runtime_config.nvue_enabled,
                         network_virtualization_type,
                         suppress_tenant_security_groups,
                         network_security_group_details.clone(),
@@ -658,9 +636,17 @@ pub(crate) async fn get_managed_host_network_config_inner(
                 .version_string()
         },
         remote_id: dpu_machine_id.remote_id(),
-        network_virtualization_type: Some(
-            rpc::VpcVirtualizationType::from(network_virtualization_type).into(),
-        ),
+        // TODO(chet): Once all agents are upgraded past the ETV cleanup PRs, this can
+        // use rpc::VpcVirtualizationType::from(network_virtualization_type).into() instead.
+        // For now, force ETV to proto value 2 (ETHERNET_VIRTUALIZER_WITH_NVUE) so that
+        // older agents that reject proto value 0 (ETHERNET_VIRTUALIZER) continue to work.
+        network_virtualization_type: Some(match network_virtualization_type {
+            VpcVirtualizationType::EthernetVirtualizer
+            | VpcVirtualizationType::EthernetVirtualizerWithNvue => {
+                rpc::VpcVirtualizationType::EthernetVirtualizerWithNvue.into()
+            }
+            VpcVirtualizationType::Fnn => rpc::VpcVirtualizationType::Fnn.into(),
+        }),
         vpc_vni,
         // Deprecated: this field is always true now.
         // This should be removed in future version.
@@ -679,6 +665,8 @@ pub(crate) async fn get_managed_host_network_config_inner(
                 })
         }),
         routing_profile: routing_profile.map(|p| rpc::RoutingProfile {
+            leak_default_route_from_underlay: p.leak_default_route_from_underlay,
+            leak_tenant_host_routes_to_underlay: p.leak_tenant_host_routes_to_underlay,
             route_target_imports: p
                 .route_target_imports
                 .iter()

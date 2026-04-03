@@ -35,6 +35,7 @@ use crate::crds::dpudeployments_generated::{
     DpuDeploymentServiceChainsUpgradePolicy, DpuDeploymentServices, DpuDeploymentSpec,
 };
 use crate::crds::dpudevices_generated::{DPUDevice, DpuDeviceSpec};
+use crate::crds::dpuflavors_generated::{DPUFlavor, DpuFlavorNvconfig};
 use crate::crds::dpunodes_generated::{
     DPUNode, DpuNodeDpus, DpuNodeNodeRebootMethod, DpuNodeNodeRebootMethodExternal, DpuNodeSpec,
 };
@@ -55,13 +56,13 @@ use crate::crds::dpuservicetemplates_generated::{
 };
 use crate::error::DpfError;
 use crate::repository::{
-    BfbRepository, DpuDeploymentRepository, DpuDeviceRepository, DpuFlavorRepository,
-    DpuNodeMaintenanceRepository, DpuNodeRepository, DpuRepository,
+    BfbRepository, DpfOperatorConfigRepository, DpuDeploymentRepository, DpuDeviceRepository,
+    DpuFlavorRepository, DpuNodeMaintenanceRepository, DpuNodeRepository, DpuRepository,
     DpuServiceConfigurationRepository, DpuServiceTemplateRepository, K8sConfigRepository,
 };
 use crate::types::{
-    BmcPasswordProvider, ConfigPortsServiceType, DpuDeviceInfo, DpuNodeInfo, DpuPhase,
-    InitDpfResourcesConfig, ServiceConfigPortProtocol, ServiceDefinition,
+    BmcPasswordProvider, ConfigPortsServiceType, DpuDeviceInfo, DpuFlavorDefinition, DpuNodeInfo,
+    DpuPhase, InitDpfResourcesConfig, ServiceConfigPortProtocol, ServiceDefinition,
 };
 use crate::watcher::DpuWatcherBuilder;
 
@@ -238,6 +239,7 @@ where
         + DpuServiceTemplateRepository
         + DpuServiceConfigurationRepository
         + K8sConfigRepository
+        + DpfOperatorConfigRepository
         + 'static,
     P: BmcPasswordProvider + 'static,
     L: ResourceLabeler,
@@ -418,184 +420,328 @@ async fn create_bfb<R: BfbRepository>(
     }
 }
 
+// Right now there are only couple of parameters which needs to be compared for the mismatch.
+// Here we are not comparing each parameter.
+fn is_new_flavor_needed(
+    old_flavor: &DPUFlavor,
+    new_bfcfg: &[String],
+    ovs_commands: &[String],
+) -> bool {
+    let old_bfcfg_parameters = old_flavor.spec.bfcfg_parameters.clone().unwrap_or_default();
+
+    if !new_bfcfg.iter().all(|x| old_bfcfg_parameters.contains(x)) {
+        return false;
+    }
+
+    let old_ovs_commands = old_flavor
+        .spec
+        .ovs
+        .clone()
+        .and_then(|x| x.raw_config_script)
+        .unwrap_or_default();
+
+    old_ovs_commands == ovs_commands.join("\n")
+}
+
 async fn create_dpu_flavor<R: DpuFlavorRepository>(
     repo: &R,
     namespace: &str,
-) -> Result<(), DpfError> {
-    let flavor = crate::flavor::default_flavor(namespace);
+    dpu_flavor_def: &Option<DpuFlavorDefinition>,
+    existing_flavor_name: Option<String>,
+    default_flavor_name: &str,
+) -> Result<String, DpfError> {
+    let mut flavor = crate::flavor::default_flavor(namespace, default_flavor_name);
+
+    let mut bfcfg_parameters = vec![
+        "ENABLE_BR_HBN=yes".to_string(),
+        "ENABLE_BR_SFC=yes".to_string(),
+    ];
+
+    // These parameters are taken from CarbdieConfig which can be changed at runtime.
+    // If these parameters are changed, we need to create a new DPUFlavor since DPUFlavor specs are
+    // immutable.
+    let (should_try_create_dpu_flavor, name) = if let Some(definition) = dpu_flavor_def {
+        if let Some(carbide_hbn_reps) = &definition.carbide_hbn_reps {
+            bfcfg_parameters.push(format!("BR_HBN_REPS={carbide_hbn_reps}"));
+        }
+
+        if let Some(carbide_hbn_sfs) = &definition.carbide_hbn_sfs {
+            bfcfg_parameters.push(format!("BR_HBN_SFS={carbide_hbn_sfs}"));
+        }
+
+        let mut ovs_commands = vec![];
+        if let Some(bridge) = &definition.bridge_def {
+            let vf_intercept_bridge_name = bridge.vf_intercept_bridge_name.clone();
+            let vf_intercept_bridge_port = bridge.vf_intercept_bridge_port.clone();
+            let host_intercept_bridge_name = bridge.host_intercept_bridge_name.clone();
+            let host_intercept_bridge_port = bridge.host_intercept_bridge_port.clone();
+            let vf_intercept_bridge_sf = bridge.vf_intercept_bridge_sf.clone();
+            let vf_intercept_hbn_port = format!("patch-hbn-{vf_intercept_bridge_port}");
+            let host_intercept_hbn_port = format!("patch-hbn-{host_intercept_bridge_port}");
+            let vf_intercept_bridge_sf_representor = format!("{vf_intercept_bridge_sf}_r");
+            let vf_intercept_bridge_sf_hbn_bridge_representor =
+                format!("{vf_intercept_bridge_sf}_if_r");
+
+            ovs_commands.push(format!("_ovs-vsctl --may-exist add-br {vf_intercept_bridge_name} -- set bridge {vf_intercept_bridge_name} datapath_type=netdev -- set interface {vf_intercept_bridge_name} mtu_request=9216"));
+            ovs_commands.push("next_br_hbn_ofport_index=$(($(_ovs-vsctl get bridge br-hbn external_ids | grep -o '[0-9]*')+1))".to_string());
+            ovs_commands.push(
+                "_ovs-vsctl set bridge br-hbn external_ids:ofport_index=${next_br_hbn_ofport_index}"
+                    .to_string(),
+            );
+            ovs_commands.push(format!("_ovs-vsctl --may-exist add-port br-hbn {vf_intercept_hbn_port} -- set interface {vf_intercept_hbn_port} type=patch options:peer={vf_intercept_bridge_port} ofport_request=\"${{next_br_hbn_ofport_index}}\""));
+            ovs_commands.push(format!("_ovs-vsctl --may-exist add-port {vf_intercept_bridge_name} {vf_intercept_bridge_port} -- set interface {vf_intercept_bridge_port} type=patch options:peer={vf_intercept_hbn_port}"));
+            ovs_commands.push(format!("sed -i 's/br-hbn~{vf_intercept_bridge_sf_representor}~{vf_intercept_bridge_sf_hbn_bridge_representor}/br-hbn~{vf_intercept_hbn_port}~{vf_intercept_bridge_sf_hbn_bridge_representor}/' /etc/mellanox/sfc.conf"));
+            ovs_commands.push(format!("_ovs-vsctl set interface {vf_intercept_bridge_port} ofport_request=$(_ovs-vsctl get interface {vf_intercept_bridge_port} ofport)"));
+            ovs_commands.push(format!("sed -i ':a;N;$!ba;s/{vf_intercept_bridge_sf_representor}:{vf_intercept_bridge_sf_hbn_bridge_representor}\\n*//' /etc/mellanox/sfc.conf"));
+            ovs_commands.push(format!(
+                "_ovs-vsctl --if-exists del-port {vf_intercept_bridge_sf_representor}"
+            ));
+
+            ovs_commands.push(format!("_ovs-vsctl --may-exist add-br {host_intercept_bridge_name} -- set bridge {host_intercept_bridge_name} datapath_type=netdev"));
+            ovs_commands.push("next_br_hbn_ofport_index=$(($(_ovs-vsctl get bridge br-hbn external_ids | grep -o '[0-9]*')+1))".to_string());
+            ovs_commands.push("_ovs-vsctl set bridge br-hbn external_ids:ofport_index=${next_br_hbn_ofport_index}".to_string());
+            ovs_commands.push(format!("_ovs-vsctl --may-exist add-port br-hbn {host_intercept_hbn_port} -- set interface {host_intercept_hbn_port} type=patch options:peer={host_intercept_bridge_port} ofport_request=\"${{next_br_hbn_ofport_index}}\" external_ids='{{dependencies=pf0hpf_if_r, hbn_netdev=pf0hpf_if, hbn_rep_ofport=pf0hpf_if_r}}'"));
+            ovs_commands.push(format!("_ovs-vsctl --may-exist add-port {host_intercept_bridge_name} {host_intercept_bridge_port} -- set interface {host_intercept_bridge_port} type=patch options:peer={host_intercept_hbn_port}"));
+            ovs_commands.push(format!("_ovs-vsctl set interface {host_intercept_bridge_port} ofport_request=$(_ovs-vsctl get interface {host_intercept_bridge_port} ofport)"));
+            ovs_commands.push(format!("sed -i 's/br-hbn~pf0hpf~pf0hpf_if_r~pf0hpf_if~pf0hpf_if_r/br-hbn~{host_intercept_hbn_port}~pf0hpf_if_r~pf0hpf_if~pf0hpf_if_r/' /etc/mellanox/sfc.conf"));
+            ovs_commands.push(format!("_ovs-vsctl --if-exists del-port pf0hpf -- --may-exist add-port {host_intercept_bridge_name} pf0hpf -- set interface pf0hpf type=dpdk mtu_request=9216 external_ids='{{}}'"));
+            ovs_commands.push("_ovs-vsctl set interface pf0hpf ofport_request=$(_ovs-vsctl get interface pf0hpf ofport)".to_string());
+
+            flavor.spec.ovs = Some(crate::crds::dpuflavors_generated::DpuFlavorOvs {
+                raw_config_script: Some(ovs_commands.join("\n")),
+            });
+        }
+
+        let nvue_params = vec![
+            "SRIOV_EN=True".to_string(),
+            "NUM_OF_VFS=16".to_string(),
+            "HIDE_PORT2_PF=True".to_string(),
+            "NUM_OF_PF=1".to_string(),
+            "LINK_TYPE_P1=2".to_string(),
+            "LINK_TYPE_P2=2".to_string(),
+        ];
+
+        flavor.spec.nvconfig = Some(vec![DpuFlavorNvconfig {
+            device: Some("mt*_pciconf0".to_string()),
+            host_power_cycle_required: None,
+            parameters: Some(nvue_params),
+        }]);
+
+        if let Some(name) = existing_flavor_name {
+            let existing_flavor = DpuFlavorRepository::get(repo, &name, namespace).await?;
+            if let Some(flavor) = &existing_flavor {
+                // Flavor exists. Check if we have to create new or not.
+                let is_flavor_needed =
+                    is_new_flavor_needed(flavor, &bfcfg_parameters, &ovs_commands);
+
+                match is_flavor_needed {
+                    true => {
+                        let name = format!("{}-{}", default_flavor_name, uuid::Uuid::new_v4());
+                        (true, name)
+                    }
+                    // no need to create a new flavor. It is already exists with same parameter.
+                    false => (false, name.to_string()),
+                }
+            } else {
+                // No flavor exists with given name.
+                // It should not happen.
+                tracing::error!(
+                    "No DPUFlavor exists with name {name}. Will try again to create DPUFlavor."
+                );
+                (true, name.to_string())
+            }
+        } else {
+            (true, default_flavor_name.to_string())
+        }
+    } else {
+        (true, default_flavor_name.to_string())
+    };
+
+    if !should_try_create_dpu_flavor {
+        return Ok(name);
+    }
+
+    flavor.spec.bfcfg_parameters = Some(bfcfg_parameters);
+
+    // Update name as we decided in last stage.
+    flavor.metadata.name = Some(name.clone());
+
     match DpuFlavorRepository::create(repo, &flavor).await {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(name),
         Err(DpfError::KubeError(kube::Error::Api(ref err)))
             if err.is_already_exists() || err.is_conflict() =>
         {
-            let existing =
-                DpuFlavorRepository::get(repo, crate::flavor::DPUFLAVOR_NAME, namespace).await?;
+            let existing = DpuFlavorRepository::get(repo, &name, namespace).await?;
             if existing
                 .as_ref()
                 .is_some_and(|f| f.metadata.deletion_timestamp.is_some())
             {
                 return Err(DpfError::InvalidState(format!(
-                    "DPUFlavor {} is being deleted (has deletionTimestamp); \
+                    "DPUFlavor {name} is being deleted (has deletionTimestamp); \
                      cannot re-create until the old resource is fully removed",
-                    crate::flavor::DPUFLAVOR_NAME
                 )));
             }
             tracing::debug!("DPU flavor already exists");
-            Ok(())
+            Ok(name)
         }
         Err(e) => Err(e),
     }
 }
 
-async fn create_services_and_deployment<
-    R: DpuServiceTemplateRepository + DpuServiceConfigurationRepository + DpuDeploymentRepository,
-    L: ResourceLabeler,
->(
-    repo: &R,
+fn build_service_template(svc: &ServiceDefinition, namespace: &str) -> DPUServiceTemplate {
+    let helm_values: Option<BTreeMap<String, serde_json::Value>> =
+        svc.helm_values.as_ref().and_then(|v| {
+            v.as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        });
+
+    DPUServiceTemplate {
+        metadata: ObjectMeta {
+            name: Some(svc.name.clone()),
+            namespace: Some(namespace.to_string()),
+            ..Default::default()
+        },
+        spec: DpuServiceTemplateSpec {
+            deployment_service_name: svc.name.clone(),
+            helm_chart: DpuServiceTemplateHelmChart {
+                source: DpuServiceTemplateHelmChartSource {
+                    chart: Some(svc.helm_chart.clone()),
+                    path: None,
+                    release_name: None,
+                    repo_url: svc.helm_repo_url.clone(),
+                    version: svc.helm_version.clone(),
+                },
+                values: helm_values,
+            },
+            resource_requirements: None,
+        },
+        status: None,
+    }
+}
+
+fn build_service_configuration(
+    svc: &ServiceDefinition,
     namespace: &str,
-    labeler: &L,
+) -> DPUServiceConfiguration {
+    let interfaces: Vec<DpuServiceConfigurationInterfaces> = svc
+        .interfaces
+        .iter()
+        .map(|i| DpuServiceConfigurationInterfaces {
+            name: i.name.clone(),
+            network: i.network.clone(),
+            virtual_network: None,
+        })
+        .collect();
+
+    let config_ports_crd = svc.config_ports.as_ref().and_then(|ports| {
+        svc.config_ports_service_type.map(|st| {
+            DpuServiceConfigurationServiceConfigurationConfigPorts {
+                ports: ports
+                    .iter()
+                    .map(|p| DpuServiceConfigurationServiceConfigurationConfigPortsPorts {
+                        name: p.name.clone(),
+                        node_port: p.node_port,
+                        port: p.port,
+                        protocol: match p.protocol {
+                            ServiceConfigPortProtocol::Tcp => {
+                                DpuServiceConfigurationServiceConfigurationConfigPortsPortsProtocol::Tcp
+                            }
+                            ServiceConfigPortProtocol::Udp => {
+                                DpuServiceConfigurationServiceConfigurationConfigPortsPortsProtocol::Udp
+                            }
+                        },
+                    })
+                    .collect(),
+                service_type: match st {
+                    ConfigPortsServiceType::NodePort => {
+                        DpuServiceConfigurationServiceConfigurationConfigPortsServiceType::NodePort
+                    }
+                    ConfigPortsServiceType::ClusterIp => {
+                        DpuServiceConfigurationServiceConfigurationConfigPortsServiceType::ClusterIp
+                    }
+                    ConfigPortsServiceType::None => {
+                        DpuServiceConfigurationServiceConfigurationConfigPortsServiceType::None
+                    }
+                },
+            }
+        })
+    });
+
+    let helm_chart_config = svc.config_values.as_ref().and_then(|v| {
+        v.as_object().map(|obj| {
+            let values: BTreeMap<String, serde_json::Value> =
+                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            DpuServiceConfigurationServiceConfigurationHelmChart {
+                values: Some(values),
+            }
+        })
+    });
+
+    let service_daemon_set = svc.service_daemon_set_annotations.as_ref().map(|annos| {
+        DpuServiceConfigurationServiceConfigurationServiceDaemonSet {
+            annotations: Some(annos.clone()),
+            labels: None,
+            resources: None,
+            update_strategy: None,
+        }
+    });
+
+    let service_configuration = if config_ports_crd.is_some()
+        || helm_chart_config.is_some()
+        || service_daemon_set.is_some()
+    {
+        Some(DpuServiceConfigurationServiceConfiguration {
+            config_ports: config_ports_crd,
+            deploy_in_cluster: None,
+            helm_chart: helm_chart_config,
+            service_daemon_set,
+        })
+    } else {
+        None
+    };
+
+    DPUServiceConfiguration {
+        metadata: ObjectMeta {
+            name: Some(svc.name.clone()),
+            namespace: Some(namespace.to_string()),
+            ..Default::default()
+        },
+        spec: DpuServiceConfigurationSpec {
+            deployment_service_name: svc.name.clone(),
+            interfaces: if interfaces.is_empty() {
+                None
+            } else {
+                Some(interfaces)
+            },
+            service_configuration,
+            upgrade_policy: DpuServiceConfigurationUpgradePolicy {
+                apply_node_effect: Some(false),
+            },
+        },
+    }
+}
+
+fn build_deployment<L: ResourceLabeler>(
     services: &[ServiceDefinition],
     deployment_name: &str,
     bfb_name: &str,
-) -> Result<(), DpfError> {
-    for svc in services {
-        let helm_values: Option<BTreeMap<String, serde_json::Value>> =
-            svc.helm_values.as_ref().and_then(|v| {
-                v.as_object()
-                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            });
-
-        let template = DPUServiceTemplate {
-            metadata: ObjectMeta {
-                name: Some(svc.name.clone()),
-                namespace: Some(namespace.to_string()),
-                ..Default::default()
-            },
-            spec: DpuServiceTemplateSpec {
-                deployment_service_name: svc.name.clone(),
-                helm_chart: DpuServiceTemplateHelmChart {
-                    source: DpuServiceTemplateHelmChartSource {
-                        chart: Some(svc.helm_chart.clone()),
-                        path: None,
-                        release_name: None,
-                        repo_url: svc.helm_repo_url.clone(),
-                        version: svc.helm_version.clone(),
-                    },
-                    values: helm_values,
+    flavor_name: String,
+    namespace: &str,
+    labeler: &L,
+) -> DPUDeployment {
+    let services_map: BTreeMap<String, DpuDeploymentServices> = services
+        .iter()
+        .map(|svc| {
+            (
+                svc.name.clone(),
+                DpuDeploymentServices {
+                    depends_on: None,
+                    service_configuration: Some(svc.name.clone()),
+                    service_template: Some(svc.name.clone()),
                 },
-                resource_requirements: None,
-            },
-            status: None,
-        };
-        DpuServiceTemplateRepository::apply(repo, &template).await?;
-
-        let interfaces: Vec<DpuServiceConfigurationInterfaces> = svc
-            .interfaces
-            .iter()
-            .map(|i| DpuServiceConfigurationInterfaces {
-                name: i.name.clone(),
-                network: i.network.clone(),
-                virtual_network: None,
-            })
-            .collect();
-
-        let config_ports_crd = svc.config_ports.as_ref().and_then(|ports| {
-            svc.config_ports_service_type.map(|st| {
-                DpuServiceConfigurationServiceConfigurationConfigPorts {
-                    ports: ports
-                        .iter()
-                        .map(|p| DpuServiceConfigurationServiceConfigurationConfigPortsPorts {
-                            name: p.name.clone(),
-                            node_port: p.node_port,
-                            port: p.port,
-                            protocol: match p.protocol {
-                                ServiceConfigPortProtocol::Tcp => {
-                                    DpuServiceConfigurationServiceConfigurationConfigPortsPortsProtocol::Tcp
-                                }
-                                ServiceConfigPortProtocol::Udp => {
-                                    DpuServiceConfigurationServiceConfigurationConfigPortsPortsProtocol::Udp
-                                }
-                            },
-                        })
-                        .collect(),
-                    service_type: match st {
-                        ConfigPortsServiceType::NodePort => {
-                            DpuServiceConfigurationServiceConfigurationConfigPortsServiceType::NodePort
-                        }
-                        ConfigPortsServiceType::ClusterIp => {
-                            DpuServiceConfigurationServiceConfigurationConfigPortsServiceType::ClusterIp
-                        }
-                        ConfigPortsServiceType::None => {
-                            DpuServiceConfigurationServiceConfigurationConfigPortsServiceType::None
-                        }
-                    },
-                }
-            })
-        });
-        let helm_chart_config = svc.config_values.as_ref().and_then(|v| {
-            v.as_object().map(|obj| {
-                let values: BTreeMap<String, serde_json::Value> =
-                    obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                DpuServiceConfigurationServiceConfigurationHelmChart {
-                    values: Some(values),
-                }
-            })
-        });
-        let service_daemon_set = svc.service_daemon_set_annotations.as_ref().map(|annos| {
-            DpuServiceConfigurationServiceConfigurationServiceDaemonSet {
-                annotations: Some(annos.clone()),
-                labels: None,
-                resources: None,
-                update_strategy: None,
-            }
-        });
-        let service_configuration = if config_ports_crd.is_some()
-            || helm_chart_config.is_some()
-            || service_daemon_set.is_some()
-        {
-            Some(DpuServiceConfigurationServiceConfiguration {
-                config_ports: config_ports_crd,
-                deploy_in_cluster: None,
-                helm_chart: helm_chart_config,
-                service_daemon_set,
-            })
-        } else {
-            None
-        };
-
-        let config_crd = DPUServiceConfiguration {
-            metadata: ObjectMeta {
-                name: Some(svc.name.clone()),
-                namespace: Some(namespace.to_string()),
-                ..Default::default()
-            },
-            spec: DpuServiceConfigurationSpec {
-                deployment_service_name: svc.name.clone(),
-                interfaces: if interfaces.is_empty() {
-                    None
-                } else {
-                    Some(interfaces)
-                },
-                service_configuration,
-                upgrade_policy: DpuServiceConfigurationUpgradePolicy {
-                    apply_node_effect: Some(false),
-                },
-            },
-        };
-        DpuServiceConfigurationRepository::apply(repo, &config_crd).await?;
-    }
-
-    let mut services_map = BTreeMap::new();
-    for svc in services {
-        services_map.insert(
-            svc.name.clone(),
-            DpuDeploymentServices {
-                depends_on: None,
-                service_configuration: Some(svc.name.clone()),
-                service_template: Some(svc.name.clone()),
-            },
-        );
-    }
+            )
+        })
+        .collect();
 
     let all_switches: Vec<DpuDeploymentServiceChainsSwitches> = services
         .iter()
@@ -641,7 +787,15 @@ async fn create_services_and_deployment<
         })
     };
 
-    let deployment = DPUDeployment {
+    let mut node_labels = BTreeMap::from([(
+        "feature.node.kubernetes.io/dpu-enabled".to_string(),
+        "true".to_string(),
+    )]);
+    for (k, v) in labeler.node_labels() {
+        node_labels.insert(k, v);
+    }
+
+    DPUDeployment {
         metadata: ObjectMeta {
             name: Some(deployment_name.to_string()),
             namespace: Some(namespace.to_string()),
@@ -654,21 +808,12 @@ async fn create_services_and_deployment<
                     dpu_annotations: None,
                     dpu_selector: None,
                     name_suffix: "default".to_string(),
-                    node_selector: {
-                        let mut labels = BTreeMap::from([(
-                            "feature.node.kubernetes.io/dpu-enabled".to_string(),
-                            "true".to_string(),
-                        )]);
-                        for (k, v) in labeler.node_labels() {
-                            labels.insert(k, v);
-                        }
-                        Some(DpuDeploymentDpusDpuSetsNodeSelector {
-                            match_expressions: None,
-                            match_labels: Some(labels),
-                        })
-                    },
+                    node_selector: Some(DpuDeploymentDpusDpuSetsNodeSelector {
+                        match_expressions: None,
+                        match_labels: Some(node_labels),
+                    }),
                 }]),
-                flavor: crate::flavor::DPUFLAVOR_NAME.to_string(),
+                flavor: flavor_name,
                 node_effect: Some(DpuDeploymentDpusNodeEffect {
                     custom_action: None,
                     custom_label: None,
@@ -684,8 +829,55 @@ async fn create_services_and_deployment<
             services: services_map,
         },
         status: None,
-    };
+    }
+}
 
+#[allow(clippy::too_many_arguments)]
+async fn create_flavor_services_and_deployment<
+    R: DpuServiceTemplateRepository
+        + DpuServiceConfigurationRepository
+        + DpuDeploymentRepository
+        + DpuFlavorRepository,
+    L: ResourceLabeler,
+>(
+    repo: &R,
+    namespace: &str,
+    labeler: &L,
+    services: &[ServiceDefinition],
+    deployment_name: &str,
+    bfb_name: &str,
+    dpu_flavor_def: &Option<DpuFlavorDefinition>,
+    default_flavor_name: &str,
+) -> Result<(), DpfError> {
+    let existing_deployment =
+        DpuDeploymentRepository::get(repo, deployment_name, namespace).await?;
+
+    let flavor_name = create_dpu_flavor(
+        repo,
+        namespace,
+        dpu_flavor_def,
+        existing_deployment.map(|x| x.spec.dpus.flavor),
+        default_flavor_name,
+    )
+    .await?;
+
+    for svc in services {
+        DpuServiceTemplateRepository::apply(repo, &build_service_template(svc, namespace)).await?;
+        DpuServiceConfigurationRepository::apply(
+            repo,
+            &build_service_configuration(svc, namespace),
+        )
+        .await?;
+    }
+
+    let deployment = build_deployment(
+        services,
+        deployment_name,
+        bfb_name,
+        flavor_name,
+        namespace,
+        labeler,
+    );
     DpuDeploymentRepository::apply(repo, &deployment).await?;
     Ok(())
 }
@@ -696,7 +888,8 @@ impl<
         + DpuDeploymentRepository
         + DpuServiceTemplateRepository
         + DpuServiceConfigurationRepository
-        + K8sConfigRepository,
+        + K8sConfigRepository
+        + DpfOperatorConfigRepository,
     L: ResourceLabeler,
 > DpfSdk<R, L>
 {
@@ -712,28 +905,45 @@ impl<
         config: &InitDpfResourcesConfig,
     ) -> Result<(), DpfError> {
         let bfb_name = create_bfb(&*self.repo, &self.namespace, &config.bfb_url).await?;
-        create_dpu_flavor(&*self.repo, &self.namespace).await?;
         let services = if config.services.is_empty() {
             crate::services::default_services(&crate::services::ServiceRegistryConfig::default())
         } else {
             config.services.clone()
         };
-        create_services_and_deployment(
+        create_flavor_services_and_deployment(
             &*self.repo,
             &self.namespace,
             &self.labeler,
             &services,
             &config.deployment_name,
             &bfb_name,
+            &config.dpu_flavor,
+            &config.flavor_name,
         )
         .await?;
+
         if let Some(ref bfcfg) = config.bfcfg_template {
             let data = BTreeMap::from([("BF_CFG_TEMPLATE".to_string(), bfcfg.clone())]);
             K8sConfigRepository::apply_configmap(
                 &*self.repo,
-                "carbide-dpf-bf-cfg-template",
+                "dpf-bf-cfg-template",
                 &self.namespace,
                 data,
+            )
+            .await?;
+        } else {
+            // Use default bf.cfg. In this case, delete bfCFGTemplateConfigMap from dpfoperatorconfig
+            DpfOperatorConfigRepository::patch(
+                &*self.repo,
+                &config.deployment_name,
+                &self.namespace,
+                serde_json::json!({
+                    "spec": {
+                        "provisioningController": {
+                            "bfCFGTemplateConfigMap": null
+                        }
+                    }
+                }),
             )
             .await?;
         }
@@ -898,6 +1108,29 @@ impl<R: DpuNodeRepository, L: ResourceLabeler> DpfSdk<R, L> {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Check that a DPUNode's labels contain all entries from the current
+    /// labeler's `node_labels()`. Returns `false` when the node exists but
+    /// has stale labels (e.g. from a previous label version). Returns `true`
+    /// when the node does not exist yet.
+    pub async fn verify_node_labels(&self, node_name: &str) -> Result<bool, DpfError> {
+        let node = DpuNodeRepository::get(&*self.repo, node_name, &self.namespace).await?;
+
+        let Some(node) = node else {
+            return Ok(true);
+        };
+
+        let required_labels = self.labeler.node_labels();
+        let node_labels = node.metadata.labels.as_ref();
+
+        Ok(required_labels.iter().all(|(key, required_value)| {
+            node_labels.is_some_and(|labels| {
+                labels
+                    .get(key)
+                    .is_some_and(|node_value| node_value == required_value)
+            })
+        }))
     }
 
     /// Check if reboot is required for a DPU node.
@@ -1394,6 +1627,13 @@ mod tests {
     }
 
     #[async_trait]
+    impl crate::repository::DpfOperatorConfigRepository for SdkMock {
+        async fn patch(&self, _: &str, _: &str, _: serde_json::Value) -> Result<(), DpfError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
     impl DpuFlavorRepository for SdkMock {
         async fn get(&self, name: &str, ns: &str) -> Result<Option<DPUFlavor>, DpfError> {
             Ok(self
@@ -1752,7 +1992,7 @@ mod tests {
                 bmc_ip: None,
                 cluster: None,
                 dpu_device_name: "dpu-001".to_string(),
-                dpu_flavor: Some("carbide-dpu-flavor".to_string()),
+                dpu_flavor: Some(crate::flavor::DEFAULT_FLAVOR_NAME.to_string()),
                 dpu_node_name: "node-dpu-001".to_string(),
                 node_effect: None,
                 pci_address: None,
@@ -1889,6 +2129,13 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl crate::repository::DpfOperatorConfigRepository for SecretTrackingMock {
+        async fn patch(&self, _: &str, _: &str, _: serde_json::Value) -> Result<(), DpfError> {
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn test_refresh_writes_secret_when_password_changes() {
         let mock = SecretTrackingMock::default();
@@ -1935,8 +2182,9 @@ mod tests {
     #[tokio::test]
     async fn test_init_config_defaults() {
         let config = InitDpfResourcesConfig::default();
-        assert!(!config.bfb_url.is_empty());
-        assert_eq!(config.deployment_name, "carbide-deployment");
+        assert!(config.bfb_url.is_empty());
+        assert_eq!(config.deployment_name, "dpu-deployment");
+        assert_eq!(config.flavor_name, crate::flavor::DEFAULT_FLAVOR_NAME);
         assert!(config.services.is_empty());
     }
 
@@ -1945,12 +2193,15 @@ mod tests {
         let config = InitDpfResourcesConfig {
             bfb_url: "http://example.com/test.bfb".to_string(),
             deployment_name: "my-deployment".to_string(),
+            flavor_name: "my-flavor".to_string(),
             services: vec![],
             bfcfg_template: None,
+            dpu_flavor: None,
         };
 
         assert_eq!(config.bfb_url, "http://example.com/test.bfb");
         assert_eq!(config.deployment_name, "my-deployment");
+        assert_eq!(config.flavor_name, "my-flavor");
     }
 
     fn terminating_timestamp() -> k8s_openapi::apimachinery::pkg::apis::meta::v1::Time {
@@ -2126,7 +2377,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_dpu_flavor_fails_when_terminating() {
         let mock = SdkMock::new();
-        let flavor = crate::flavor::default_flavor(TEST_NAMESPACE);
+        let flavor =
+            crate::flavor::default_flavor(TEST_NAMESPACE, crate::flavor::DEFAULT_FLAVOR_NAME);
         let mut terminating_flavor = flavor.clone();
         terminating_flavor.metadata.deletion_timestamp = Some(terminating_timestamp());
         mock.flavors
@@ -2134,7 +2386,15 @@ mod tests {
             .unwrap()
             .insert(SdkMock::key(&terminating_flavor), terminating_flavor);
 
-        let err = create_dpu_flavor(&mock, TEST_NAMESPACE).await.unwrap_err();
+        let err = create_dpu_flavor(
+            &mock,
+            TEST_NAMESPACE,
+            &None,
+            None,
+            crate::flavor::DEFAULT_FLAVOR_NAME,
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(err, DpfError::InvalidState(_)),
             "expected InvalidState, got: {err:?}"
@@ -2144,13 +2404,22 @@ mod tests {
     #[tokio::test]
     async fn test_create_dpu_flavor_ok_when_existing_not_terminating() {
         let mock = SdkMock::new();
-        let flavor = crate::flavor::default_flavor(TEST_NAMESPACE);
+        let flavor =
+            crate::flavor::default_flavor(TEST_NAMESPACE, crate::flavor::DEFAULT_FLAVOR_NAME);
         mock.flavors
             .write()
             .unwrap()
             .insert(SdkMock::key(&flavor), flavor);
 
-        create_dpu_flavor(&mock, TEST_NAMESPACE).await.unwrap();
+        create_dpu_flavor(
+            &mock,
+            TEST_NAMESPACE,
+            &None,
+            None,
+            crate::flavor::DEFAULT_FLAVOR_NAME,
+        )
+        .await
+        .unwrap();
     }
 
     #[derive(Clone, Default)]
@@ -2258,6 +2527,190 @@ mod tests {
             mock.bfbs.read().unwrap().len(),
             1,
             "only one BFB should exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_node_labels_current_labels_returns_true() {
+        let mock = SdkMock::new();
+        let sdk = DpfSdkBuilder::new(mock.clone(), TEST_NAMESPACE, String::new())
+            .with_labeler(TestLabeler)
+            .build_without_resources()
+            .await
+            .unwrap();
+
+        let info = DpuNodeInfo {
+            node_id: "host-001".to_string(),
+            host_bmc_ip: "10.0.0.1".to_string(),
+            device_ids: vec!["dpu-001".to_string()],
+            host_machine_id: "host-aaa".to_string(),
+        };
+        sdk.register_dpu_node(info).await.unwrap();
+
+        assert!(sdk.verify_node_labels("node-host-001").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_verify_node_labels_missing_node_returns_true() {
+        let mock = SdkMock::new();
+        let sdk = DpfSdkBuilder::new(mock, TEST_NAMESPACE, String::new())
+            .with_labeler(TestLabeler)
+            .build_without_resources()
+            .await
+            .unwrap();
+
+        assert!(
+            sdk.verify_node_labels("node-does-not-exist").await.unwrap(),
+            "non-existent node should return true (will be created with current labels)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_node_labels_stale_labels_returns_false() {
+        let mock = SdkMock::new();
+
+        let stale_node = DPUNode {
+            metadata: ObjectMeta {
+                name: Some("node-host-001".to_string()),
+                namespace: Some(TEST_NAMESPACE.to_string()),
+                labels: Some(BTreeMap::from([(
+                    "old/stale-label".to_string(),
+                    "true".to_string(),
+                )])),
+                ..Default::default()
+            },
+            spec: DpuNodeSpec {
+                dpus: Some(vec![]),
+                node_dms_address: None,
+                node_reboot_method: None,
+            },
+            status: None,
+        };
+        mock.nodes
+            .write()
+            .unwrap()
+            .insert(SdkMock::key(&stale_node), stale_node);
+
+        let sdk = DpfSdkBuilder::new(mock, TEST_NAMESPACE, String::new())
+            .with_labeler(TestLabeler)
+            .build_without_resources()
+            .await
+            .unwrap();
+
+        assert!(
+            !sdk.verify_node_labels("node-host-001").await.unwrap(),
+            "node with stale labels should return false"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_node_labels_no_labels_returns_false() {
+        let mock = SdkMock::new();
+
+        let bare_node = DPUNode {
+            metadata: ObjectMeta {
+                name: Some("node-host-001".to_string()),
+                namespace: Some(TEST_NAMESPACE.to_string()),
+                labels: None,
+                ..Default::default()
+            },
+            spec: DpuNodeSpec {
+                dpus: Some(vec![]),
+                node_dms_address: None,
+                node_reboot_method: None,
+            },
+            status: None,
+        };
+        mock.nodes
+            .write()
+            .unwrap()
+            .insert(SdkMock::key(&bare_node), bare_node);
+
+        let sdk = DpfSdkBuilder::new(mock, TEST_NAMESPACE, String::new())
+            .with_labeler(TestLabeler)
+            .build_without_resources()
+            .await
+            .unwrap();
+
+        assert!(
+            !sdk.verify_node_labels("node-host-001").await.unwrap(),
+            "node with no labels should return false when labeler expects labels"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_node_labels_superset_returns_true() {
+        let mock = SdkMock::new();
+
+        let superset_node = DPUNode {
+            metadata: ObjectMeta {
+                name: Some("node-host-001".to_string()),
+                namespace: Some(TEST_NAMESPACE.to_string()),
+                labels: Some(BTreeMap::from([
+                    ("test/node".to_string(), "true".to_string()),
+                    ("extra/label".to_string(), "extra-value".to_string()),
+                ])),
+                ..Default::default()
+            },
+            spec: DpuNodeSpec {
+                dpus: Some(vec![]),
+                node_dms_address: None,
+                node_reboot_method: None,
+            },
+            status: None,
+        };
+        mock.nodes
+            .write()
+            .unwrap()
+            .insert(SdkMock::key(&superset_node), superset_node);
+
+        let sdk = DpfSdkBuilder::new(mock, TEST_NAMESPACE, String::new())
+            .with_labeler(TestLabeler)
+            .build_without_resources()
+            .await
+            .unwrap();
+
+        assert!(
+            sdk.verify_node_labels("node-host-001").await.unwrap(),
+            "node with a superset of expected labels should return true"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_node_labels_wrong_value_returns_false() {
+        let mock = SdkMock::new();
+
+        let wrong_value_node = DPUNode {
+            metadata: ObjectMeta {
+                name: Some("node-host-001".to_string()),
+                namespace: Some(TEST_NAMESPACE.to_string()),
+                labels: Some(BTreeMap::from([(
+                    "test/node".to_string(),
+                    "false".to_string(),
+                )])),
+                ..Default::default()
+            },
+            spec: DpuNodeSpec {
+                dpus: Some(vec![]),
+                node_dms_address: None,
+                node_reboot_method: None,
+            },
+            status: None,
+        };
+        mock.nodes
+            .write()
+            .unwrap()
+            .insert(SdkMock::key(&wrong_value_node), wrong_value_node);
+
+        let sdk = DpfSdkBuilder::new(mock, TEST_NAMESPACE, String::new())
+            .with_labeler(TestLabeler)
+            .build_without_resources()
+            .await
+            .unwrap();
+
+        assert!(
+            !sdk.verify_node_labels("node-host-001").await.unwrap(),
+            "node with correct key but wrong value should return false"
         );
     }
 }

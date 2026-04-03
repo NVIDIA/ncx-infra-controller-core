@@ -19,8 +19,6 @@ use std::str::FromStr;
 
 use ::rpc::forge as rpc;
 use carbide_network::ip::{IdentifyAddressFamily, IpAddressFamily};
-use carbide_uuid::machine::MachineId;
-use carbide_uuid::rack::RackId;
 use db::dhcp_entry::DhcpEntry;
 use db::{self, expected_machine, machine_interface};
 use mac_address::MacAddress;
@@ -200,19 +198,10 @@ pub async fn discover_dhcp(
                         .await?
                 {
                     // remember expected machine id for later rack update
-                    let predicted_machine_id = expected_interface.machine_id;
                     machine_interface::move_predicted_machine_interface_to_machine(
                         &mut txn,
                         &expected_interface,
                         relay_ip,
-                    )
-                    .await?;
-                    // replace predicted id saved above in rack table with actual id
-                    update_rack_config_predicted_id_with_actual(
-                        &mut txn,
-                        &parsed_mac,
-                        &predicted_machine_id,
-                        &expected_interface.machine_id,
                     )
                     .await?;
                     Some(expected_interface.machine_id)
@@ -268,6 +257,24 @@ pub async fn discover_dhcp(
     )
     .await?;
 
+    // If the interface exists but has no addresses (e.g., after a lease
+    // expiration cleaned up the allocation), re-allocate from the segment.
+    if machine_interface.addresses.is_empty() {
+        tracing::info!(
+            interface_id = %machine_interface.id,
+            %parsed_mac,
+            "Interface has no addresses, re-allocating from segment"
+        );
+        let segment = db::network_segment::for_relay(&mut txn, parsed_relay)
+            .await?
+            .ok_or_else(|| {
+                CarbideError::internal(format!(
+                    "No network segment defined for relay address: {parsed_relay}"
+                ))
+            })?;
+        db::machine_interface::allocate_addresses(&mut txn, machine_interface.id, &segment).await?;
+    }
+
     if let Some(machine_id) = machine_interface.machine_id {
         // Can't block host's DHCP handling completely to support Zero-DPU.
         if machine_id.machine_type().is_host()
@@ -316,42 +323,4 @@ pub async fn discover_dhcp(
 
     txn.commit().await?;
     Ok(Response::new(record))
-}
-
-async fn update_rack_config_predicted_id_with_actual(
-    txn: &mut PgConnection,
-    parsed_mac: &MacAddress,
-    predicted: &MachineId,
-    actual: &MachineId,
-) -> Result<(), CarbideError> {
-    // TODO: pass in a rack id query by that when we support multirack, when supported
-    let racks = db::rack::list(&mut *txn).await?;
-    let rack = match racks.is_empty() {
-        false => racks[0].clone(),
-        true => {
-            let expected_compute_trays = vec![*parsed_mac];
-            #[allow(deprecated)]
-            let rack_id: RackId = RackId::default();
-            let rack = db::rack::create(txn, &rack_id, expected_compute_trays, vec![], vec![])
-                .await
-                .map_err(CarbideError::from)?;
-            tracing::warn!(
-                "Handling DHCP response for mac {parsed_mac} but no rack was found! Create one with id {rack_id}"
-            );
-            rack
-        }
-    };
-
-    let mut config = rack.config.clone();
-    if let Some(item) = config
-        .compute_trays
-        .iter_mut()
-        .find(|item| *item == predicted)
-    {
-        *item = *actual;
-        db::rack::update(txn, &rack.id, &config)
-            .await
-            .map_err(CarbideError::from)?;
-    }
-    Ok(())
 }

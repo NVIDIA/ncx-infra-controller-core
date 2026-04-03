@@ -31,6 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ".google.protobuf.Timestamp",
             "#[derive(serde::Serialize, serde::Deserialize)]",
         )
+        .type_attribute(
+            ".forge.DeletedFilter",
+            "#[cfg_attr(feature = \"cli\", derive(clap::ValueEnum))]",
+        )
         .extern_path(".google.protobuf.Duration", "crate::Duration")
         .extern_path(".google.protobuf.Timestamp", "crate::Timestamp")
         .extern_path(".common.DomainId", "::carbide_uuid::domain::DomainId")
@@ -692,6 +696,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute(
             "forge.Rack",
+            "#[derive(serde::Deserialize,serde::Serialize)]",
+        )
+        .type_attribute(
+            "forge.RackList",
             "#[derive(serde::Deserialize,serde::Serialize)]",
         )
         .type_attribute(

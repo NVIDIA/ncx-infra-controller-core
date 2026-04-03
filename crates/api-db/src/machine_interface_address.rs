@@ -71,6 +71,27 @@ pub async fn delete(
         .map_err(|e| DatabaseError::query(query, e))
 }
 
+/// Delete the IP address allocation for the given address. Returns true if
+/// an allocation was found and deleted, false if no allocation existed.
+///
+/// Note: This intentionally does NOT delete the parent machine_interface.
+/// The interface may be associated with a machine, and deleting it would
+/// break the discovered machine linkage. We leave the interface, and let
+/// the DHCP discover flow handle re-allocating an address to any existing
+/// interface that doesn't have one (due to expiration or otherwise).
+pub async fn delete_by_address(
+    txn: &mut PgConnection,
+    address: IpAddr,
+) -> Result<bool, DatabaseError> {
+    let query = "DELETE FROM machine_interface_addresses WHERE address = $1::inet";
+    sqlx::query(query)
+        .bind(address)
+        .execute(txn)
+        .await
+        .map(|r| r.rows_affected() > 0)
+        .map_err(|e| DatabaseError::query(query, e))
+}
+
 #[derive(Debug, FromRow)]
 pub struct MachineInterfaceSearchResult {
     pub id: MachineInterfaceId,

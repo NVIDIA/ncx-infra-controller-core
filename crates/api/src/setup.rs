@@ -20,6 +20,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use db::machine::update_dpu_asns;
 use db::resource_pool::DefineResourcePoolError;
 use db::{Transaction, work_lock_manager};
@@ -44,6 +45,7 @@ use tokio::sync::oneshot::Sender;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing_log::AsLog as _;
+use utils::HostPortPair;
 
 use crate::api::Api;
 use crate::api::metrics::ApiMetricsEmitter;
@@ -55,7 +57,7 @@ use crate::firmware_downloader::FirmwareDownloader;
 use crate::handlers::machine_validation::apply_config_on_startup;
 use crate::ib::{self, IBFabricManager};
 use crate::ib_fabric_monitor::IbFabricMonitor;
-use crate::ipmitool::{IPMITool, IPMIToolImpl, IPMIToolTestImpl};
+use crate::ipmitool::{IPMITool, IPMIToolHttpImpl, IPMIToolImpl, IPMIToolTestImpl};
 use crate::listener::ApiListenMode;
 use crate::logging::log_limiter::LogLimiter;
 use crate::logging::service_health_metrics::{
@@ -159,22 +161,26 @@ pub fn parse_carbide_config(
 pub fn create_ipmi_tool(
     credential_reader: Arc<dyn CredentialReader>,
     carbide_config: &CarbideConfig,
+    bmc_proxy: Arc<ArcSwap<Option<HostPortPair>>>,
 ) -> Arc<dyn IPMITool> {
-    if carbide_config
-        .dpu_ipmi_tool_impl
-        .as_ref()
-        .is_some_and(|tool| tool == "test")
-    {
-        tracing::trace!("Disabling ipmitool");
-        Arc::new(IPMIToolTestImpl {})
-    } else {
-        Arc::new(IPMIToolImpl::new(
-            credential_reader,
-            &carbide_config.dpu_ipmi_reboot_attempts,
-        ))
+    match carbide_config.dpu_ipmi_tool_impl.as_deref() {
+        Some("test") => {
+            tracing::info!("Disabling ipmitool");
+            Arc::new(IPMIToolTestImpl {})
+        }
+        Some("bmc-mock") => {
+            tracing::info!("Using HTTP IPMI transport via bmc_proxy");
+            Arc::new(IPMIToolHttpImpl::new(bmc_proxy))
+        }
+        _ => {
+            tracing::info!("Using lanplus IPMI transport (/usr/bin/ipmitool)");
+            Arc::new(IPMIToolImpl::new(
+                credential_reader,
+                &carbide_config.dpu_ipmi_reboot_attempts,
+            ))
+        }
     }
 }
-
 /// Configure and create a postgres connection pool
 ///
 /// This connects to the database to verify settings
@@ -215,7 +221,11 @@ pub async fn start_api(
     cancel_token: CancellationToken,
     ready_channel: Sender<()>,
 ) -> eyre::Result<()> {
-    let ipmi_tool = create_ipmi_tool(credential_manager.clone(), &carbide_config);
+    let ipmi_tool = create_ipmi_tool(
+        credential_manager.clone(),
+        &carbide_config,
+        dynamic_settings.bmc_proxy.clone(),
+    );
 
     let db_pool = create_and_connect_postgres_pool(&carbide_config).await?;
 
@@ -378,30 +388,59 @@ pub async fn start_api(
         let provider = crate::dpf::CarbideBmcPasswordProvider::new(credential_manager.clone());
 
         let services = vec![carbide_dpf::services::dts_service(
-            &carbide_dpf::ServiceRegistryConfig::default(),
+            &carbide_dpf::services::ServiceRegistryConfig::default(),
         )];
 
-        let rendered_bfcfg = crate::dpf::render_bfcfg(&carbide_config)?;
+        let bfcfg_template = if carbide_config.dpf.bfcfg_enabled {
+            Some(crate::dpf::render_bfcfg(&carbide_config)?)
+        } else {
+            None
+        };
 
-        let bfb_url = if carbide_config.dpf.bfb_url.is_empty() {
+        let bfb_url = if carbide_config.dpf.v2 && carbide_config.dpf.bfb_url.is_empty() {
+            // This should move to cfg/file as a default value once v2 is the only mode.
+            "https://content.mellanox.com/BlueField/BFBs/Ubuntu22.04/bf-bundle-3.2.0-113_25.10_ubuntu-22.04_prod.bfb".to_string()
+        } else if carbide_config.dpf.bfb_url.is_empty() {
             crate::dpf::resolve_bfb_url().await?
         } else {
             carbide_config.dpf.bfb_url.clone()
         };
 
+        // This is just temparary code until we make v2 only option. (just 2 weeks)
+        // Soon v2 flag will be removed and will become only mode for dpf handling.
+        let v2_str = if carbide_config.dpf.v2 { "-v2" } else { "" };
         let init_config = carbide_dpf::InitDpfResourcesConfig {
             bfb_url,
-            deployment_name: carbide_config
-                .dpf
-                .deployment_name
-                .clone()
-                .unwrap_or_else(|| "carbide-deployment".to_string()),
-            services,
-            bfcfg_template: Some(rendered_bfcfg),
+            flavor_name: carbide_config.dpf.flavor_name.clone(),
+            deployment_name: format!("{}{}", carbide_config.dpf.deployment_name.clone(), v2_str),
+            services: if carbide_config.dpf.v2 {
+                // Enable all the services.
+                Vec::new()
+            } else {
+                services
+            },
+            bfcfg_template: if carbide_config.dpf.v2 {
+                // We use default bf.cfg.
+                None
+            } else {
+                bfcfg_template
+            },
+            dpu_flavor: if carbide_config.dpf.v2 {
+                Some((*carbide_config).clone().into())
+            } else {
+                None
+            },
         };
 
         let sdk = carbide_dpf::DpfSdkBuilder::new(repo, carbide_dpf::NAMESPACE, provider)
-            .with_labeler(crate::dpf::CarbideDPFLabeler)
+            .with_labeler(crate::dpf::CarbideDPFLabeler::new(
+                if carbide_config.dpf.v2 {
+                    // This will be removed and moved to config file when v1 code is deleted.
+                    "carbide.nvidia.com/controlled.node.v2".to_string()
+                } else {
+                    carbide_config.dpf.node_label_key.clone()
+                },
+            ))
             .with_bmc_password_refresh_interval(std::time::Duration::from_secs(60))
             .with_join_set(join_set)
             .initialize(&init_config)
@@ -523,6 +562,7 @@ pub async fn initialize_and_start_controllers(
         work_lock_manager_handle,
         rms_client,
         dpf_sdk,
+        credential_manager,
         ..
     } = api_service.as_ref();
     // As soon as we get the database up, observe this version of forge so that we know when it was
@@ -735,6 +775,7 @@ pub async fn initialize_and_start_controllers(
         site_config: carbide_config.clone(),
         dpa_info,
         rms_client: rms_client.clone(),
+        credential_manager: credential_manager.clone(),
     });
 
     // Use the hostname as cluster-wide state controller ID

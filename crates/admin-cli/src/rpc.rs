@@ -38,7 +38,9 @@ use carbide_uuid::instance::InstanceId;
 use carbide_uuid::machine::{MachineId, MachineInterfaceId};
 use carbide_uuid::network::NetworkSegmentId;
 use carbide_uuid::nvlink::{NvLinkLogicalPartitionId, NvLinkPartitionId};
+use carbide_uuid::power_shelf::PowerShelfId;
 use carbide_uuid::rack::RackId;
+use carbide_uuid::switch::SwitchId;
 use carbide_uuid::vpc::VpcId;
 use mac_address::MacAddress;
 
@@ -75,16 +77,7 @@ impl ApiClient {
             return Err(CarbideCliError::MachineNotFound(id));
         }
 
-        let mut machine_details = machines.machines.remove(0);
-
-        // Note: The field going forward is `associated_dpu_machine_ids`, but if we're talking to
-        // an older version of the API which doesn't support it, fall back on building our own Vec
-        // out of the `associated_dpu_machine_id` field.
-        if machine_details.associated_dpu_machine_ids.is_empty()
-            && let Some(ref dpu_id) = machine_details.associated_dpu_machine_id
-        {
-            machine_details.associated_dpu_machine_ids = vec![*dpu_id];
-        }
+        let machine_details = machines.machines.remove(0);
 
         Ok(machine_details)
     }
@@ -259,6 +252,97 @@ impl ApiClient {
             },
         };
         Ok(self.0.find_instance_ids(request).await?)
+    }
+
+    pub async fn get_all_racks(&self, page_size: usize) -> CarbideCliResult<rpc::RackList> {
+        let all_ids = self.get_rack_ids().await?;
+        let mut all_list = rpc::RackList {
+            racks: Vec::with_capacity(all_ids.rack_ids.len()),
+        };
+
+        for ids in all_ids.rack_ids.chunks(page_size) {
+            let list = self.0.find_racks_by_ids(ids.to_vec()).await?;
+            all_list.racks.extend(list.racks);
+        }
+
+        Ok(all_list)
+    }
+
+    pub async fn get_one_rack(&self, rack_id: RackId) -> CarbideCliResult<rpc::RackList> {
+        let racks = self.0.find_racks_by_ids(vec![rack_id]).await?;
+
+        Ok(racks)
+    }
+
+    async fn get_rack_ids(&self) -> CarbideCliResult<rpc::RackIdList> {
+        Ok(self.0.find_rack_ids().await?)
+    }
+
+    pub async fn get_all_switches(
+        &self,
+        filter: rpc::SwitchSearchFilter,
+        page_size: usize,
+    ) -> CarbideCliResult<rpc::SwitchList> {
+        let all_ids = self.0.find_switch_ids(filter).await?;
+        let mut all_list = rpc::SwitchList {
+            switches: Vec::with_capacity(all_ids.ids.len()),
+        };
+
+        for ids in all_ids.ids.chunks(page_size) {
+            let list = self
+                .0
+                .find_switches_by_ids(rpc::SwitchesByIdsRequest {
+                    switch_ids: ids.to_vec(),
+                })
+                .await?;
+            all_list.switches.extend(list.switches);
+        }
+
+        Ok(all_list)
+    }
+
+    pub async fn get_one_switch(&self, switch_id: SwitchId) -> CarbideCliResult<rpc::SwitchList> {
+        Ok(self
+            .0
+            .find_switches_by_ids(rpc::SwitchesByIdsRequest {
+                switch_ids: vec![switch_id],
+            })
+            .await?)
+    }
+
+    pub async fn get_all_power_shelves(
+        &self,
+        filter: rpc::PowerShelfSearchFilter,
+        page_size: usize,
+    ) -> CarbideCliResult<rpc::PowerShelfList> {
+        let all_ids = self.0.find_power_shelf_ids(filter).await?;
+        let mut all_list = rpc::PowerShelfList {
+            power_shelves: Vec::with_capacity(all_ids.ids.len()),
+        };
+
+        for ids in all_ids.ids.chunks(page_size) {
+            let list = self
+                .0
+                .find_power_shelves_by_ids(rpc::PowerShelvesByIdsRequest {
+                    power_shelf_ids: ids.to_vec(),
+                })
+                .await?;
+            all_list.power_shelves.extend(list.power_shelves);
+        }
+
+        Ok(all_list)
+    }
+
+    pub async fn get_one_power_shelf(
+        &self,
+        power_shelf_id: PowerShelfId,
+    ) -> CarbideCliResult<rpc::PowerShelfList> {
+        Ok(self
+            .0
+            .find_power_shelves_by_ids(rpc::PowerShelvesByIdsRequest {
+                power_shelf_ids: vec![power_shelf_id],
+            })
+            .await?)
     }
 
     pub async fn get_all_segments(
@@ -550,7 +634,6 @@ impl ApiClient {
 
         Ok(self.0.update_expected_machine(request).await?)
     }
-
     pub async fn replace_all_expected_machines(
         &self,
         expected_machine_list: Vec<ExpectedMachineJson>,
@@ -621,6 +704,11 @@ impl ApiClient {
                     bmc_username: switch.bmc_username,
                     bmc_password: switch.bmc_password,
                     switch_serial_number: switch.switch_serial_number,
+                    nvos_mac_addresses: switch
+                        .nvos_mac_addresses
+                        .iter()
+                        .map(|m| m.to_string())
+                        .collect(),
                     nvos_username: switch.nvos_username,
                     nvos_password: switch.nvos_password,
                     metadata: switch.metadata,
@@ -722,7 +810,7 @@ impl ApiClient {
                 tenant_organization_id: "devenv_test_org".to_string(),
                 tenant_keyset_id: None,
                 network_virtualization_type: Some(
-                    VpcVirtualizationType::EthernetVirtualizerWithNvue.into(),
+                    VpcVirtualizationType::EthernetVirtualizer.into(),
                 ),
                 id: Some(vpc_id),
                 metadata: Some(rpc::Metadata {
@@ -1492,6 +1580,48 @@ impl ApiClient {
             metadata: Some(metadata),
         };
         Ok(self.0.update_machine_metadata(request).await?)
+    }
+
+    pub async fn update_rack_metadata(
+        &self,
+        rack_id: RackId,
+        metadata: ::rpc::forge::Metadata,
+        current_version: String,
+    ) -> CarbideCliResult<()> {
+        let request = ::rpc::forge::RackMetadataUpdateRequest {
+            rack_id: Some(rack_id),
+            if_version_match: Some(current_version),
+            metadata: Some(metadata),
+        };
+        Ok(self.0.update_rack_metadata(request).await?)
+    }
+
+    pub async fn update_switch_metadata(
+        &self,
+        switch_id: SwitchId,
+        metadata: ::rpc::forge::Metadata,
+        current_version: String,
+    ) -> CarbideCliResult<()> {
+        let request = ::rpc::forge::SwitchMetadataUpdateRequest {
+            switch_id: Some(switch_id),
+            if_version_match: Some(current_version),
+            metadata: Some(metadata),
+        };
+        Ok(self.0.update_switch_metadata(request).await?)
+    }
+
+    pub async fn update_power_shelf_metadata(
+        &self,
+        power_shelf_id: PowerShelfId,
+        metadata: ::rpc::forge::Metadata,
+        current_version: String,
+    ) -> CarbideCliResult<()> {
+        let request = ::rpc::forge::PowerShelfMetadataUpdateRequest {
+            power_shelf_id: Some(power_shelf_id),
+            if_version_match: Some(current_version),
+            metadata: Some(metadata),
+        };
+        Ok(self.0.update_power_shelf_metadata(request).await?)
     }
 
     pub async fn get_single_network_security_group(

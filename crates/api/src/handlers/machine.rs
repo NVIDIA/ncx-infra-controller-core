@@ -158,7 +158,7 @@ pub(crate) async fn find_machine_state_histories(
 pub(crate) async fn find_machine_health_histories(
     api: &Api,
     request: Request<rpc::MachineHealthHistoriesRequest>,
-) -> Result<Response<rpc::MachineHealthHistories>, Status> {
+) -> Result<Response<rpc::HealthHistories>, Status> {
     log_request_data(&request);
     let request = request.into_inner();
 
@@ -176,15 +176,34 @@ pub(crate) async fn find_machine_health_histories(
         );
     }
 
+    // Convert protobuf timestamps to chrono DateTime
+    let start_time = request
+        .start_time
+        .map(chrono::DateTime::<chrono::Utc>::try_from)
+        .transpose()
+        .map_err(|_| CarbideError::InvalidArgument("Invalid start_time timestamp".to_string()))?;
+    let end_time = request
+        .end_time
+        .map(chrono::DateTime::<chrono::Utc>::try_from)
+        .transpose()
+        .map_err(|_| CarbideError::InvalidArgument("Invalid end_time timestamp".to_string()))?;
+
     let mut txn = api.txn_begin().await?;
 
-    let results = db::machine_health_history::find_by_machine_ids(&mut txn, &machine_ids).await?;
+    let results = db::health_history::find_by_object_ids(
+        &mut txn,
+        db::health_history::HealthHistoryTableId::Machine,
+        &machine_ids,
+        start_time,
+        end_time,
+    )
+    .await?;
 
-    let mut response = rpc::MachineHealthHistories::default();
+    let mut response = rpc::HealthHistories::default();
     for (machine_id, records) in results {
         response.histories.insert(
             machine_id.to_string(),
-            ::rpc::forge::MachineHealthHistoryRecords {
+            ::rpc::forge::HealthHistoryRecords {
                 records: records.into_iter().map(Into::into).collect(),
             },
         );

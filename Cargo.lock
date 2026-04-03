@@ -1710,6 +1710,7 @@ dependencies = [
  "dns-record",
  "eyre",
  "local-ip-address",
+ "metrics-endpoint",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -2441,6 +2442,7 @@ dependencies = [
  "eyre",
  "humantime",
  "ipnetwork",
+ "itertools 0.14.0",
  "prettytable-rs",
  "serde",
  "serde_json",
@@ -5642,7 +5644,7 @@ dependencies = [
 [[package]]
 name = "libredfish"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.43.4#f9a4e74865a87549e22ac8173413c36343f4f234"
+source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.43.5#add240967b48f7781fead48b8e3b223acbbc96d3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6505,9 +6507,9 @@ dependencies = [
 
 [[package]]
 name = "nv-redfish"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db5970e33464c565d44c838e0ac21d885cea9b63cc14dafe6d64572157622f8f"
+checksum = "26c9cc7e5fc69e068dbea45368f18494ee6dbba0f324a741622cf84d02957c03"
 dependencies = [
  "futures-core",
  "futures-util",
@@ -6521,9 +6523,9 @@ dependencies = [
 
 [[package]]
 name = "nv-redfish-bmc-http"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dedd265e52e13a911bd811ca8827bfb2a5bc50782ed960165814df09b292054"
+checksum = "3a1d599f8b7c1d913a62ef51183255a0f42e24b4770901bd853f5cad5d043e62"
 dependencies = [
  "futures-core",
  "futures-util",
@@ -6541,9 +6543,9 @@ dependencies = [
 
 [[package]]
 name = "nv-redfish-core"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7cc7929b380dbab4b6f72f13d673a38645c4ae0532c9b9d5a9457fc242046e4"
+checksum = "d3f28ca2cfecf4e0a6cf5865d84feb22e8ff3fcbc0f021a98486baa1f0fc542f"
 dependencies = [
  "futures-core",
  "rust_decimal",
@@ -6555,9 +6557,9 @@ dependencies = [
 
 [[package]]
 name = "nv-redfish-csdl-compiler"
-version = "0.4.1"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fa5e1eb9a9f67bf5702aac2ce10528844212e4bb40e1cb03f3692ac553604b9"
+checksum = "511b072f3cc1b419b294fc1e40e6a36c889f94bf2c52967d03aebe3c3483bcdf"
 dependencies = [
  "clap",
  "clap_derive",
@@ -7327,6 +7329,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
 dependencies = [
  "portable-atomic",
+]
+
+[[package]]
+name = "postgres-smoke-test"
+version = "0.0.0"
+dependencies = [
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]
