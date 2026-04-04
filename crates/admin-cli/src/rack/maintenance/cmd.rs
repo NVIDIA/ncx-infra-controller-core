@@ -15,29 +15,23 @@
  * limitations under the License.
  */
 
-mod delete;
-mod list;
-mod maintenance;
-pub mod metadata;
-mod show;
+use ::rpc::admin_cli::CarbideCliResult;
 
-#[cfg(test)]
-mod tests;
+use super::args::MaintenanceOptions;
+use crate::rpc::ApiClient;
 
-use clap::Parser;
-
-use crate::cfg::dispatch::Dispatch;
-
-#[derive(Parser, Debug, Dispatch)]
-pub enum Cmd {
-    #[clap(about = "Show rack information")]
-    Show(show::Args),
-    #[clap(about = "List all racks")]
-    List(list::Args),
-    #[clap(about = "Delete the rack")]
-    Delete(delete::Args),
-    #[clap(subcommand, about = "Edit Metadata associated with a Rack")]
-    Metadata(metadata::Args),
-    #[clap(subcommand, about = "On-demand rack maintenance")]
-    Maintenance(maintenance::Args),
+pub async fn on_demand_rack_maintenance(
+    api_client: &ApiClient,
+    args: MaintenanceOptions,
+) -> CarbideCliResult<()> {
+    api_client
+        .on_demand_rack_maintenance(
+            args.rack,
+            args.machine_ids.unwrap_or_default(),
+            args.switch_ids.unwrap_or_default(),
+            args.power_shelf_ids.unwrap_or_default(),
+        )
+        .await?;
+    println!("On-demand rack maintenance scheduled successfully.");
+    Ok(())
 }
