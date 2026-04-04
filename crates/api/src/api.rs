@@ -2240,6 +2240,13 @@ impl Forge for Api {
         crate::handlers::redfish::redfish_cancel_action(self, request).await
     }
 
+    async fn redfish_proxy(
+        &self,
+        request: Request<rpc::RedfishProxyRequest>,
+    ) -> Result<Response<rpc::RedfishProxyResponse>, Status> {
+        crate::handlers::redfish::redfish_proxy(self, request).await
+    }
+
     async fn ufm_browse(
         &self,
         request: Request<rpc::UfmBrowseRequest>,

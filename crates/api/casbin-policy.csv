@@ -33,6 +33,10 @@ p, carbide-dns, forge/LookupRecord
 # FIXME: This should be removed once we have more fine-grained rule coverage.
 p, trusted-certificate, forge/*
 
+# Allow the power-provisioning-agent to call the Redfish proxy.
+g, spiffe-service-id/power-provisioning-agent, power-provisioning-agent
+p, power-provisioning-agent, forge/RedfishProxy
+
 # Anonymous access to endpoints that don't modify state or expose any customer
 # or site data should be fine.
 p, anonymous, forge/Version
