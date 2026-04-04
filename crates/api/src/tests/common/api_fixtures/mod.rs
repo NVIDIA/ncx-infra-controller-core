@@ -1210,7 +1210,11 @@ pub fn get_config() -> CarbideConfig {
             enabled: true,
             nras_config: Some(nras::Config::default()),
         },
-        machine_identity: crate::cfg::file::MachineIdentityConfig::default(),
+        machine_identity: crate::cfg::file::MachineIdentityConfig {
+            enabled: true,
+            current_encryption_key_id: Some("test".to_string()),
+            ..Default::default()
+        },
         dsx_exchange_event_bus: None,
         force_dpu_nic_mode: Arc::new(false.into()),
         dpf: crate::cfg::file::DpfConfig::default(),
@@ -1902,6 +1906,12 @@ pub async fn populate_network_security_groups(api: Arc<Api>) {
 }
 
 fn test_static_credential_snapshot() -> CredentialSnapshot {
+    use std::collections::HashMap;
+
+    use base64::Engine;
+    let test_key_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+    let mut encryption_keys = HashMap::new();
+    encryption_keys.insert("test".to_string(), test_key_b64);
     CredentialSnapshot {
         dpu_redfish_factory_default: Some(UsernamePassword {
             username: "root".to_string(),
@@ -1915,6 +1925,7 @@ fn test_static_credential_snapshot() -> CredentialSnapshot {
             username: "root".to_string(),
             password: "hostredfish_sitedefault".to_string(),
         }),
+        machine_identity: Some(forge_secrets::MachineIdentityConfig { encryption_keys }),
         ..Default::default()
     }
 }
