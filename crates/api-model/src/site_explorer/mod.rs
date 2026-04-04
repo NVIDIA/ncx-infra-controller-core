@@ -372,6 +372,21 @@ pub enum PreingestionState {
     Initial,
     RecheckVersions,
     ScriptRunning,
+    BfbRecoveryNeeded {
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        host_bmc_ip: Option<IpAddr>,
+    },
+    BfbWaitingForPlatformPowercycle {
+        host_bmc_ip: IpAddr,
+        phase: BfbPlatformPowercyclePhase,
+    },
+    BfbCopyInProgress {
+        started_at: DateTime<Utc>,
+    },
+    BfbInstallationWait {
+        started_at: DateTime<Utc>,
+    },
     InitialReset {
         phase: InitialResetPhase,
         last_time: DateTime<Utc>,
@@ -406,6 +421,14 @@ pub enum PreingestionState {
         reason: String,
     },
     Complete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BfbPlatformPowercyclePhase {
+    PowerOff,
+    PowerOn,
+    WaitingForDpuBmc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
