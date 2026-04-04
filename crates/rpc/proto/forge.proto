@@ -1983,6 +1983,7 @@ message ExpectedSwitch {
   // Unique identifier for the expected switch. When omitted, server generates one.
   optional common.UUID expected_switch_id = 9;
   repeated string nvos_mac_addresses = 10;
+  string bmc_ip_address = 11;
 }
 
 message ExpectedSwitchRequest {

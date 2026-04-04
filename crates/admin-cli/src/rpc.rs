@@ -711,6 +711,10 @@ impl ApiClient {
                         .collect(),
                     nvos_username: switch.nvos_username,
                     nvos_password: switch.nvos_password,
+                    bmc_ip_address: switch
+                        .bmc_ip_address
+                        .map(|ip| ip.to_string())
+                        .unwrap_or_default(),
                     metadata: switch.metadata,
                     rack_id: switch.rack_id,
                 })

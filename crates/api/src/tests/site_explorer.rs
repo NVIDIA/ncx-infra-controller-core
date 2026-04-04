@@ -2955,6 +2955,7 @@ async fn test_site_explorer_switch_discovery(
         bmc_password: bmc_password.clone(),
         nvos_username: None,
         nvos_password: None,
+        bmc_ip_address: None,
         metadata: Metadata {
             name: format!("Test Switch {}", serial_number),
             description: format!("A test switch with serial {}", serial_number),
