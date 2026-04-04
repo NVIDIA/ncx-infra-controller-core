@@ -30,6 +30,7 @@ pub mod measured_boot;
 pub mod network;
 pub mod network_security_group;
 pub mod nvlink;
+pub mod operating_system;
 pub mod power_shelf;
 pub mod rack;
 pub mod switch;

@@ -384,6 +384,22 @@ impl InternalRBACRules {
         x.perm("ListOsImage", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("GetOsImage", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("UpdateOsImage", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("CreateOperatingSystem", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("GetOperatingSystem", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("UpdateOperatingSystem", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("DeleteOperatingSystem", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("FindOperatingSystemIds", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("FindOperatingSystemsByIds", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm(
+            "GetOperatingSystemCachableIpxeScriptArtifacts",
+            vec![ForgeAdminCLI],
+        );
+        x.perm(
+            "UpdateOperatingSystemCachableIpxeScriptArtifacts",
+            vec![ForgeAdminCLI],
+        );
+        x.perm("GetIpxeScriptTemplate", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("ListIpxeScriptTemplates", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("CreateRackFirmware", vec![ForgeAdminCLI]);
         x.perm("DeleteRackFirmware", vec![ForgeAdminCLI]);
         x.perm("FindRackStateHistories", vec![ForgeAdminCLI, Machineatron]);
