@@ -817,6 +817,9 @@ pub struct Machine {
 
     /// Rack-level firmware upgrade status, updated by the rack state machine.
     pub rack_fw_details: Option<RackFirmwareUpgradeStatus>,
+
+    /// Physical location of the machine
+    pub location: Option<String>,
 }
 
 // Dpf status field.
@@ -1219,6 +1222,7 @@ impl From<Machine> for rpc::forge::Machine {
             nvlink_status_observation: machine
                 .nvlink_status_observation
                 .map(|status| status.into()),
+            location: machine.location,
         }
     }
 }

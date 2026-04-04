@@ -78,7 +78,7 @@ pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseR
     };
 
     let query = sqlx::query_as::<_, SwitchId>(
-        "INSERT INTO switches (id, name, config, controller_state, controller_state_version, bmc_mac_address, description, labels, version, rack_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10) RETURNING id",
+        "INSERT INTO switches (id, name, config, controller_state, controller_state_version, bmc_mac_address, description, labels, version, rack_id, location) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11) RETURNING id",
     );
     let id = query
         .bind(new_switch.id)
@@ -91,6 +91,7 @@ pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseR
         .bind(sqlx::types::Json(&metadata.labels))
         .bind(version)
         .bind(&new_switch.rack_id)
+        .bind(&new_switch.location)
         .fetch_one(txn)
         .await
         .map_err(|e| DatabaseError::new("create switch", e))?;
@@ -111,6 +112,7 @@ pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseR
         metadata,
         version,
         rack_id: new_switch.rack_id.clone(),
+        location: new_switch.location.clone(),
     })
 }
 

@@ -41,6 +41,7 @@ pub struct NewPowerShelf {
     pub config: PowerShelfConfig,
     pub metadata: Option<Metadata>,
     pub rack_id: Option<RackId>,
+    pub location: Option<String>,
 }
 
 impl TryFrom<rpc::PowerShelfCreationRequest> for NewPowerShelf {
@@ -57,11 +58,14 @@ impl TryFrom<rpc::PowerShelfCreationRequest> for NewPowerShelf {
 
         let id = value.id.unwrap_or_else(|| uuid::Uuid::new_v4().into());
 
+        let config = PowerShelfConfig::try_from(conf)?;
+
         Ok(NewPowerShelf {
             id,
-            config: PowerShelfConfig::try_from(conf)?,
+            config,
             metadata: None,
             rack_id: None,
+            location: value.location,
         })
     }
 }
@@ -69,9 +73,8 @@ impl TryFrom<rpc::PowerShelfCreationRequest> for NewPowerShelf {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PowerShelfConfig {
     pub name: String,
-    pub capacity: Option<u32>,    // Power capacity in watts
-    pub voltage: Option<u32>,     // Voltage in volts
-    pub location: Option<String>, // Physical location
+    pub capacity: Option<u32>, // Power capacity in watts
+    pub voltage: Option<u32>,  // Voltage in volts
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +105,7 @@ pub struct PowerShelf {
     // pub updated: DateTime<Utc>,
     pub metadata: Metadata,
     pub version: ConfigVersion,
+    pub location: Option<String>,
 }
 
 impl<'r> FromRow<'r, PgRow> for PowerShelf {
@@ -132,6 +136,7 @@ impl<'r> FromRow<'r, PgRow> for PowerShelf {
             metadata,
             version: row.try_get("version")?,
             rack_id: row.try_get("rack_id").ok().flatten(),
+            location: row.try_get("location").ok().flatten(),
         })
     }
 }
@@ -144,7 +149,6 @@ impl TryFrom<rpc::PowerShelfConfig> for PowerShelfConfig {
             name: conf.name,
             capacity: conf.capacity.map(|c| c as u32),
             voltage: conf.voltage.map(|v| v as u32),
-            location: conf.location,
         })
     }
 }
@@ -179,11 +183,11 @@ impl TryFrom<PowerShelf> for rpc::PowerShelf {
             },
         });
 
+        let location = src.location;
         let config = rpc::PowerShelfConfig {
             name: src.config.name,
             capacity: src.config.capacity.map(|c| c as i32),
             voltage: src.config.voltage.map(|v| v as i32),
-            location: src.config.location,
         };
 
         let deleted = if src.deleted.is_some() {
@@ -202,6 +206,7 @@ impl TryFrom<PowerShelf> for rpc::PowerShelf {
             version: src.version.version_string(),
             bmc_info: None,
             state_version,
+            location,
         })
     }
 }

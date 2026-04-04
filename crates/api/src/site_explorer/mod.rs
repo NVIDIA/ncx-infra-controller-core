@@ -701,9 +701,6 @@ impl SiteExplorer {
         let power_shelf_serial = expected_shelf.metadata.name.as_str();
         let power_shelf_vendor = "NVIDIA"; // Default vendor for power shelves
         let power_shelf_model = "PowerShelf"; // Default model identifier
-        // TODO: Fetch power shelf location from chassis metadata or configuration
-        // NOTE: Metadata does not have a 'location' field, so use a default for now.
-
         let power_shelf_id = match model::power_shelf::power_shelf_id::from_hardware_info(
             power_shelf_serial,
             power_shelf_vendor,
@@ -724,11 +721,11 @@ impl SiteExplorer {
             name: expected_shelf.metadata.name.clone(),
             capacity: Some(100),
             voltage: Some(240),
-            location: Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string()),
         };
 
         let new_power_shelf = NewPowerShelf {
             id: power_shelf_id,
+            location: Some("RMS TO fix this".to_string()),
             config,
             metadata: Some(expected_shelf.metadata.clone()),
             rack_id: expected_shelf.rack_id.clone(),

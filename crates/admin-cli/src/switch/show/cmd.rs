@@ -60,11 +60,7 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                     .map(|m| m.name.as_str())
                     .unwrap_or("N/A");
 
-                let location = switch
-                    .config
-                    .as_ref()
-                    .and_then(|config| config.location.as_deref())
-                    .unwrap_or("N/A");
+                let location = switch.location.as_deref().unwrap_or("N/A");
 
                 let power_state = switch
                     .status
@@ -130,11 +126,7 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                     .map(|m| m.name.as_str())
                     .unwrap_or("N/A");
 
-                let location = switch
-                    .config
-                    .as_ref()
-                    .and_then(|config| config.location.as_deref())
-                    .unwrap_or("N/A");
+                let location = switch.location.as_deref().unwrap_or("N/A");
 
                 let power_state = switch
                     .status

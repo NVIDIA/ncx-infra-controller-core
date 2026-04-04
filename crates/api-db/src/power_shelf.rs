@@ -82,7 +82,7 @@ pub async fn create(
     };
 
     let query = sqlx::query_as::<_, PowerShelfId>(
-        "INSERT INTO power_shelves (id, name, config, controller_state, controller_state_version, description, labels, version, rack_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+        "INSERT INTO power_shelves (id, name, config, controller_state, controller_state_version, description, labels, version, rack_id, location) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
     );
     let _: PowerShelfId = query
         .bind(new_power_shelf.id)
@@ -94,6 +94,7 @@ pub async fn create(
         .bind(sqlx::types::Json(&metadata.labels))
         .bind(version)
         .bind(&new_power_shelf.rack_id)
+        .bind(&new_power_shelf.location)
         .fetch_one(txn)
         .await
         .map_err(|e| DatabaseError::new("create power_shelf", e))?;
@@ -111,6 +112,7 @@ pub async fn create(
         metadata,
         version,
         rack_id: new_power_shelf.rack_id.clone(),
+        location: new_power_shelf.location.clone(),
     })
 }
 

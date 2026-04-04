@@ -42,6 +42,7 @@ pub struct NewSwitch {
     pub bmc_mac_address: Option<MacAddress>,
     pub metadata: Option<Metadata>,
     pub rack_id: Option<RackId>,
+    pub location: Option<String>,
 }
 
 impl TryFrom<rpc::SwitchCreationRequest> for NewSwitch {
@@ -71,12 +72,15 @@ impl TryFrom<rpc::SwitchCreationRequest> for NewSwitch {
             None => uuid::Uuid::new_v4().into(),
         };
 
+        let config = SwitchConfig::try_from(conf)?;
+
         Ok(NewSwitch {
             id,
-            config: SwitchConfig::try_from(conf)?,
+            config,
             bmc_mac_address: None,
             metadata: None,
             rack_id: None,
+            location: value.location,
         })
     }
 }
@@ -86,7 +90,6 @@ pub struct SwitchConfig {
     pub name: String,
     pub enable_nmxc: bool,
     pub fabric_manager_config: Option<FabricManagerConfig>,
-    pub location: Option<String>, // Physical location
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -140,6 +143,7 @@ pub struct Switch {
     // pub updated: DateTime<Utc>,
     pub metadata: Metadata,
     pub version: ConfigVersion,
+    pub location: Option<String>,
 }
 
 impl<'r> FromRow<'r, PgRow> for Switch {
@@ -177,6 +181,7 @@ impl<'r> FromRow<'r, PgRow> for Switch {
             metadata,
             version: row.try_get("version")?,
             rack_id: row.try_get("rack_id").ok().flatten(),
+            location: row.try_get("location").ok().flatten(),
         })
     }
 }
@@ -191,7 +196,6 @@ impl TryFrom<rpc::SwitchConfig> for SwitchConfig {
             fabric_manager_config: Some(FabricManagerConfig {
                 config_map: conf.fabric_manager_config.unwrap_or_default().config_map,
             }),
-            location: conf.location,
         })
     }
 }
@@ -222,6 +226,7 @@ impl TryFrom<Switch> for rpc::Switch {
             },
         });
 
+        let location = src.location;
         let config = rpc::SwitchConfig {
             name: src.config.name,
             fabric_manager_config: Some(rpc::FabricManagerConfig {
@@ -232,7 +237,6 @@ impl TryFrom<Switch> for rpc::Switch {
                     .config_map,
             }),
             enable_nmxc: src.config.enable_nmxc,
-            location: src.config.location,
         };
 
         let deleted = if src.deleted.is_some() {
@@ -251,6 +255,7 @@ impl TryFrom<Switch> for rpc::Switch {
             state_version,
             metadata: Some(src.metadata.into()),
             version: src.version.version_string(),
+            location,
         })
     }
 }
@@ -416,7 +421,6 @@ mod tests {
                 name: "test-switch".to_string(),
                 enable_nmxc: false,
                 fabric_manager_config: None,
-                location: Some("test-location".to_string()),
             },
             status: Some(SwitchStatus {
                 switch_name: "test-switch".to_string(),
@@ -437,6 +441,7 @@ mod tests {
             metadata: Metadata::default(),
             version: ConfigVersion::initial(),
             rack_id: None,
+            location: Some("test-location".to_string()),
         };
 
         let rpc_switch: rpc::Switch = switch.try_into().unwrap();
@@ -458,7 +463,6 @@ mod tests {
                 name: "test-switch".to_string(),
                 enable_nmxc: false,
                 fabric_manager_config: None,
-                location: None,
             },
             status: None,
             deleted: None,
@@ -476,6 +480,7 @@ mod tests {
             metadata: Metadata::default(),
             version: ConfigVersion::initial(),
             rack_id: None,
+            location: None,
         };
 
         let rpc_switch: rpc::Switch = switch.try_into().unwrap();

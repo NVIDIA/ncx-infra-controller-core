@@ -92,7 +92,7 @@ async fn fetch_switches(api: &Api) -> Result<Vec<SwitchRecord>, (http::StatusCod
                 id: switch.id.unwrap().to_string(),
                 name: config.name,
                 state,
-                location: config.location.unwrap_or_else(|| "N/A".to_string()),
+                location: switch.location.unwrap_or_else(|| "N/A".to_string()),
             }
         })
         .collect();
@@ -168,7 +168,7 @@ impl SwitchDetail {
             state_version: switch.state_version,
             time_in_state,
             name: config.name,
-            location: config.location.unwrap_or_else(|| "N/A".to_string()),
+            location: switch.location.unwrap_or_else(|| "N/A".to_string()),
             enable_nmxc: config.enable_nmxc,
             state_reason,
             power_state,

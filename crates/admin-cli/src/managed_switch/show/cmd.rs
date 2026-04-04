@@ -120,8 +120,7 @@ fn build_managed_switch_outputs(
                 .map(|id| id.value.clone()),
             explored_endpoint: linked_switch.explored_endpoint_address.clone(),
             rack_id: linked_switch.rack_id.as_ref().map(|id| id.to_string()),
-            location: switch
-                .and_then(|s| s.config.as_ref().and_then(|c| c.location.as_ref().cloned())),
+            location: switch.and_then(|s| s.location.clone()),
             state_reason: switch.and_then(|s| {
                 s.status
                     .as_ref()
@@ -168,7 +167,7 @@ fn build_managed_switch_outputs(
             expected_switch_id: None,
             explored_endpoint: None,
             rack_id: None,
-            location: switch.config.as_ref().and_then(|c| c.location.clone()),
+            location: switch.location.clone(),
             state_reason: switch
                 .status
                 .as_ref()

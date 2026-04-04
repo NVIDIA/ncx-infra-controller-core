@@ -75,11 +75,14 @@ pub async fn list_switches(
 
         let controller_state = switch.controller_state.as_str();
 
+        let location = switch.location.as_deref().unwrap_or("N/A");
+
         println!(
-            "{}. {} (ID: {}) - Power: {}, Health: {}, State: {}",
+            "{}. {} (ID: {}) - Location: {}, Power: {}, Health: {}, State: {}",
             i + 1,
             name,
             id,
+            location,
             power_state,
             health,
             controller_state

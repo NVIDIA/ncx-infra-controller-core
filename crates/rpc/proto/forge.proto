@@ -1710,8 +1710,7 @@ message PowerShelfConfig {
   optional int32 capacity = 2;
   // Voltage in volts
   optional int32 voltage = 3;
-  // Physical location
-  optional string location = 4;
+  reserved 4; // location moved to PowerShelf message
 }
 
 // Describe the status and applied configuration of a PowerShelf
@@ -1752,6 +1751,9 @@ message PowerShelf {
 
   // Version string for the current controller state (e.g. "V3-T1774905143273055").
   string state_version = 9;
+
+  // Physical location
+  optional string location = 10;
 }
 
 message PowerShelfList {
@@ -1764,6 +1766,8 @@ message PowerShelfCreationRequest {
   // a random ID.
   // The PowerShelf ID must be unique within the Forge site.
   optional common.PowerShelfId id = 2;
+  // Physical location
+  optional string location = 3;
 }
 
 message PowerShelfDeletionRequest {
@@ -1863,8 +1867,7 @@ message SwitchConfig {
   string name = 1;
   bool enable_nmxc = 2;
   FabricManagerConfig fabric_manager_config = 3;
-  // Physical location
-  optional string location = 4;
+  reserved 4; // location moved to Switch message
 }
 
 // Describe the desired configuration of Fabric Manager
@@ -1910,6 +1913,9 @@ message Switch {
 
   Metadata metadata = 8;
   string version = 9;
+
+  // Physical location
+  optional string location = 10;
 }
 
 message SwitchList {
@@ -1922,6 +1928,8 @@ message SwitchCreationRequest {
   // a random ID.
   // The Switch ID must be unique within the Forge site.
   optional common.UUID id = 2;
+  // Physical location
+  optional string location = 3;
 }
 
 message SwitchDeletionRequest {
@@ -3055,6 +3063,9 @@ message Machine {
   optional MachineNVLinkStatusObservation nvlink_status_observation = 44;
 
   optional common.RackId rack_id = 45;
+
+  // Physical location
+  optional string location = 46;
 }
 
 message InstanceNetworkRestrictions {
@@ -6224,6 +6235,8 @@ message Rack {
   repeated HealthOverrideOrigin health_overrides = 13;
   Metadata metadata = 14;
   string version = 15;
+  // Physical location
+  optional string location = 16;
 }
 
 message RackStateHistoryRecord {

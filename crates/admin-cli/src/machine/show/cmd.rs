@@ -56,6 +56,10 @@ fn convert_machine_to_nice_format(
         ("VERSION", machine.version),
         ("SKU", sku),
         ("SKU DEVICE TYPE", sku_device_type),
+        (
+            "LOCATION",
+            machine.location.unwrap_or_else(|| "N/A".to_string()),
+        ),
     ];
     if let Some(di) = machine.discovery_info
         && let Some(dmi) = di.dmi_data
@@ -223,6 +227,7 @@ fn convert_machines_to_nice_table(machines: forgerpc::MachineList) -> Box<Table>
         "MAC Address",
         "Type",
         "Vendor",
+        "Location",
         "Labels",
     ]);
 
@@ -275,6 +280,8 @@ fn convert_machines_to_nice_table(machines: forgerpc::MachineList) -> Box<Table>
 
         let labels = crate::metadata::get_nice_labels_from_rpc_metadata(machine.metadata.as_ref());
 
+        let location = machine.location.unwrap_or_default();
+
         let is_unhealthy = machine
             .health
             .map(|x| !x.alerts.is_empty())
@@ -291,6 +298,7 @@ fn convert_machines_to_nice_table(machines: forgerpc::MachineList) -> Box<Table>
             mac,
             machine_type,
             vendor,
+            location,
             labels.join(", ")
         ]);
     }
