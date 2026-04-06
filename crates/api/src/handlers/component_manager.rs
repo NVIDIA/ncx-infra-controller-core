@@ -431,7 +431,7 @@ async fn request_re_exploration(api: &Api, ips: &[IpAddr]) {
             db::explored_endpoints::request_exploration_for_addresses(ips, txn.as_mut()).boxed()
         })
         .await;
-    if let Err(e) = result {
+    if let Err(e) | Ok(Err(e)) = result {
         tracing::warn!(?e, "failed to request re-exploration after power control");
     }
 }
