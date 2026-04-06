@@ -157,85 +157,79 @@
 		</script>
 		<script src="/admin/static/sortable.js"></script>
 		<script>
+			const overlay  = document.getElementById('action-overlay');
+			const spinner  = document.getElementById('action-overlay-spinner');
+			const successEl = document.getElementById('action-overlay-success');
+			const errorEl  = document.getElementById('action-overlay-error');
+			const errorTitle = document.getElementById('action-overlay-error-title');
+			const errorMsg = document.getElementById('action-overlay-error-msg');
+			const copyBtn  = document.querySelector('.action-overlay-copy-btn');
+
+			function setOverlayPanel(panel) {
+				spinner.style.display   = panel === 'spinner' ? '' : 'none';
+				successEl.style.display = panel === 'success' ? '' : 'none';
+				errorEl.style.display   = panel === 'error'   ? '' : 'none';
+				if (panel !== 'error') errorEl.classList.remove('active');
+				overlay.style.display = '';
+				overlay.classList.add('visible');
+			}
+
 			window.addEventListener('pageshow', function(e) {
 				if (e.persisted) hideOverlay(true);
 			});
 
 			function showOverlay() {
-				var ov = document.getElementById('action-overlay');
-				document.getElementById('action-overlay-spinner').style.display = '';
-				document.getElementById('action-overlay-success').style.display = 'none';
-				document.getElementById('action-overlay-error').style.display = 'none';
-				document.getElementById('action-overlay-error').classList.remove('active');
-				ov.style.display = '';
-				ov.classList.add('visible');
+				setOverlayPanel('spinner');
 			}
 
 			function hideOverlay(instant) {
-				var ov = document.getElementById('action-overlay');
-				ov.classList.remove('visible');
+				overlay.classList.remove('visible');
 				if (instant) {
-					ov.style.display = 'none';
+					overlay.style.display = 'none';
 				} else {
-					setTimeout(function() { ov.style.display = 'none'; }, 450);
+					setTimeout(function() { overlay.style.display = 'none'; }, 450);
 				}
 			}
 
 			function showOverlaySuccess() {
-				document.getElementById('action-overlay-spinner').style.display = 'none';
-				document.getElementById('action-overlay-success').style.display = '';
-				document.getElementById('action-overlay-error').style.display = 'none';
-				document.getElementById('action-overlay-error').classList.remove('active');
-				var ov = document.getElementById('action-overlay');
-				ov.style.display = '';
-				ov.classList.add('visible');
+				setOverlayPanel('success');
 				setTimeout(hideOverlay, 2000);
 			}
 
 			function prettifyErrorMsg(raw) {
-				var jsonMatch = raw.match(/Some\("(.*)"\)\s*\(response code:/s);
+				const jsonMatch = raw.match(/Some\("(.*)"\)\s*\(response code:/s);
 				if (jsonMatch) {
 					try {
-						var unescaped = jsonMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n');
-						var parsed = JSON.parse(unescaped);
-						var prefix = raw.substring(0, raw.indexOf('Some("'));
-						var suffix = raw.substring(raw.lastIndexOf('(response code:'));
+						const unescaped = jsonMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n');
+						const parsed = JSON.parse(unescaped);
+						const prefix = raw.substring(0, raw.indexOf('Some("'));
+						const suffix = raw.substring(raw.lastIndexOf('(response code:'));
 						return prefix.trim() + '\n\n' + JSON.stringify(parsed, null, 2) + '\n\n' + suffix;
 					} catch(e) {}
 				}
 				try {
-					var parsed = JSON.parse(raw);
-					return JSON.stringify(parsed, null, 2);
+					return JSON.stringify(JSON.parse(raw), null, 2);
 				} catch(e) {}
 				return raw;
 			}
 
 			function showOverlayError(msg, title) {
-				document.getElementById('action-overlay-error-title').textContent = title || 'Action Failed';
-				document.getElementById('action-overlay-error-msg').textContent = prettifyErrorMsg(msg);
-				document.getElementById('action-overlay-spinner').style.display = 'none';
-				document.getElementById('action-overlay-success').style.display = 'none';
-				var error = document.getElementById('action-overlay-error');
-				error.classList.remove('active');
-				error.style.display = '';
-				var ov = document.getElementById('action-overlay');
-				ov.style.display = '';
-				void error.offsetWidth;
-				error.classList.add('active');
-				ov.classList.add('visible');
+				errorTitle.textContent = title || 'Action Failed';
+				errorMsg.textContent = prettifyErrorMsg(msg);
+				setOverlayPanel('error');
+				void errorEl.offsetWidth;
+				errorEl.classList.add('active');
 			}
 
 			function copyOverlayError() {
-				var text = document.getElementById('action-overlay-error-msg').textContent;
-				navigator.clipboard.writeText(text).then(function() {
-					var btn = document.querySelector('.action-overlay-copy-btn');
-					btn.textContent = 'Copied';
-					setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+				navigator.clipboard.writeText(errorMsg.textContent).then(function() {
+					copyBtn.textContent = 'Copied';
+					setTimeout(function() { copyBtn.textContent = 'Copy'; }, 1500);
 				});
 			}
 
 			function onOverlayBackdropClick(e) {
-				if (e.target === e.currentTarget && document.getElementById('action-overlay-error').style.display !== 'none') {
+				if (e.target === e.currentTarget && errorEl.style.display !== 'none') {
 					hideOverlay(true);
 				}
 			}
