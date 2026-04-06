@@ -84,6 +84,29 @@ pub fn rack_id_link(id: impl Display) -> ::askama::Result<String> {
     Ok(formatted)
 }
 
+pub fn power_shelf_id_link(id: impl Display) -> ::askama::Result<String> {
+    let id = id.to_string();
+    if id == "Unlinked" || id.is_empty() {
+        return Ok("Unlinked".to_string());
+    }
+    let link_path: String = url::form_urlencoded::byte_serialize(id.as_bytes()).collect();
+
+    let mut escaped_id = String::new();
+    askama_escape::Html.write_escaped(&mut escaped_id, &id)?;
+
+    let short_id = &escaped_id[escaped_id.len().saturating_sub(6)..];
+    let formatted = format!(
+        r#"
+    <a href="/admin/power-shelf/{link_path}">
+        <div class="machine_id">
+            <div>{escaped_id}</div><div>{short_id}</div>
+        </div>
+    </a>"#
+    );
+
+    Ok(formatted)
+}
+
 /// Formats labels into HTML
 pub fn label_list_fmt(labels: &[rpc::forge::Label], truncate: bool) -> ::askama::Result<String> {
     const MAX_LABEL_LENGTH: usize = 32;

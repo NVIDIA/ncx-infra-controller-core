@@ -15,29 +15,21 @@
  * limitations under the License.
  */
 
-mod delete;
-mod force_delete;
-mod list;
-pub mod metadata;
-mod show;
+use rpc::forge::PowerShelfDeletionRequest;
 
-#[cfg(test)]
-mod tests;
+use super::args::Args;
+use crate::rpc::ApiClient;
 
-use clap::Parser;
-
-use crate::cfg::dispatch::Dispatch;
-
-#[derive(Parser, Debug, Dispatch)]
-pub enum Cmd {
-    #[clap(about = "Show power shelf information")]
-    Show(show::Args),
-    #[clap(about = "List all power shelves")]
-    List(list::Args),
-    #[clap(about = "Delete a power shelf")]
-    Delete(delete::Args),
-    #[clap(about = "Force delete a power shelf and optionally its interfaces")]
-    ForceDelete(force_delete::Args),
-    #[clap(subcommand, about = "Manage Power Shelf Metadata")]
-    Metadata(metadata::Args),
+pub async fn delete(data: Args, api_client: &ApiClient) -> color_eyre::Result<()> {
+    let power_shelf_id = data
+        .parse_power_shelf_id()
+        .map_err(|e| color_eyre::eyre::eyre!(e))?;
+    api_client
+        .0
+        .delete_power_shelf(PowerShelfDeletionRequest {
+            id: Some(power_shelf_id),
+        })
+        .await?;
+    println!("Power shelf deleted successfully.");
+    Ok(())
 }

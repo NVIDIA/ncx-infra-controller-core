@@ -15,29 +15,20 @@
  * limitations under the License.
  */
 
-mod delete;
-mod force_delete;
-mod list;
-pub mod metadata;
-mod show;
+use std::str::FromStr;
 
-#[cfg(test)]
-mod tests;
-
+use carbide_uuid::power_shelf::PowerShelfId;
 use clap::Parser;
 
-use crate::cfg::dispatch::Dispatch;
+#[derive(Parser, Debug)]
+pub struct Args {
+    #[clap(help = "Power Shelf ID to delete.")]
+    pub power_shelf_id: String,
+}
 
-#[derive(Parser, Debug, Dispatch)]
-pub enum Cmd {
-    #[clap(about = "Show power shelf information")]
-    Show(show::Args),
-    #[clap(about = "List all power shelves")]
-    List(list::Args),
-    #[clap(about = "Delete a power shelf")]
-    Delete(delete::Args),
-    #[clap(about = "Force delete a power shelf and optionally its interfaces")]
-    ForceDelete(force_delete::Args),
-    #[clap(subcommand, about = "Manage Power Shelf Metadata")]
-    Metadata(metadata::Args),
+impl Args {
+    pub fn parse_power_shelf_id(&self) -> Result<PowerShelfId, String> {
+        PowerShelfId::from_str(&self.power_shelf_id)
+            .map_err(|_| format!("Invalid power shelf ID: {}", self.power_shelf_id))
+    }
 }

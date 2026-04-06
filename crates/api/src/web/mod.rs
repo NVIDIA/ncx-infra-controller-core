@@ -409,6 +409,7 @@ pub fn routes(api: Arc<Api>) -> eyre::Result<NormalizePath<Router>> {
             )
             .route("/power-shelf", get(power_shelf::show_html))
             .route("/power-shelf.json", get(power_shelf::show_json))
+            .route("/power-shelf/{power_shelf_id}", get(power_shelf::detail))
             .route(
                 "/power-shelf/{power_shelf_id}/state-history",
                 get(power_shelf_state_history::show_state_history),

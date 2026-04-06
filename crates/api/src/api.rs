@@ -743,11 +743,9 @@ impl Forge for Api {
 
     async fn find_power_shelf_state_histories(
         &self,
-        _request: Request<rpc::PowerShelfStateHistoriesRequest>,
+        request: Request<rpc::PowerShelfStateHistoriesRequest>,
     ) -> Result<Response<rpc::PowerShelfStateHistories>, Status> {
-        Err(Status::unimplemented(
-            "not implemented yet -- under construction",
-        ))
+        crate::handlers::power_shelf::find_power_shelf_state_histories(self, request).await
     }
 
     async fn find_rack_state_histories(

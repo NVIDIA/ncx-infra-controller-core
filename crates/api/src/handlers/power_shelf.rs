@@ -290,6 +290,48 @@ pub async fn admin_force_delete_power_shelf(
     }))
 }
 
+pub async fn find_power_shelf_state_histories(
+    api: &Api,
+    request: Request<rpc::PowerShelfStateHistoriesRequest>,
+) -> Result<Response<rpc::PowerShelfStateHistories>, Status> {
+    log_request_data(&request);
+    let request = request.into_inner();
+    let power_shelf_ids = request.power_shelf_ids;
+
+    let max_find_by_ids = api.runtime_config.max_find_by_ids as usize;
+    if power_shelf_ids.len() > max_find_by_ids {
+        return Err(CarbideError::InvalidArgument(format!(
+            "no more than {max_find_by_ids} IDs can be accepted"
+        ))
+        .into());
+    } else if power_shelf_ids.is_empty() {
+        return Err(
+            CarbideError::InvalidArgument("at least one ID must be provided".to_string()).into(),
+        );
+    }
+
+    let mut txn = api.txn_begin().await?;
+
+    let results =
+        db::power_shelf_state_history::find_by_power_shelf_ids(&mut txn, &power_shelf_ids)
+            .await
+            .map_err(CarbideError::from)?;
+
+    let mut response = rpc::PowerShelfStateHistories::default();
+    for (power_shelf_id, records) in results {
+        response.histories.insert(
+            power_shelf_id.to_string(),
+            ::rpc::forge::PowerShelfStateHistoryRecords {
+                records: records.into_iter().map(Into::into).collect(),
+            },
+        );
+    }
+
+    txn.commit().await?;
+
+    Ok(tonic::Response::new(response))
+}
+
 pub(crate) async fn update_power_shelf_metadata(
     api: &Api,
     request: Request<rpc::PowerShelfMetadataUpdateRequest>,
