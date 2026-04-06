@@ -296,13 +296,7 @@ pub(crate) async fn admin_force_delete_machine(
 ) -> Result<Response<rpc::AdminForceDeleteMachineResponse>, Status> {
     log_request_data(&request);
 
-    let issued_by = request
-        .extensions()
-        .get::<AuthContext>()
-        .and_then(|ctx| ctx.get_external_user_name())
-        .map(String::from);
-
-    let request = request.into_inner();
+    let (_metadata, extensions, request) = request.into_parts();
     let query = request.host_query;
 
     let mut response = rpc::AdminForceDeleteMachineResponse {
@@ -327,12 +321,17 @@ pub(crate) async fn admin_force_delete_machine(
     };
     log_machine_id(&machine.id);
 
+    let issued_by = extensions
+        .get::<AuthContext>()
+        .and_then(|ctx| ctx.get_external_user_name());
+
     let serial = machine
         .hardware_info
         .as_ref()
         .and_then(|hw| hw.dmi_data.as_ref())
         .map(|dmi| dmi.product_serial.as_str())
         .unwrap_or("unknown");
+
     tracing::info!(
         "admin_force_delete_machine query='{query}' machine_id={} serial='{serial}' issued_by={issued_by:?}",
         machine.id
