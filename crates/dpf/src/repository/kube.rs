@@ -512,6 +512,19 @@ impl DpuServiceInterfaceRepository for KubeRepository {
         let list = api.list(&ListParams::default()).await?;
         Ok(list.items)
     }
+
+    async fn apply(&self, iface: &DPUServiceInterface) -> Result<DPUServiceInterface, DpfError> {
+        let namespace = iface.meta().namespace.as_deref().unwrap_or("default");
+        let name = iface.meta().name.as_deref().unwrap_or("default");
+        let api = self.api(namespace);
+        Ok(api
+            .patch(
+                name,
+                &PatchParams::apply("carbide-dpf-sdk").force(),
+                &Patch::Apply(iface),
+            )
+            .await?)
+    }
 }
 
 #[async_trait]

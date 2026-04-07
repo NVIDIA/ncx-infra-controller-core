@@ -138,6 +138,31 @@ pub struct ServiceDefinition {
     pub service_nad: Option<ServiceNAD>,
 }
 
+
+/// Service Network Attachment Definition (NAD)
+#[derive(Debug, Clone)]
+pub enum DpuServiceInterfaceTemplateType {
+    Vlan,
+    Physical,
+    Pf,
+    Vf,
+    Ovn,
+    Service,
+}
+
+/// Network interface for a DPU service.
+#[derive(Debug, Clone)]
+pub struct DpuServiceInterfaceTemplateDefinition {
+    /// Interface name.
+    pub name: String,
+    /// Interface Type
+    pub iface_type: DpuServiceInterfaceTemplateType,
+    /// PF Interface ID
+    pub pf_id: i64,
+    /// VF Interface ID
+    pub vf_id: i64,
+}
+
 /// Network interface for a DPU service.
 #[derive(Debug, Clone)]
 pub struct ServiceInterface {

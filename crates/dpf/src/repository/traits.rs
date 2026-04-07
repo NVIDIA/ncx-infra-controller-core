@@ -219,6 +219,7 @@ pub trait DpuServiceInterfaceRepository: Send + Sync {
         namespace: &str,
     ) -> Result<Option<DPUServiceInterface>, DpfError>;
     async fn list(&self, namespace: &str) -> Result<Vec<DPUServiceInterface>, DpfError>;
+    async fn apply(&self, iface: &DPUServiceInterface) -> Result<DPUServiceInterface, DpfError>;
 }
 
 /// Repository for Kubernetes ConfigMaps and Secrets.
