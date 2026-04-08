@@ -27,7 +27,6 @@ use ::rpc::forge::{
 use carbide_uuid::machine::MachineId;
 use chrono::Utc;
 use db::{DatabaseError, WithTransaction, instance, tenant, tenant_identity_config};
-use forge_secrets::credentials::{CredentialKey, CredentialReader, Credentials};
 use forge_secrets::key_encryption;
 use model::tenant::{
     InvalidTenantOrg, TENANT_IDENTITY_SIGNING_JWT_ALG, TenantIdentityConfig, TenantOrganizationId,
@@ -38,7 +37,11 @@ use tonic::{Request, Response, Status};
 use crate::CarbideError;
 use crate::api::{Api, log_request_data};
 use crate::auth::AuthContext;
-use crate::machine_identity::{Es256Signer, SignOptions, Signer};
+use crate::machine_identity::{
+    Es256Signer, SignOptions, Signer, decrypt_token_delegation_encrypted_blob,
+    machine_identity_encryption_secret, token_exchange_request,
+    token_delegation_credentials, token_exchange_http_client,
+};
 
 /// Shared gate for APIs that require site `[machine_identity].enabled` (identity admin + discovery).
 pub(crate) fn require_machine_identity_site_enabled(api: &Api) -> Result<(), Status> {
@@ -90,29 +93,6 @@ async fn load_enabled_identity_for_well_known(
     Ok(cfg)
 }
 
-async fn machine_identity_encryption_secret(
-    credentials: &dyn CredentialReader,
-    encryption_key_id: &str,
-) -> Result<key_encryption::Aes256Key, Status> {
-    let cred_key = CredentialKey::MachineIdentityEncryptionKey {
-        key_id: encryption_key_id.to_string(),
-    };
-    let creds = credentials
-        .get_credentials(&cred_key)
-        .await
-        .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
-        .ok_or_else(|| {
-            CarbideError::InvalidArgument(format!(
-                "encryption key '{encryption_key_id}' not found in secrets (machine_identity.encryption_keys)"
-            ))
-        })?;
-    let stored = match &creds {
-        Credentials::UsernamePassword { password, .. } => password.as_str(),
-    };
-    key_encryption::aes256_key_from_stored_secret(stored)
-        .map_err(|e| CarbideError::InvalidArgument(e.to_string()).into())
-}
-
 /// SPIFFE `sub` claim: stored prefix plus `/machine/<machine-id>` (single slash join).
 fn jwt_sub_claim(subject_prefix: &str, machine_id: &MachineId) -> String {
     let base = subject_prefix.trim_end_matches('/');
@@ -141,11 +121,20 @@ fn audiences_for_jwt(
 }
 
 /// Handles the SignMachineIdentity gRPC call: validates the request, extracts
-/// machine identity from the client certificate, and returns a JWT-SVID response.
+/// machine identity from the client certificate, and returns a JWT(-SVID)–shaped OAuth token
+/// response.
 ///
 /// The machine ID is taken from the client's mTLS certificate SPIFFE ID. The tenant organization
 /// is resolved from the instance row for that machine; per-org identity config supplies issuer,
 /// subject prefix, audiences, TTL, and signing key material.
+///
+/// When per-org **token delegation** is configured (`token_endpoint` + `subject_token_audience` +
+/// `auth_method`), Carbide first signs a subject JWT (`aud` = exchange service,
+/// `request_meta_data.aud` = caller-requested workload audiences) with the same `exp` / `iat` delta
+/// as `token_ttl_sec`, then performs an RFC 8693 token exchange `POST` to the tenant
+/// `token_endpoint` and returns that response (**`expires_in` in the response is from the tenant
+/// STS, not from `token_ttl_sec`**). Otherwise the handler returns a directly signed JWT using the
+/// org `token_ttl_sec`.
 pub(crate) async fn sign_machine_identity(
     api: &Api,
     request: Request<rpc::MachineIdentityRequest>,
@@ -243,8 +232,67 @@ pub(crate) async fn sign_machine_identity(
             CarbideError::internal("stored signing key could not be decrypted".to_string())
         })?;
 
-    let ttl = i64::from(identity_row.token_ttl_sec);
+    let signer = Es256Signer::new(&private_pem, identity_row.key_id.clone())
+        .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+
     let now = Utc::now().timestamp();
+
+    if let (
+        Some(token_endpoint),
+        Some(subject_token_audience),
+        Some(auth_method),
+    ) = (
+        identity_row.token_endpoint.as_deref().filter(|u| !u.is_empty()),
+        identity_row
+            .subject_token_audience
+            .as_deref()
+            .filter(|a| !a.is_empty()),
+        identity_row.auth_method,
+    ) {
+        let subject_ttl = i64::from(identity_row.token_ttl_sec);
+        let exp = now.saturating_add(subject_ttl);
+        let subject_aud_json = json!([subject_token_audience]);
+        let request_meta_data = json!({ "aud": &audiences });
+        let claims = json!({
+            "sub": jwt_sub_claim(&identity_row.subject_prefix, &machine_id),
+            "iss": identity_row.issuer,
+            "aud": subject_aud_json,
+            "exp": exp,
+            "iat": now,
+            "nbf": now,
+            "request_meta_data": request_meta_data,
+        });
+
+        let subject_jwt = signer
+            .sign(&claims, &SignOptions::default())
+            .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+
+        let delegation_plain = decrypt_token_delegation_encrypted_blob(
+            api.credential_manager.as_ref(),
+            &identity_row.encryption_key_id,
+            identity_row.organization_id.as_str(),
+            identity_row.encrypted_auth_method_config.as_deref(),
+        )
+        .await?;
+        let delegation_creds = token_delegation_credentials(auth_method, delegation_plain.as_deref())?;
+        let http = token_exchange_http_client(
+            api.runtime_config
+                .machine_identity
+                .token_endpoint_http_proxy
+                .as_deref(),
+        )?;
+        let response = token_exchange_request(
+            &http,
+            token_endpoint,
+            &subject_jwt,
+            &audiences,
+            delegation_creds.as_ref(),
+        )
+        .await?;
+        return Ok(Response::new(response));
+    }
+
+    let ttl = i64::from(identity_row.token_ttl_sec);
     let exp = now.saturating_add(ttl);
     let aud_claim = if audiences.len() == 1 {
         json!(audiences[0].clone())
@@ -261,8 +309,6 @@ pub(crate) async fn sign_machine_identity(
         "nbf": now,
     });
 
-    let signer = Es256Signer::new(&private_pem, identity_row.key_id.clone())
-        .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
     let token = signer
         .sign(&claims, &SignOptions::default())
         .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
@@ -370,4 +416,37 @@ pub(crate) async fn get_open_id_configuration(
         subject_types_supported: vec!["public".into()],
         id_token_signing_alg_values_supported: vec![],
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use carbide_uuid::machine::MachineId;
+
+    #[test]
+    fn jwt_sub_claim_trims_prefix_slash_and_joins_machine() {
+        let mid = MachineId::from_str("fm100htjsaledfasinabqqer70e2ua5ksqj4kfjii0v0a90vulps48c1h7g")
+            .unwrap();
+        assert_eq!(
+            jwt_sub_claim("spiffe://td.example/myorg", &mid),
+            format!("spiffe://td.example/myorg/machine/{mid}")
+        );
+        assert_eq!(
+            jwt_sub_claim("spiffe://td.example/myorg/", &mid),
+            format!("spiffe://td.example/myorg/machine/{mid}")
+        );
+    }
+
+    #[test]
+    fn audiences_for_jwt_default_and_validation() {
+        let allowed = vec!["a".to_string(), "b".to_string()];
+        let d = audiences_for_jwt(&[], "a", &allowed).unwrap();
+        assert_eq!(d, vec!["a".to_string()]);
+        let d = audiences_for_jwt(&["b".to_string()], "a", &allowed).unwrap();
+        assert_eq!(d, vec!["b".to_string()]);
+        let err = audiences_for_jwt(&["x".to_string()], "a", &allowed).unwrap_err();
+        assert!(err.message().contains("allowed_audiences"));
+    }
 }

@@ -27,7 +27,7 @@ use ::rpc::forge::{
     token_delegation,
 };
 use db::{WithTransaction, tenant, tenant_identity_config};
-use forge_secrets::credentials::{CredentialKey, CredentialReader, Credentials};
+use forge_secrets::credentials::CredentialReader;
 use forge_secrets::key_encryption;
 use model::tenant::{
     IdentityConfig, IdentityConfigValidationError, InvalidTenantOrg, SigningKeyMaterial,
@@ -39,29 +39,9 @@ use tonic::{Request, Response, Status};
 use crate::CarbideError;
 use crate::api::{Api, log_request_data, log_request_data_redacted};
 use crate::handlers::machine_identity::require_machine_identity_site_enabled;
-
-async fn machine_identity_encryption_secret(
-    credentials: &dyn CredentialReader,
-    encryption_key_id: &str,
-) -> Result<key_encryption::Aes256Key, Status> {
-    let cred_key = CredentialKey::MachineIdentityEncryptionKey {
-        key_id: encryption_key_id.to_string(),
-    };
-    let creds = credentials
-        .get_credentials(&cred_key)
-        .await
-        .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
-        .ok_or_else(|| {
-            CarbideError::InvalidArgument(format!(
-                "encryption key '{encryption_key_id}' not found in secrets (machine_identity.encryption_keys)"
-            ))
-        })?;
-    let stored = match &creds {
-        Credentials::UsernamePassword { password, .. } => password.as_str(),
-    };
-    key_encryption::aes256_key_from_stored_secret(stored)
-        .map_err(|e| CarbideError::InvalidArgument(e.to_string()).into())
-}
+use crate::machine_identity::{
+    decrypt_token_delegation_encrypted_blob, machine_identity_encryption_secret,
+};
 
 /// Decrypts DB ciphertext into [`TenantIdentityConfigDecrypted`]: `row` keeps envelope in
 /// `encrypted_auth_method_config`; plaintext JSON is only in `auth_method_config`.
@@ -69,32 +49,13 @@ async fn tenant_identity_with_decrypted_token_delegation(
     credentials: &dyn CredentialReader,
     cfg: TenantIdentityConfig,
 ) -> Result<TenantIdentityConfigDecrypted, Status> {
-    let auth_method_config = if let Some(ref enc) = cfg.encrypted_auth_method_config {
-        let secret =
-            machine_identity_encryption_secret(credentials, &cfg.encryption_key_id).await?;
-        let plain = key_encryption::decrypt(enc, &secret).map_err(|e| {
-            tracing::error!(
-                error = %e,
-                org_id = %cfg.organization_id.as_str(),
-                "token delegation auth config decrypt failed"
-            );
-            CarbideError::internal(
-                "stored token delegation configuration could not be decrypted".to_string(),
-            )
-        })?;
-        Some(String::from_utf8(plain).map_err(|e| {
-            tracing::error!(
-                error = %e,
-                org_id = %cfg.organization_id.as_str(),
-                "token delegation auth config plaintext was not UTF-8"
-            );
-            CarbideError::internal(
-                "stored token delegation configuration could not be decrypted".to_string(),
-            )
-        })?)
-    } else {
-        None
-    };
+    let auth_method_config = decrypt_token_delegation_encrypted_blob(
+        credentials,
+        &cfg.encryption_key_id,
+        cfg.organization_id.as_str(),
+        cfg.encrypted_auth_method_config.as_deref(),
+    )
+    .await?;
     Ok(TenantIdentityConfigDecrypted {
         row: cfg,
         auth_method_config,

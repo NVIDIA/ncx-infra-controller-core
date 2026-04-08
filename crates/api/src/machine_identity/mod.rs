@@ -18,7 +18,18 @@
 //! Machine Identity module for JWT-SVID token generation and management.
 //!
 //! This module handles signing JWT-SVID tokens for machine identity verification.
-#![allow(dead_code)] // `sign` convenience helper is currently only used from unit tests
+//! [`crypto`] holds AES envelope helpers for `tenant_identity_config` ciphertext.
+//! [`token_exchange`] implements RFC 8693 HTTP calls to a tenant token endpoint.
+#![allow(dead_code)] // Signer, Es256Signer, SignOptions, crypto, token_exchange: tests + handler
+
+mod crypto;
+mod token_exchange;
+
+pub(crate) use crypto::{
+    decrypt_token_delegation_encrypted_blob, machine_identity_encryption_secret,
+    token_delegation_credentials,
+};
+pub(crate) use token_exchange::{token_exchange_http_client, token_exchange_request};
 
 use std::collections::BTreeMap;
 use std::fmt;
