@@ -25,22 +25,21 @@
 mod crypto;
 mod token_exchange;
 
-pub(crate) use crypto::{
-    decrypt_token_delegation_encrypted_blob, machine_identity_encryption_secret,
-    token_delegation_credentials,
-};
-pub(crate) use token_exchange::{token_exchange_http_client, token_exchange_request};
-
 use std::collections::BTreeMap;
 use std::fmt;
 
 use base64::Engine;
+pub(crate) use crypto::{
+    decrypt_token_delegation_encrypted_blob, machine_identity_encryption_secret,
+    token_delegation_credentials,
+};
 use jsonwebtoken::{EncodingKey, Header, encode};
 use model::tenant::TENANT_IDENTITY_SIGNING_JWT_ALG;
 use p256::PublicKey;
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::pkcs8::DecodePublicKey;
 use serde_json::Value;
+pub(crate) use token_exchange::{token_exchange_http_client, token_exchange_request};
 
 /// Error type for JWT-SVID signing.
 #[derive(Debug, thiserror::Error)]

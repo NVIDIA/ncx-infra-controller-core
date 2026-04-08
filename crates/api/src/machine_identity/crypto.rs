@@ -121,18 +121,21 @@ mod tests {
 
     #[test]
     fn token_delegation_credentials_none_and_client_secret_basic() {
-        assert!(token_delegation_credentials(TokenDelegationAuthMethod::None, None)
-            .unwrap()
-            .is_none());
+        assert!(
+            token_delegation_credentials(TokenDelegationAuthMethod::None, None)
+                .unwrap()
+                .is_none()
+        );
         let j = r#"{"client_id":"cid","client_secret":"csec"}"#;
-        let got = token_delegation_credentials(
-            TokenDelegationAuthMethod::ClientSecretBasic,
-            Some(j),
-        )
-        .unwrap()
-        .unwrap();
+        let got =
+            token_delegation_credentials(TokenDelegationAuthMethod::ClientSecretBasic, Some(j))
+                .unwrap()
+                .unwrap();
         assert_eq!(got.0, "cid");
         assert_eq!(got.1, "csec");
-        assert!(token_delegation_credentials(TokenDelegationAuthMethod::ClientSecretBasic, None).is_err());
+        assert!(
+            token_delegation_credentials(TokenDelegationAuthMethod::ClientSecretBasic, None)
+                .is_err()
+        );
     }
 }

@@ -39,8 +39,8 @@ use crate::api::{Api, log_request_data};
 use crate::auth::AuthContext;
 use crate::machine_identity::{
     Es256Signer, SignOptions, Signer, decrypt_token_delegation_encrypted_blob,
-    machine_identity_encryption_secret, token_exchange_request,
-    token_delegation_credentials, token_exchange_http_client,
+    machine_identity_encryption_secret, token_delegation_credentials, token_exchange_http_client,
+    token_exchange_request,
 };
 
 /// Shared gate for APIs that require site `[machine_identity].enabled` (identity admin + discovery).
@@ -237,12 +237,11 @@ pub(crate) async fn sign_machine_identity(
 
     let now = Utc::now().timestamp();
 
-    if let (
-        Some(token_endpoint),
-        Some(subject_token_audience),
-        Some(auth_method),
-    ) = (
-        identity_row.token_endpoint.as_deref().filter(|u| !u.is_empty()),
+    if let (Some(token_endpoint), Some(subject_token_audience), Some(auth_method)) = (
+        identity_row
+            .token_endpoint
+            .as_deref()
+            .filter(|u| !u.is_empty()),
         identity_row
             .subject_token_audience
             .as_deref()
@@ -274,7 +273,8 @@ pub(crate) async fn sign_machine_identity(
             identity_row.encrypted_auth_method_config.as_deref(),
         )
         .await?;
-        let delegation_creds = token_delegation_credentials(auth_method, delegation_plain.as_deref())?;
+        let delegation_creds =
+            token_delegation_credentials(auth_method, delegation_plain.as_deref())?;
         let http = token_exchange_http_client(
             api.runtime_config
                 .machine_identity
@@ -422,13 +422,15 @@ pub(crate) async fn get_open_id_configuration(
 mod tests {
     use std::str::FromStr;
 
-    use super::*;
     use carbide_uuid::machine::MachineId;
+
+    use super::*;
 
     #[test]
     fn jwt_sub_claim_trims_prefix_slash_and_joins_machine() {
-        let mid = MachineId::from_str("fm100htjsaledfasinabqqer70e2ua5ksqj4kfjii0v0a90vulps48c1h7g")
-            .unwrap();
+        let mid =
+            MachineId::from_str("fm100htjsaledfasinabqqer70e2ua5ksqj4kfjii0v0a90vulps48c1h7g")
+                .unwrap();
         assert_eq!(
             jwt_sub_claim("spiffe://td.example/myorg", &mid),
             format!("spiffe://td.example/myorg/machine/{mid}")

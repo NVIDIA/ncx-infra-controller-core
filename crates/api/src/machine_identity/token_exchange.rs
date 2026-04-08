@@ -19,8 +19,8 @@
 
 use std::time::Duration;
 
-use base64::Engine;
 use ::rpc::forge::MachineIdentityResponse;
+use base64::Engine;
 use serde::Deserialize;
 use tonic::Status;
 
@@ -166,10 +166,7 @@ mod tests {
 
     #[test]
     fn expires_in_json_to_string_formats() {
-        assert_eq!(
-            expires_in_json_to_string(&serde_json::json!(3600)),
-            "3600"
-        );
+        assert_eq!(expires_in_json_to_string(&serde_json::json!(3600)), "3600");
         assert_eq!(
             expires_in_json_to_string(&serde_json::json!("7200")),
             "7200"
@@ -178,17 +175,15 @@ mod tests {
 
     #[test]
     fn rfc8693_token_exchange_form_encoding() {
-        let form = rfc8693_token_exchange_form("header.payload.sig", &[
-            "spiffe://z/a".to_string(),
-            "spiffe://z/b".to_string(),
-        ]);
-        assert!(form.contains(
-            "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange"
-        ));
+        let form = rfc8693_token_exchange_form(
+            "header.payload.sig",
+            &["spiffe://z/a".to_string(), "spiffe://z/b".to_string()],
+        );
+        assert!(
+            form.contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange")
+        );
         assert!(form.contains("subject_token=header.payload.sig"));
-        assert!(form.contains(
-            "subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt"
-        ));
+        assert!(form.contains("subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt"));
         assert!(form.contains("audience=spiffe%3A%2F%2Fz%2Fa"));
         assert!(form.contains("audience=spiffe%3A%2F%2Fz%2Fb"));
     }
@@ -240,15 +235,9 @@ mod tests {
 
         let client = reqwest::Client::new();
         let url = format!("{}/token", server.url());
-        let err = token_exchange_request(
-            &client,
-            &url,
-            "sub.jwt",
-            &["aud".to_string()],
-            None,
-        )
-        .await
-        .unwrap_err();
+        let err = token_exchange_request(&client, &url, "sub.jwt", &["aud".to_string()], None)
+            .await
+            .unwrap_err();
         assert!(err.message().contains("401"));
     }
 
