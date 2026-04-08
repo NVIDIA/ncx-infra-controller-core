@@ -53,7 +53,7 @@ Each match arm either handles the transition inline or delegates to sub-handlers
 
 The observed state `S_o` for a machine is built from the `Machine` struct, BMC queries (Redfish/IPMI), and agent reports.
 
-Every key holds **real observable data**, not boolean step-completion flags. If data is present, the thing exists (see [§3.11](README.md#311-design-principle-properties-not-phases)).
+Every key holds **real observable data**, not boolean step-completion flags. If data is present, the thing exists (see [§7.4](README.md#74-design-principle-properties-not-phases)).
 
 | Source Field | State Key | Type | Example Values |
 |-------------|-----------|------|----------------|
@@ -90,7 +90,7 @@ Every key holds **real observable data**, not boolean step-completion flags. If 
 
 ## 3. Operations
 
-Operations are organized by **setting domain** — each manages a single, independently configurable property. There are no "init" or "reprovision" phases. See [§3.11](README.md#311-design-principle-properties-not-phases) for the design rationale.
+Operations are organized by **setting domain** — each manages a single, independently configurable property. There are no "init" or "reprovision" phases. See [§7.4](README.md#74-design-principle-properties-not-phases) for the design rationale.
 
 ### 3.1 Power
 

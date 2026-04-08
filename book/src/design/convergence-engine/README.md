@@ -14,29 +14,25 @@ This document specifies a **declarative convergence engine** that replaces the i
 
 The specification covers:
 
-- The formal state model and delta computation.
-- The operation data model, guard algebra, and effect resolution.
-- The hardware-profile system with inheritance.
-- The three-predicate scheduler, dependency resolution, and anti-oscillation guards.
-- The convergence loop and fixpoint characterization.
-- Integration architecture with the existing `StateProcessor` / `StateControllerIO` infrastructure.
-- The Rust DSL profile system for defining operations.
-- Fleet-level coordination and external policy (OPA/Rego).
-- Migration strategy from the current imperative handlers.
+- The core concepts: state maps, delta, operations, guards, profiles, scheduling, and convergence (§3).
+- Integration architecture with the existing `StateProcessor` / `StateControllerIO` infrastructure (§4).
+- The Rust DSL profile system for defining operations (§5).
+- Fleet-level coordination and external policy (OPA/Rego) (§6).
+- Migration strategy from the current imperative handlers (§7).
 
 ### 1.2 Definitions
 
 
-| Term                       | Definition                                                                                                |
-| -------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Observed state** (`S_o`) | The ground-truth state of an object, periodically refreshed from hardware, database, or external sources. |
-| **Desired state** (`S_d`)  | The declared intent — the state the object should converge to.                                            |
-| **Delta** (`Δ`)            | The set of state keys where observed and desired disagree.                                                |
-| **Operation** (`ω`)        | An atomic, data-driven unit of work defined by guards, effects, locks, and priority.                      |
-| **Guard** (`G`)            | A boolean predicate over the observed state that must hold for an operation to fire.                      |
-| **Profile**                | A named collection of operations associated with a hardware type, supporting inheritance.                 |
-| **Tick**                   | One iteration of the convergence loop: compute delta, select operations, execute, apply effects.          |
-| **Convergence**            | The system has converged when `Δ = ∅`.                                                                    |
+| Term                 | Definition                                                                                                |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| **state_observed**   | The ground-truth state of an object, periodically refreshed from hardware, database, or external sources. |
+| **state_desired**    | The declared intent — the state the object should converge to.                                            |
+| **delta**            | The set of state keys where observed and desired disagree.                                                |
+| **operation**        | An atomic, data-driven unit of work defined by guards, effects, locks, and priority.                      |
+| **guard**            | A boolean predicate over the observed state that must hold for an operation to fire.                      |
+| **profile**          | A named collection of operations associated with a hardware type, supporting inheritance.                 |
+| **tick**             | One iteration of the convergence loop: compute delta, select operations, execute, apply effects.          |
+| **convergence**      | The system has converged when `delta` is empty.                                                           |
 
 
 ---
@@ -76,137 +72,55 @@ Each object type implements `StateHandler` with a `match` on its controller-stat
 
 ---
 
-## 3. Formal Model
+## 3. How the Engine Works
 
-This section provides the complete mathematical specification of the convergence engine. Each subsection defines a concept with formal notation, explains it in prose, and maps it to the corresponding Rust data structure.
+This section explains the core concepts of the convergence engine.
 
-### 3.1 State Space
+### 3.1 State: Two Maps
 
-**Definition.** Let `K` be a finite set of *state keys* — strongly-typed identifiers such as `PowerState`, `FirmwareBmcVersion`, or `BiosBootOrder`. Let `V` be a set of *state values* — a typed union of booleans, integers, semantic versions, and text. All keys, values, identifiers, and resources are strongly typed; the implementation represents `K` and `R` as enums (`StateKey`, `Resource`) and values as a typed union (`StateValue`), preventing accidental misuse at compile time.
+The engine works with two key-value maps:
 
-A **host state** is a partial function:
+- **state_observed** — what the hardware actually looks like right now: power status, firmware versions, agent heartbeats, BIOS settings hashes, etc. Refreshed every reconciliation cycle from Redfish, IPMI, databases, and agent reports.
+- **state_desired** — what the hardware *should* look like: the firmware version we want, the BIOS hash we expect, the DPU mode we need, etc. Assembled at runtime from operator intent, config templates, firmware manifests, and fleet policies.
 
-```
-S : K ⇀ V
-```
+Both maps use the same set of strongly-typed keys (the `StateKey` enum — see §5). Any key can appear in either map. Which keys appear in `state_desired` is a runtime decision, not a property of the key itself.
 
-The notation `⇀` (as opposed to `→`) indicates that `S` need not be defined on all of `K`. The **domain** of `S` is:
+In code: `HostState` is a `BTreeMap<StateKey, StateValue>`. Keys are enum variants (compile-time safe, zero-cost, impossible to misspell). Values are a typed union (`Bool`, `Int`, `Str`, `Version`) with cross-type equality.
 
-```
-dom(S) = { k ∈ K | S(k) is defined }
-```
+### 3.2 Delta: What Needs to Change
 
-At any moment in time, the system maintains two states:
+The **delta** is the set of keys where observed and desired disagree. If the desired state says `FirmwareBmcVersion = "2.4.0"` but the observed state shows `FirmwareBmcVersion = "2.3.1"`, that key is in the delta.
 
-- `S_o` — the **observed state**, populated by reading hardware (Redfish, IPMI), databases, and agent reports. This is the ground truth, refreshed periodically.
-- `S_d` — the **desired state**, assembled at runtime by the desired-state composition layer from operator intent, config templates, firmware manifests, fleet policies, and other sources.
+The engine only looks at keys that appear in the desired state. Observed keys with no desired counterpart are ignored — `state_desired` is a patch, not a complete specification. If a desired key has not been observed yet (the hardware hasn't reported it), it's treated as mismatched.
 
-**Unified key space.** Both `S_o` and `S_d` draw from the same key space `K`. There is no type-level distinction between "observed-only" and "desired" keys -- any key can appear in either or both maps. Which keys appear in `S_d` is a runtime decision made by the composition layer, not a property of the key itself.
+**The system has converged when the delta is empty** — every key the desired state cares about matches what we observe.
 
-**Domain relationship.** The desired state typically declares a subset of observed keys, but this is not a constraint:
+### 3.3 Operations: What the Engine Can Do
 
-```
-dom(S_d) ⊆ K,  dom(S_o) ⊆ K
-```
+An **operation** is an atomic unit of work, defined by six fields:
 
-`dom(S_d) \ dom(S_o)` may be non-empty when the observed state has not yet discovered a key that the desired state declares. Such keys are treated as mismatched (see §3.2).
+| Field | What it does |
+|---|---|
+| **id** | Unique name (e.g., `update_bmc_firmware`). |
+| **provides** | Which state keys this operation can change. The engine only considers an operation if it provides a key in the current delta. |
+| **guard** | A precondition that must be true before the operation can fire (e.g., "power must be on"). |
+| **locks** | Resources this operation needs exclusive access to. Two operations that lock the same resource cannot run in the same tick. |
+| **effects** | What the operation does to the state map after execution (e.g., sets `FirmwareBmcVersion` to the desired version). |
+| **priority** | Higher priority operations are scheduled first when multiple compete. |
 
-**Code mapping.** `K` is represented as a `StateKey` enum — each valid key is a variant, making it `Copy`, zero-cost, and impossible to misspell. `V` is a `StateValue` enum supporting cross-variant equality (e.g., `Bool(true)` equals the text representation `"true"`). `S` is `HostState(BTreeMap<StateKey, StateValue>)`.
+Operations are declared in Rust via the `op!` macro (see §5).
 
-### 3.2 Delta
+### 3.4 Guards: When Can an Operation Fire
 
-**Definition.** The **delta** (or *drift*) between observed and desired state is the set of keys where the two states disagree:
+Guards are boolean preconditions built from a small set of combinators:
 
-```
-Δ(S_o, S_d) = { k ∈ dom(S_d) | S_o(k) ≠ S_d(k) }
-```
+- `eq(key, value)` — key equals value
+- `neq(key, value)` — key does not equal value
+- `contains(key, substring)` — key's value contains a substring
+- `and(...)`, `or(...)`, `not(...)` — boolean combinators
+- `desired(key)` — a reference to the desired-state value for that key
 
-with the convention that if `k ∈ dom(S_d) \ dom(S_o)` — i.e., the desired state declares a key that the observed state has not yet discovered — then `S_o(k) ≠ S_d(k)` holds (the key is considered mismatched). Formally:
-
-```
-k ∈ Δ  ⟺  k ∈ dom(S_d) ∧ ( k ∉ dom(S_o) ∨ S_o(k) ≠ S_d(k) )
-```
-
-**Convergence criterion.** The system has **converged** when:
-
-```
-Δ(S_o, S_d) = ∅
-```
-
-That is, for every key the desired state cares about, the observed state agrees.
-
-**What the delta does NOT include.** Keys in `dom(S_o) \ dom(S_d)` — observed keys with no corresponding desired value — are not part of the delta. The engine does not attempt to "clean up" observed state that has no desired counterpart. This is intentional: `S_d` is a *patch*, not a complete specification.
-
-**Code mapping.** The `delta()` function iterates over `dom(S_d)` and collects keys where `observed.get(k) != Some(desired_val)`.
-
-### 3.3 Operations
-
-**Definition.** An **operation** is a tuple:
-
-```
-ω = (id, P, G, L, E, π)
-```
-
-where:
-
-
-| Component | Constraint       | Description                                                                                                                                                                         |
-| --------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`      | unique in `Ω`    | Unique identifier for this operation.                                                                                                                                               |
-| `P`       | `P ⊆ K`          | **Provides** — the set of state keys this operation can change. An operation is only considered for a delta key `k` if `k ∈ P`.                                                     |
-| `G`       | `G : S → {0, 1}` | **Guard** — a boolean predicate over the observed state (see §3.4). The operation may only fire when `G(S_o) = 1`.                                                                  |
-| `L`       | `L ⊆ R`          | **Locks** — a set of resource identifiers requiring mutual exclusion. `R` is the universe of lockable resources. Two operations with `L₁ ∩ L₂ ≠ ∅` cannot execute in the same tick. |
-| `E`       | `E : K ⇀ V`      | **Effects** — a partial function mapping state keys to their post-execution values. After execution, `S_o(k) ← E(k)` for each `k ∈ dom(E)`.                                         |
-| `π`       | `π ∈ ℕ`          | **Priority** — a non-negative integer. Higher values are scheduled first when multiple operations compete.                                                                          |
-
-
-**Note on effects and provides.** Typically `dom(E) ⊆ P`, but this is not strictly required. An operation may have effects on keys it does not "provide" (side effects), though this is discouraged as it complicates reasoning.
-
-### 3.4 Guard Algebra
-
-Guards are the precondition language of the engine. They form a small algebra closed under boolean combinators.
-
-**Grammar.** The set of guard expressions `G` is defined inductively:
-
-```
-G ::= Eq(k, v)
-    | Neq(k, v)
-    | In(k, {v₁, …, vₙ})
-    | Contains(k, s)
-    | And(G₁, …, Gₙ)
-    | Or(G₁, …, Gₙ)
-    | Not(G)
-    | True
-```
-
-**Evaluation semantics.** Given a state `S`, each guard variant evaluates as follows:
-
-
-| Guard            | `G(S) = 1` iff                            |
-| ---------------- | ----------------------------------------- |
-| `Eq(k, v)`       | `k ∈ dom(S) ∧ S(k) = resolve(v, S)`       |
-| `Neq(k, v)`      | `k ∉ dom(S) ∨ S(k) ≠ resolve(v, S)`       |
-| `In(k, V)`       | `k ∈ dom(S) ∧ S(k) ∈ V`                   |
-| `Contains(k, s)` | `k ∈ dom(S) ∧ s` is a substring of `S(k)` |
-| `And(G₁, …)`     | `∀ i : Gᵢ(S) = 1`                         |
-| `Or(G₁, …)`      | `∃ i : Gᵢ(S) = 1`                         |
-| `Not(G')`        | `G'(S) = 0`                               |
-| `True`           | always 1                                  |
-
-
-**Desired-state references.** Values `v` in guard and effect expressions may reference the desired state via `desired(k)`. The resolution function is:
-
-```
-resolve(v, S_o, S_d) =
-    if v = desired(k'):
-        return S_d(k')
-    else:
-        return v
-```
-
-This allows operations to compare observed values against desired targets (e.g., "current firmware version differs from desired") without hard-coding target values.
-
-**Example.** The guard for a firmware update operation (shown here in `op!` macro syntax — see §5):
+**Example:** a firmware update guard reads "fire only when the machine is powered on AND the current BMC firmware version differs from the desired version":
 
 ```rust
 guard: and(
@@ -215,259 +129,77 @@ guard: and(
 ),
 ```
 
-This reads: "fire only when the machine is powered on AND the current BMC firmware version differs from the desired version."
-
-**Conflict detection.** The function `conflicts_with_effect(G, k, v, S)` determines whether setting key `k` to value `v` in state `S` would cause guard `G` to transition from true to false. This is used by the anti-oscillation logic (§3.8):
-
-```
-conflicts_with_effect(G, k, v, S) = G(S) = 1  ∧  G(S[k ↦ v]) = 0
-```
-
-where `S[k ↦ v]` denotes the state `S` with key `k` overwritten to `v`.
-
-**Code mapping.** The `Guard` type implements `evaluate(S) → {0, 1}` and `conflicts_with_effect(G, k, v, S) → {0, 1}` with strongly-typed key and value parameters.
+The `desired(key)` reference lets operations compare against targets without hard-coding values. At evaluation time, `desired(FirmwareBmcVersion)` resolves to whatever version the operator declared as the target.
 
 ### 3.5 Hardware Profiles and Inheritance
 
-**Definition.** A **hardware profile** is a tuple:
+A **hardware profile** is a named collection of operations for a specific hardware type. Profiles have:
 
-```
-P = (id, M, I, Ω, α)
-```
+- A **match rule** — a guard evaluated against observed state to auto-detect hardware (e.g., `contains(HwSku, "GB300")`).
+- An **inherits** list — parent profiles whose operations are pulled in.
+- **Operations** — the operations specific to this profile.
+- An **abstract** flag — if true, the profile can only be inherited from, not directly matched.
 
-where:
+**Inheritance** works like class inheritance: a child profile gets all its parents' operations. If a child defines an operation with the same ID as a parent, the child's version wins (last-writer-wins). This lets a specific hardware profile override just the operations that differ.
 
-
-| Component | Constraint        | Description                                                                                                                              |
-| --------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`      | unique in `Π`     | Profile identifier (e.g., `nvidia_gb300`, `generic_x86`). `Π` is the set of all profiles.                                                |
-| `M`       | `M : S → {0, 1}`  | **Match rule** — a guard expression evaluated against observed state. The first non-abstract profile whose match rule holds is selected. |
-| `I`       | `I ⊆ Π`           | **Inherits** — an ordered list of parent profile identifiers.                                                                            |
-| `Ω`       | `Ω = {ω₁, …, ωₘ}` | **Operations** — the set of operations defined in this profile.                                                                          |
-| `α`       | `α ∈ {0, 1}`      | **Is abstract** — if 1, the profile cannot be directly selected but can be inherited from.                                               |
-
-
-**Inheritance resolution.** The effective operation set for a profile `P` is computed by traversing the inheritance DAG in order and merging operations:
-
-```
-ops(P) = ops(P_I₁) ∪ ops(P_I₂) ∪ … ∪ Ω_P
-```
-
-When two profiles define an operation with the same `id`, the later definition wins (**last-writer-wins**). This allows a child profile to override a parent's operation — for example, `nvidia_gb300` can override the `power_off` operation inherited from `common` to add a GPU-specific shutdown sequence.
-
-**Profile detection algorithm:**
-
-```
-function detect_profile(S_o, profiles):
-    for P in profiles sorted by specificity:
-        if P.is_abstract: continue
-        if P.match_rule(S_o) = 1:
-            return P
-    return error("no matching profile")
-```
-
-**Concrete inheritance chain example:**
+**Example chain:**
 
 ```
 common                    (base operations: power_on, power_off, configure_bios, ...)
-  └── nvidia_gbx00_base   (abstract: update_bmc_firmware with NVIDIA-specific Redfish)
-        └── nvidia_gb300   (concrete: match rule checks hw_sku contains "GB300")
+  └── nvidia_gbx00_base   (abstract: NVIDIA-specific firmware update)
+        └── nvidia_gb300   (concrete: match rule checks HwSku contains "GB300")
               inherits: [nvidia_bf3_dpu]  ← also pulls in DPU operations
-```
-
-The resolved operation set for a GB300 machine would be:
-
-```
-ops(gb300_resolved) = ops(common) ∪ ops(nvidia_gbx00_base) ∪ ops(nvidia_bf3_dpu) ∪ ops(nvidia_gb300)
 ```
 
 ### 3.6 Three-Predicate Scheduler
 
-The scheduler is the decision-making core of the engine. On each tick, it evaluates every available operation against three predicates and selects a safe, non-conflicting action set.
+The scheduler is the decision-making core. Every tick, it filters all available operations through three questions:
 
-**Predicate 1 — Relevant.** An operation is relevant if it provides at least one key in the current delta:
+1. **Relevant?** Does the operation provide a key that's in the current delta? If not, skip it — there's nothing for it to do.
+2. **Constructive?** Would the operation's effects move the state *toward* desired, not away from it? This prevents, e.g., `power_off` from firing when the desired state is "on".
+3. **Ready?** Does the operation's guard pass on the current observed state? If not, the operation is blocked and goes to dependency resolution.
 
-```
-relevant(ω)  ⟺  P_ω ∩ Δ(S_o, S_d) ≠ ∅
-```
+Operations that pass all three filters are **candidates**. The scheduler then picks a maximal non-conflicting subset using a greedy algorithm: sort by priority (highest first), and skip any operation whose locks overlap with an already-selected operation.
 
-Irrelevant operations are filtered out immediately. If the delta is empty, no operations are relevant and the system has converged.
-
-**Predicate 2 — Constructive.** A relevant operation is constructive if at least one of its effects moves the observed state *toward* the desired state (not away from it):
-
-```
-constructive(ω)  ⟺  ∃ k ∈ P_ω ∩ Δ : resolve(E_ω(k), S_o) = S_d(k)
-```
-
-where `resolve` handles `desired.*` references in effect values. This predicate prevents operations that would change a delta key but to the *wrong* value — e.g., powering off when the desired state is powered on.
-
-**Predicate 3 — Ready.** A constructive, relevant operation is ready if its guard holds on the current observed state:
-
-```
-ready(ω)  ⟺  G_ω(S_o) = 1
-```
-
-Operations that are relevant and constructive but not ready become candidates for dependency resolution (§3.7).
-
-**Candidate set.** The set of fully qualified candidates is:
-
-```
-R = { ω | relevant(ω) ∧ constructive(ω) ∧ ready(ω) }
-```
-
-**Greedy resource-conflict-free selection.** From `R`, the scheduler selects a maximal subset that respects resource locks:
-
-```
-scheduled = greedy(R, π, L)
-```
-
-**Algorithm:**
-
-```
-function schedule(R):
-    sort R by priority π descending (stable sort preserves insertion order for ties)
-    claimed_resources ← ∅
-    scheduled ← []
-
-    for ω in R:
-        if L_ω ∩ claimed_resources = ∅:
-            if not anti_oscillation_deferred(ω):
-                scheduled.append(ω)
-                claimed_resources ← claimed_resources ∪ L_ω
-
-    return scheduled
-```
-
-When two operations have equal priority, the stable sort preserves their original order (typically alphabetical by operation ID from the profile). This is deterministic but arbitrary — if tie-breaking matters, assign distinct priorities.
-
-**Formal property.** The scheduled set satisfies:
-
-```
-∀ ωᵢ, ωⱼ ∈ scheduled, i ≠ j : Lᵢ ∩ Lⱼ = ∅
-```
-
-That is, no two scheduled operations hold the same resource lock.
+Equal-priority ties are broken by stable sort order (deterministic, typically alphabetical by operation ID).
 
 ### 3.7 Dependency Resolution
 
-Some operations are relevant and constructive but not ready — their guard fails on the current observed state. The dependency resolver attempts to find **enabler** operations that can satisfy the unmet preconditions.
+When an operation is relevant and constructive but **not ready** (its guard fails), the engine tries to find an **enabler** — another operation that can satisfy the unmet precondition.
 
-**Unmet clause extraction.** For a blocked operation `ω_b` with `G(ω_b)(S_o) = 0`, the resolver decomposes the guard into its atomic `Eq` clauses and identifies which ones fail:
+**Example:** `update_bmc_firmware` needs `PowerState = "on"`, but the machine is off. The resolver finds `power_on`, whose effect sets `PowerState` to `"on"` and whose guard (`PowerState = "off"`) currently holds. It auto-schedules `power_on` as a dependency.
 
-```
-unmet(ω_b) = { (k, v) | Eq(k, v) ∈ atoms(G(ω_b))  ∧  S_o(k) ≠ resolve(v, S_o) }
-```
-
-For compound guards (`And`, `Or`), the decomposition follows the structure: for `And`, all failing clauses are unmet; for `Or`, only the first satisfiable branch is considered.
-
-**Enabler search.** For each unmet clause `(k, v)`, the resolver searches for an enabler operation:
-
-```
-∃ ω_e ∈ Ω : E_e(k) = v  ∧  G_e(S_o) = 1  ∧  L_e ∩ L_claimed = ∅
-```
-
-where `L_claimed` is the set of resources already reserved by previously scheduled operations and other enablers.
-
-**Resource pre-reservation.** When an enabler is found, its resources are immediately added to `L_claimed` *before* the main greedy pass. This prevents the greedy pass from scheduling a different operation that would conflict with the enabler.
-
-**Dependency chain depth.** The current implementation resolves dependencies to depth 1 — it finds enablers for blocked operations but does not recursively resolve enablers' own blocked dependencies. This is sufficient for common patterns (e.g., power-on enables firmware update) and avoids the complexity of recursive planning. The convergence loop naturally resolves deeper chains over multiple ticks.
-
-**Example.** Operation `update_bmc_firmware` requires `power.state = "on"`. If the machine is off:
-
-1. `update_bmc_firmware` is relevant and constructive but not ready (guard fails: `power.state = "off"`).
-2. The resolver extracts unmet clause: `(power.state, "on")`.
-3. It finds enabler `power_on` with effect `power.state → "on"`, whose guard `power.state = "off"` holds.
-4. `power_on` is auto-scheduled; its resources are reserved.
-5. After `power_on` executes, the next tick finds `update_bmc_firmware` ready.
+Dependency resolution works to **depth 1** — it finds direct enablers but doesn't recursively resolve chains. Deeper chains resolve naturally over multiple ticks (power on this tick → firmware update next tick → ...).
 
 ### 3.8 Anti-Oscillation
 
-Without safeguards, the scheduler could enter infinite cycles — for example, `power_on` and `power_off` alternating each tick because both are relevant to the same key. Two guards prevent the most common oscillation patterns.
+Without safeguards, the engine could get stuck in cycles — `power_on` and `power_off` alternating every tick. Two guards prevent this:
 
-**Guard 1 — Dominance deferral.** An operation `ω` is deferred if it would undo the effect of a dependency action scheduled in the same tick:
+1. **Dominance deferral.** If operation A is scheduled as a dependency (e.g., `power_on` for `update_firmware`), and operation B would undo A's effect (e.g., `power_off`), then B is deferred. Dependencies win.
 
-```
-ω deferred if ∃ ω_d ∈ deps, k ∈ P_ω ∩ P_d : E_ω(k) ≠ E_d(k)
-```
+2. **Competitor blocking.** If two operations share a resource lock and one would break the other's guard, the disruptive one is deferred.
 
-**Intuition.** If the scheduler found that `power_on` is needed as a dependency for `update_bmc_firmware`, and `power_off` is also relevant (because `PowerState` is in the delta), the dominance guard defers `power_off` — executing it would undo the dependency and create an oscillation.
+These guards prevent the most common 1-tick and 2-tick oscillation patterns. They are **not a formal proof of termination** — complex circular dependencies across 3+ ticks could theoretically occur. As a safety net, the engine can track visited-state fingerprints and detect recurring states.
 
-**Guard 2 — Competitor blocking deferral.** An operation `ω` is deferred if its effect would falsify the guard of another ready operation that competes for the same resource:
+In a well-configured operation set, the engine converges in roughly `|delta| × depth` ticks, where `|delta|` is the initial number of mismatched keys and `depth` is the maximum dependency chain depth.
 
-```
-ω deferred if ∃ ω_c ∈ R, L_ω ∩ L_c ≠ ∅ : conflicts_with_effect(G_c, k, E_ω(k), S_o) for some k
-```
+### 3.9 The Convergence Loop
 
-**Intuition.** If two operations share a resource lock and one would make the other's guard false, the engine defers the disruptive one, preferring the operation that preserves the conditions needed by its competitor.
+The engine runs as a **synchronous tick function**. The outer loop is the existing `PeriodicEnqueuer` → `Queue` → `StateProcessor` pipeline (see §4.2), which already handles periodic scheduling, dequeuing, and state persistence. Each tick:
 
-**What these guards do NOT guarantee.** These two guards prevent the most common 1-tick and 2-tick oscillation patterns:
+1. Compute the delta between observed and desired state.
+2. If the delta is empty → **converged**, done.
+3. Filter operations through the three predicates (relevant, constructive, ready).
+4. Resolve dependencies for blocked operations.
+5. Schedule a non-conflicting subset, respecting locks and anti-oscillation.
+6. Execute the selected operations and apply their effects to the observed state.
+7. If no operations were selected but the delta is non-empty → **deadlock or waiting for external change**.
 
-- Tick `t`: power on → Tick `t+1`: power off → Tick `t+2`: power on → ... (prevented by dominance)
-- Tick `t`: operation A blocks operation B's guard, which in turn blocks A (prevented by competitor blocking)
+The converged state is a **fixpoint** — a state where running the engine again produces no changes. The engine seeks this fixpoint iteratively, tick by tick.
 
-However, they are **not a formal proof of termination**. In the general case:
+**Long-running operations** (like firmware flashes) are handled by the outer loop, not the engine itself. The operation initiates the flash; subsequent ticks re-observe the state and detect when it completes. The engine is always a pure synchronous function — the async boundary lives outside.
 
-1. **Longer cycles** (3+ ticks) could theoretically occur if the operation graph has complex circular dependencies.
-2. **Energy function non-monotonicity.** Dependency resolution can *temporarily increase* `|Δ|` — e.g., powering on a machine adds `power.state = "on"` to observed state, which might not be the desired value if the ultimate goal is a firmware update with power-off afterward. The delta shrinks only after the full dependency chain completes.
-
-**Safety net: visited-state detection.** As a defensive measure, the engine can optionally track visited state fingerprints (hashes of `S_o`) and detect if the same observed state recurs, indicating an oscillation. Upon detection, the engine halts and reports a misconfiguration error.
-
-**Formal characterization.** Define the "energy" of the system as `|Δ(S_o, S_d)|`. In a well-configured operation set:
-
-- Each constructive operation reduces `|Δ|` by at least 1 for its primary key.
-- Dependency operations may temporarily increase `|Δ|` but are bounded in depth.
-- The anti-oscillation guards ensure that the scheduler does not undo its own progress within a single tick.
-
-Under these conditions, the convergence loop terminates in `O(|Δ₀| · d)` ticks, where `|Δ₀|` is the initial delta size and `d` is the maximum dependency chain depth.
-
-### 3.9 Convergence Loop
-
-The convergence loop is the top-level execution cycle of the engine. It repeatedly ticks until the system converges or declares a deadlock.
-
-**State evolution.** After each tick, the observed state is updated:
-
-```
-S_o(t+1) = S_o(t) ⊕ ⋃{ E_ω | ω ∈ actions(t) }
-```
-
-where `⊕` denotes state update (overwriting existing keys with new values from the effects).
-
-**Desired-state availability.** Both `S_o` and `S_d` are available to the scheduler on every tick. Guards and effects that use `desired(k)` references are resolved against `S_d` via the `resolve` function (see §3.4).
-
-**Termination conditions.** The loop terminates when:
-
-1. **Converged:** `Δ(S_o, S_d) = ∅`. All desired keys match observed values.
-2. **Idle with non-empty delta:** The scheduler returns no actions (`actions(t) = ∅`) but `Δ ≠ ∅`. This indicates either a misconfiguration (no operation provides the needed key), a deadlock (all relevant operations are blocked by guards that cannot be satisfied), or a transient condition awaiting external state changes.
-
-**Fixpoint characterization.** The converged state `S_o`* is a **fixpoint** of the convergence operator:
-
-```
-S_o* = F(S_o*, S_d)  ⟺  Δ(S_o*, S_d) = ∅
-```
-
-The engine is a fixpoint-seeking iteration: `S_o⁰, S_o¹, …, S_oⁿ = S_o*`.
-
-**Tick pseudocode:**
-
-```
-function tick(S_o, S_d, operations):
-    Δ ← delta(S_o, S_d)
-    if Δ = ∅: return CONVERGED
-
-    relevant ← { ω ∈ operations | P_ω ∩ Δ ≠ ∅ }
-    constructive ← { ω ∈ relevant | ∃ k ∈ P_ω ∩ Δ : resolve(E_ω(k), S_o, S_d) = S_d(k) }
-    ready ← { ω ∈ constructive | G_ω(S_o, S_d) = 1 }
-    blocked ← constructive \ ready
-
-    deps ← resolve_dependencies(blocked, operations, S_o, S_d)
-    actions ← schedule(ready ∪ deps, anti_oscillation_context)
-
-    for ω in actions:
-        execute(ω.steps)
-        S_o ← S_o ⊕ resolve_effects(E_ω, S_o, S_d)
-
-    return (actions, S_o)
-```
+> **Full formal specification:** For the complete mathematical definitions, set-theoretic notation, guard algebra grammar, scheduling algorithm pseudocode, and termination analysis, see [Formal Model](formal-model.md).
 ---
 
 ## 4. Architecture
@@ -507,12 +239,12 @@ flowchart LR
     Q -->|"dequeue()"| SP[StateProcessor]
     SP -->|"load_state()"| IO[StateControllerIO]
     SP -->|"handle_object_state()"| CH[ConvergenceHandler]
-    CH -->|"observe()"| OBS["Build S_o from
+    CH -->|"observe()"| OBS["Build state_observed from
         object state +
         hardware queries"]
-    CH -->|"desired()"| DES["Build S_d from
+    CH -->|"desired()"| DES["Build state_desired from
         config + policies"]
-    CH -->|"tick(S_o, S_d)"| ENG[ConvergenceEngine]
+    CH -->|"tick(state_observed, state_desired)"| ENG[ConvergenceEngine]
     ENG -->|resolve profile| PR[ProfileResolver]
     ENG -->|schedule| SCH[Scheduler]
     ENG -->|execute| EX[ActionExecutor]
@@ -539,7 +271,7 @@ flowchart LR
 
 | Component              | Responsibility                                                                                                                                         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **ConvergenceHandler** | Implements `StateHandler`. Builds `S_o` and `S_d` from the object state, delegates to the engine, and maps `TickResult` back to `StateHandlerOutcome`. |
+| **ConvergenceHandler** | Implements `StateHandler`. Builds `state_observed` and `state_desired` from the object state, delegates to the engine, and maps `TickResult` back to `StateHandlerOutcome`. |
 | **ConvergenceEngine**  | Orchestrates one tick: resolves profile, runs scheduler, executes actions, returns result.                                                             |
 | **ProfileResolver**    | Loads hardware profiles from Rust profile modules, evaluates match rules, resolves inheritance chain, returns the effective operation set.             |
 | **Scheduler**          | Implements the three-predicate filter, dependency resolution, anti-oscillation guards, and greedy selection.                                           |
@@ -713,9 +445,9 @@ The fleet controller does not modify the engine — it controls the *desired sta
 
 ```mermaid
 flowchart TD
-    FC[Fleet Controller] -->|"set S_d for machine A"| EA[Engine A]
-    FC -->|"set S_d for machine B"| EB[Engine B]
-    FC -->|"set S_d for machine C"| EC[Engine C]
+    FC[Fleet Controller] -->|"set state_desired for machine A"| EA[Engine A]
+    FC -->|"set state_desired for machine B"| EB[Engine B]
+    FC -->|"set state_desired for machine C"| EC[Engine C]
     FC -->|"query OPA"| OPA["OPA / Rego
         Policy Engine"]
     OPA -->|"policy.* keys"| FC
@@ -752,9 +484,9 @@ The convergence engine and the current handlers produce fundamentally different 
 Before any production deployment, batch-test the engine against known-good production state snapshots:
 
 1. Take a real object's current state from the production database.
-2. Build `S_o` and `S_d` from the object's state, config, and firmware manifests.
+2. Build `state_observed` and `state_desired` from the object's state, config, and firmware manifests.
 3. Run the engine to convergence with mock action executors (no real Redfish/DB calls).
-4. Verify the final `S_o` matches the state the current handler would eventually produce.
+4. Verify the final `state_observed` matches the state the current handler would eventually produce.
 
 This validates the engine's *policy* — does it reach the same end state? — without comparing intermediate tick-by-tick decisions. A test harness runs this against hundreds of production state snapshots per profile to build statistical confidence.
 
@@ -844,23 +576,24 @@ The FSM's phase ordering (init before validation before ready) is artificial —
 | Question                     | Discussion                                                                                                                                                                                  |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Formal termination proof** | The anti-oscillation guards prevent common patterns but are not a formal proof. Should we invest in a model-checker (e.g., TLA+) to verify termination for specific profile configurations? |
-| **State persistence format** | Should `S_o` and `S_d` be persisted as flat key-value maps in the database, or reconstructed each tick from the existing model structs?                                                     |
+| **State persistence format** | Should `state_observed` and `state_desired` be persisted as flat key-value maps in the database, or reconstructed each tick from the existing model structs?                                 |
 | **Guard expressiveness**     | Is the current guard algebra sufficient, or do we need arithmetic comparisons (e.g., `firmware.version >= "2.0"`)?                                                                          |
 
 
 ---
 
-## Appendix: Per-Handler Mapping
+## Appendix: Companion Documents
 
-The following companion documents map each existing state handler to the convergence engine model:
-
-- [Machine Handler](machine.md) — 17 `ManagedHostState` variants, 10,257 lines
-- [Rack Handler](rack.md) — 7 `RackState` variants, 92 lines
-- [Switch Handler](switch.md) — 9 `SwitchControllerState` variants, 103 lines
-- [IB Partition Handler](ib-partition.md) — 4 `IBPartitionControllerState` variants, 275 lines
-- [DPA Interface Handler](dpa-interface.md) — 9 `DpaInterfaceControllerState` variants, 600 lines
-- [SPDM / Attestation Handler](spdm.md) — 6+5 `AttestationState` + `AttestationDeviceState` variants, 834 lines
-- [Network Segment Handler](network-segment.md) — 3 `NetworkSegmentControllerState` variants, 190 lines
-- [Power Shelf Handler](power-shelf.md) — 6 `PowerShelfControllerState` variants, 121 lines
+- [Formal Model](formal-model.md) — Complete mathematical specification with set-theoretic notation, guard algebra grammar, scheduling algorithm, and termination analysis.
 - [External Policy — OPA / Rego](rego-opa.md) — Cross-machine constraints and fleet coordination policies
 
+The following documents tries map each existing state handler to the convergence engine model:
+
+- [Machine Handler](machine.md) — `ManagedHostState` variants
+- [Rack Handler](rack.md) — 7 `RackState` variants
+- [Switch Handler](switch.md) — 9 `SwitchControllerState` variants
+- [IB Partition Handler](ib-partition.md) — 4 `IBPartitionControllerState` variants
+- [DPA Interface Handler](dpa-interface.md) — 9 `DpaInterfaceControllerState` variants
+- [SPDM / Attestation Handler](spdm.md) — 6+5 `AttestationState` + `AttestationDeviceState` variants
+- [Network Segment Handler](network-segment.md) — 3 `NetworkSegmentControllerState` variants
+- [Power Shelf Handler](power-shelf.md) — 6 `PowerShelfControllerState` variants

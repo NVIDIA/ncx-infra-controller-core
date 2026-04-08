@@ -30,8 +30,6 @@ The handler's `attempt_state_transition` delegates each variant to a dedicated f
 
 ## 2. State Keys
 
-Any key can appear in `S_o`, `S_d`, or both. Which keys appear in `S_d` is a runtime decision (see [§3.11](README.md#311-design-principle-properties-not-phases)).
-
 | Observation Source | State Key | Type | Example Values |
 |-------------------|-----------|------|----------------|
 | `config` | `SwitchConfigVersion` | Str | `"v3"` |
@@ -51,7 +49,7 @@ Any key can appear in `S_o`, `S_d`, or both. Which keys appear in `S_d` is a run
 
 ## 3. Operations
 
-Operations are grouped by **setting domain**. There is no monolithic init phase or reprovision phase; guards encode dependencies. See [§3.11](README.md#311-design-principle-properties-not-phases) in the convergence README for rationale.
+Operations are grouped by **setting domain**. There is no monolithic init phase or reprovision phase; guards encode dependencies. See [§7.4](README.md#74-design-principle-properties-not-phases) in the convergence README for rationale.
 
 ### 3.1 Firmware and reachability
 

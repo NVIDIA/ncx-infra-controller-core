@@ -35,8 +35,6 @@ The rack handler manages rack lifecycle: creation, switch/host discovery, valida
 
 ## 2. State Keys
 
-Any key can appear in `S_o`, `S_d`, or both. Which keys appear in `S_d` is a runtime decision (see [§3.11](README.md#311-design-principle-properties-not-phases)).
-
 | Observation Source | State Key | Type | Example Values |
 |-------------------|-----------|------|----------------|
 | `config.rack_type` | `RackType` | Str | `"standard"`, `"high-density"` |
@@ -55,7 +53,7 @@ Any key can appear in `S_o`, `S_d`, or both. Which keys appear in `S_d` is a run
 
 ## 3. Operations
 
-Operations are organized by setting domain. See §3.11 of the main specification for the design rationale.
+Operations are organized by setting domain. See §7.4 of the main specification for the design rationale.
 
 ### `discover_rack`
 

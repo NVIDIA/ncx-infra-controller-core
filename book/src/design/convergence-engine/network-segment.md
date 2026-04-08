@@ -27,8 +27,6 @@ The network segment handler manages VLAN/VNI network segment lifecycle: provisio
 
 ## 2. State Keys
 
-Any key can appear in `S_o`, `S_d`, or both. Which keys appear in `S_d` is a runtime decision (see [§3.11](README.md#311-design-principle-properties-not-phases)).
-
 | Observation Source | State Key | Type | Example Values |
 |-------------------|-----------|------|----------------|
 | `name` | `SegmentName` | Str | `"gpu-network-1"` |
@@ -47,7 +45,7 @@ Any key can appear in `S_o`, `S_d`, or both. Which keys appear in `S_d` is a run
 
 ## 3. Operations
 
-Operations are organized by setting domain — each manages a single, independently configurable property. See [§3.11](README.md#311-design-principle-properties-not-phases) for the design rationale.
+Operations are organized by setting domain — each manages a single, independently configurable property. See [§7.4](README.md#74-design-principle-properties-not-phases) for the design rationale.
 
 ### `provision_segment`
 

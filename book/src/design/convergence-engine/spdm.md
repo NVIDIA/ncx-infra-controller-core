@@ -47,8 +47,6 @@ The machine-level handler dispatches to the device-level handler for `FetchData`
 
 ## 2. State Keys
 
-Any key can appear in `S_o`, `S_d`, or both. Which keys appear in `S_d` is a runtime decision (see [§3.11](README.md#311-design-principle-properties-not-phases)).
-
 ### Machine-Level Keys
 
 | Observation Source | State Key | Type | Example Values |
@@ -78,7 +76,7 @@ For each attestable device `d` with index `i`:
 
 ## 3. Operations
 
-Operations are organized by setting domain — each manages a single, independently configurable property. See [§3.11](README.md#311-design-principle-properties-not-phases) for the design rationale.
+Operations are organized by setting domain — each manages a single, independently configurable property. See [§7.4](README.md#74-design-principle-properties-not-phases) for the design rationale.
 
 ### 3.1 Machine-Level Operations
 
