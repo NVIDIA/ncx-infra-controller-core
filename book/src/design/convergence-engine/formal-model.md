@@ -6,7 +6,7 @@ This document contains the complete mathematical specification of the convergenc
 
 ## F.1 State Space
 
-**Definition.** Let `K` be a finite set of *state keys* — strongly-typed identifiers such as `PowerState`, `FirmwareBmcVersion`, or `BiosBootOrder`. Let `V` be a set of *state values* — a typed union of booleans, integers, semantic versions, and text. All keys, values, identifiers, and resources are strongly typed; the implementation represents `K` and `R` as enums (`StateKey`, `Resource`) and values as a typed union (`StateValue`), preventing accidental misuse at compile time.
+**Definition.** Let `K` be a finite set of *state keys* — strongly-typed identifiers such as `PowerState`, `FirmwareBmcVersion`, or `BiosBootOrder`. Let `V` be a set of *state values* — a typed union of booleans, integers, semantic versions, and text.
 
 A **host state** is a partial function:
 
@@ -22,18 +22,16 @@ dom(S) = { k ∈ K | S(k) is defined }
 
 At any moment in time, the system maintains two states:
 
-- `S_o` — the **observed state**, populated by reading hardware (Redfish, IPMI), databases, and agent reports.
+- `S_o` — the **observed state**, populated by reading hardware, databases, and agent reports.
 - `S_d` — the **desired state**, assembled at runtime by the desired-state composition layer.
 
-**Unified key space.** Both `S_o` and `S_d` draw from the same key space `K`. There is no type-level distinction between "observed-only" and "desired" keys — any key can appear in either or both maps:
+**Unified key space.** Both `S_o` and `S_d` draw from the same key space `K`. Any key can appear in either or both maps:
 
 ```
 dom(S_d) ⊆ K,  dom(S_o) ⊆ K
 ```
 
 `dom(S_d) \ dom(S_o)` may be non-empty when the observed state has not yet discovered a key that the desired state declares. Such keys are treated as mismatched (see F.2).
-
-**Code mapping.** `K` is represented as a `StateKey` enum — each valid key is a variant, making it `Copy`, zero-cost, and impossible to misspell. `V` is a `StateValue` enum supporting cross-variant equality (e.g., `Bool(true)` equals the text representation `"true"`). `S` is `HostState(BTreeMap<StateKey, StateValue>)`.
 
 ---
 
@@ -45,7 +43,7 @@ dom(S_d) ⊆ K,  dom(S_o) ⊆ K
 Δ(S_o, S_d) = { k ∈ dom(S_d) | S_o(k) ≠ S_d(k) }
 ```
 
-with the convention that if `k ∈ dom(S_d) \ dom(S_o)` — i.e., the desired state declares a key that the observed state has not yet discovered — then `S_o(k) ≠ S_d(k)` holds (the key is considered mismatched). Formally:
+with the convention that if `k ∈ dom(S_d) \ dom(S_o)` — i.e., the desired state declares a key that the observed state has not yet discovered — then `S_o(k) ≠ S_d(k)` holds. Formally:
 
 ```
 k ∈ Δ  ⟺  k ∈ dom(S_d) ∧ ( k ∉ dom(S_o) ∨ S_o(k) ≠ S_d(k) )
@@ -57,9 +55,7 @@ k ∈ Δ  ⟺  k ∈ dom(S_d) ∧ ( k ∉ dom(S_o) ∨ S_o(k) ≠ S_d(k) )
 Δ(S_o, S_d) = ∅
 ```
 
-**What the delta does NOT include.** Keys in `dom(S_o) \ dom(S_d)` — observed keys with no corresponding desired value — are not part of the delta. The engine does not attempt to "clean up" observed state that has no desired counterpart. `S_d` is a *patch*, not a complete specification.
-
-**Code mapping.** The `delta()` function iterates over `dom(S_d)` and collects keys where `observed.get(k) != Some(desired_val)`.
+**What the delta does NOT include.** Keys in `dom(S_o) \ dom(S_d)` — observed keys with no corresponding desired value — are not part of the delta. `S_d` is a *patch*, not a complete specification.
 
 ---
 
@@ -126,8 +122,6 @@ resolve(v, S_o, S_d) =
         return v
 ```
 
-This allows operations to compare observed values against desired targets (e.g., "current firmware version differs from desired") without hard-coding target values.
-
 **Conflict detection.** The function `conflicts_with_effect(G, k, v, S)` determines whether setting key `k` to value `v` in state `S` would cause guard `G` to transition from true to false. Used by the anti-oscillation logic (F.8):
 
 ```
@@ -162,7 +156,7 @@ where:
 ops(P) = ops(P_I₁) ∪ ops(P_I₂) ∪ … ∪ Ω_P
 ```
 
-When two profiles define an operation with the same `id`, the later definition wins (**last-writer-wins**). This allows a child profile to override a parent's operation.
+When two profiles define an operation with the same `id`, the later definition wins (**last-writer-wins**).
 
 **Profile detection algorithm:**
 
@@ -193,8 +187,6 @@ relevant(ω)  ⟺  P_ω ∩ Δ(S_o, S_d) ≠ ∅
 constructive(ω)  ⟺  ∃ k ∈ P_ω ∩ Δ : resolve(E_ω(k), S_o) = S_d(k)
 ```
 
-where `resolve` handles `desired.*` references in effect values.
-
 **Predicate 3 — Ready.** A constructive, relevant operation is ready if its guard holds on the current observed state:
 
 ```
@@ -208,10 +200,6 @@ R = { ω | relevant(ω) ∧ constructive(ω) ∧ ready(ω) }
 ```
 
 **Greedy resource-conflict-free selection.** From `R`, the scheduler selects a maximal subset that respects resource locks:
-
-```
-scheduled = greedy(R, π, L)
-```
 
 **Algorithm:**
 
@@ -236,7 +224,7 @@ function schedule(R):
 ∀ ωᵢ, ωⱼ ∈ scheduled, i ≠ j : Lᵢ ∩ Lⱼ = ∅
 ```
 
-That is, no two scheduled operations hold the same resource lock.
+No two scheduled operations hold the same resource lock.
 
 ---
 
@@ -262,7 +250,7 @@ where `L_claimed` is the set of resources already reserved by previously schedul
 
 **Resource pre-reservation.** When an enabler is found, its resources are immediately added to `L_claimed` before the main greedy pass.
 
-**Dependency chain depth.** The current implementation resolves dependencies to depth 1. Deeper chains are naturally resolved over multiple ticks by the convergence loop.
+**Dependency chain depth.** Dependencies are resolved to depth 1. Deeper chains are naturally resolved over multiple ticks by the convergence loop.
 
 ---
 
@@ -276,22 +264,18 @@ Without safeguards, the scheduler could enter infinite cycles — for example, `
 ω deferred if ∃ ω_d ∈ deps, k ∈ P_ω ∩ P_d : E_ω(k) ≠ E_d(k)
 ```
 
-**Intuition.** If `power_on` is needed as a dependency for `update_bmc_firmware`, and `power_off` is also relevant (because `PowerState` is in the delta), the dominance guard defers `power_off` — executing it would undo the dependency.
-
 **Guard 2 — Competitor blocking deferral.** An operation `ω` is deferred if its effect would falsify the guard of another ready operation that competes for the same resource:
 
 ```
 ω deferred if ∃ ω_c ∈ R, L_ω ∩ L_c ≠ ∅ : conflicts_with_effect(G_c, k, E_ω(k), S_o) for some k
 ```
 
-**Intuition.** If two operations share a resource lock and one would make the other's guard false, the engine defers the disruptive one.
-
 **Limitations.** These guards prevent 1-tick and 2-tick oscillation patterns but are **not a formal proof of termination**:
 
 1. **Longer cycles** (3+ ticks) could theoretically occur with complex circular dependencies.
 2. **Energy function non-monotonicity.** Dependency resolution can temporarily increase `|Δ|`.
 
-**Safety net: visited-state detection.** The engine can optionally track visited state fingerprints (hashes of `S_o`) and detect if the same observed state recurs, indicating an oscillation.
+**Safety net: visited-state detection.** The engine can optionally track visited state fingerprints and detect if the same observed state recurs, indicating an oscillation.
 
 **Formal characterization.** Define the "energy" of the system as `|Δ(S_o, S_d)|`. In a well-configured operation set:
 
@@ -318,7 +302,7 @@ where `⊕` denotes state update (overwriting existing keys with new values from
 1. **Converged:** `Δ(S_o, S_d) = ∅`.
 2. **Idle with non-empty delta:** `actions(t) = ∅` but `Δ ≠ ∅`. Indicates misconfiguration, deadlock, or a transient condition awaiting external state changes.
 
-**Fixpoint characterization.** The converged state `S_o`* is a **fixpoint** of the convergence operator:
+**Fixpoint characterization.** The converged state `S_o*` is a **fixpoint** of the convergence operator:
 
 ```
 S_o* = F(S_o*, S_d)  ⟺  Δ(S_o*, S_d) = ∅
