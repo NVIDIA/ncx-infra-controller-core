@@ -17,6 +17,8 @@
 
 //! Carbide-specific DPU service definitions for DPUServiceTemplate / DPUServiceConfiguration.
 
+use std::collections::BTreeMap;
+
 use carbide_dpf::{
     ConfigPortsServiceType, ServiceConfigPort, ServiceConfigPortProtocol, ServiceDefinition,
     ServiceInterface, ServiceNAD, ServiceNADResourceType,
@@ -115,6 +117,8 @@ pub fn doca_hbn_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinition
             }
         })),
 
+        service_daemon_set_annotations: Some(BTreeMap::new()),
+
         interfaces: vec![
             ServiceInterface {
                 name: "p0_if".to_string(),
@@ -182,6 +186,8 @@ pub fn dpu_agent_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinitio
             }
         })),
 
+        service_daemon_set_annotations: Some(BTreeMap::new()),
+
         ..ServiceDefinition::new(
             DPU_AGENT_SERVICE_NAME,
             &reg.carbide_helm_registry,
@@ -207,6 +213,8 @@ pub fn dhcp_server_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinit
             name: "d_pf0hpf_if".to_string(),
             network: DHCP_SERVER_SERVICE_NAD_NAME.to_string(),
         }],
+
+        service_daemon_set_annotations: Some(BTreeMap::new()),
 
         service_nad: Some(ServiceNAD {
             name: DHCP_SERVER_SERVICE_NAD_NAME.to_string(),

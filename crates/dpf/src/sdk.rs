@@ -779,10 +779,15 @@ fn build_deployment<L: ResourceLabeler>(
         DpuDeploymentServiceChainsSwitches {
             ports: vec![
                 DpuDeploymentServiceChainsSwitchesPorts {
-                    service_interface: Some(DpuDeploymentServiceChainsSwitchesPortsServiceInterface {
-                        match_labels: BTreeMap::from([("interface".to_string(), "p0".to_string())]),
-                        ipam: None,
-                    }),
+                    service_interface: Some(
+                        DpuDeploymentServiceChainsSwitchesPortsServiceInterface {
+                            match_labels: BTreeMap::from([(
+                                "interface".to_string(),
+                                "p0".to_string(),
+                            )]),
+                            ipam: None,
+                        },
+                    ),
                     service: None,
                 },
                 DpuDeploymentServiceChainsSwitchesPorts {
@@ -799,13 +804,15 @@ fn build_deployment<L: ResourceLabeler>(
         DpuDeploymentServiceChainsSwitches {
             ports: vec![
                 DpuDeploymentServiceChainsSwitchesPorts {
-                    service_interface: Some(DpuDeploymentServiceChainsSwitchesPortsServiceInterface {
-                        match_labels: BTreeMap::from([(
-                            "interface".to_string(),
-                            "pf0hpf".to_string(),
-                        )]),
-                        ipam: None,
-                    }),
+                    service_interface: Some(
+                        DpuDeploymentServiceChainsSwitchesPortsServiceInterface {
+                            match_labels: BTreeMap::from([(
+                                "interface".to_string(),
+                                "pf0hpf".to_string(),
+                            )]),
+                            ipam: None,
+                        },
+                    ),
                     service: None,
                 },
                 DpuDeploymentServiceChainsSwitchesPorts {
