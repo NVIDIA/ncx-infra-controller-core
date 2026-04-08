@@ -278,7 +278,7 @@ common                    (base operations: power_on, power_off, configure_bios,
 The resolved operation set for a GB300 machine would be:
 
 ```
-ops(gb300) = ops(common) ∪ ops(gbx00_base) ∪ ops(bf3_dpu) ∪ own(gb300)
+ops(gb300_resolved) = ops(common) ∪ ops(nvidia_gbx00_base) ∪ ops(nvidia_bf3_dpu) ∪ ops(nvidia_gb300)
 ```
 
 ### 3.6 Three-Predicate Scheduler
@@ -566,7 +566,7 @@ profiles/
 
 ### 5.2 State Keys and Resources as Enums
 
-State keys and resource identifiers are **enum variants** — `Copy`, zero-cost, and exhaustively matchable. A typo is a compile error. No strings involved.
+State keys and resource identifiers are **enum variants**.
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
