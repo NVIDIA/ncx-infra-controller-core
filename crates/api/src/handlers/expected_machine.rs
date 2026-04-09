@@ -110,8 +110,19 @@ pub(crate) async fn add(
 
     let mut txn = api.txn_begin().await?;
 
+    // Pre-allocate BMC interface if bmc_ip_address is set.
     if let Some(bmc_ip) = machine.data.bmc_ip_address {
         preallocate_machine_interface(&mut txn, machine.bmc_mac_address, bmc_ip).await?;
+    }
+
+    // Pre-allocate machine interfaces for host NICs with fixed IPs.
+    for nic in &machine.data.host_nics {
+        if let Some(ref ip_str) = nic.fixed_ip {
+            let ip: std::net::IpAddr = ip_str.parse().map_err(|_| {
+                CarbideError::InvalidArgument(format!("invalid fixed_ip: {ip_str}"))
+            })?;
+            preallocate_machine_interface(&mut txn, nic.mac_address, ip).await?;
+        }
     }
 
     db::expected_machine::create(&mut txn, machine).await?;
@@ -183,8 +194,19 @@ pub(crate) async fn update(
 
     let mut txn = api.txn_begin().await?;
 
+    // Update BMC interface if bmc_ip_address is set.
     if let Some(bmc_ip) = machine.data.bmc_ip_address {
         update_preallocated_machine_interface(&mut txn, machine.bmc_mac_address, bmc_ip).await?;
+    }
+
+    // Update/create machine interfaces for host NICs with fixed IPs.
+    for nic in &machine.data.host_nics {
+        if let Some(ref ip_str) = nic.fixed_ip {
+            let ip: std::net::IpAddr = ip_str.parse().map_err(|_| {
+                CarbideError::InvalidArgument(format!("invalid fixed_ip: {ip_str}"))
+            })?;
+            update_preallocated_machine_interface(&mut txn, nic.mac_address, ip).await?;
+        }
     }
 
     db::expected_machine::update(&mut txn, &machine)
