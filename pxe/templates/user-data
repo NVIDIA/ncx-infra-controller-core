@@ -42,7 +42,7 @@ local artifacts=(
 mkdir -p "${forge_path}"
 for artifact in "${artifacts[@]}"; do
   [ -e "$artifact" ] || { ilog "WARN: $artifact does not exist"; continue; }
-  mv -v "$artifact" "${forge_path}"
+  mv -v "$artifact" "${forge_path}" | while read -r log_line; do ilog "mv: $log_line"; done
 done
 chmod a+x "${forge_path}/forge-scout"
 
@@ -51,21 +51,21 @@ ilog "=== Moving deb files to $forge_path_debs"
 mkdir -p "$forge_path_debs"
 for deb in /debs/*.deb; do
   [ -e "$deb" ] || continue
-  mv -v "$deb" "$forge_path_debs"
+  mv -v "$deb" "$forge_path_debs" | while read -r log_line; do ilog "mv: $log_line"; done
 done
 
 local forge_path_chroot_debs="${forge_path_debs#/mnt}"
-ilog "=== Installing debs from $forge_path_chroot_debs: $(ls -la "$forge_path_debs"/*.deb)"
+ilog "=== Installing debs from $forge_path_chroot_debs:"
 chroot /mnt chown -R root:root "$forge_path_chroot_debs"
 chroot /mnt dpkg -R -i "$forge_path_chroot_debs" 2>&1 | while read -r log_line; do ilog "dpkg: $log_line"; done
 
 cat << \EOF > /mnt/var/lib/cloud/seed/nocloud-net/user-data
-# cloud-config
+#cloud-config
 timezone: "Etc/UTC"
 fqdn: {{ hostname }}
 manage_etc_hosts: true
 users:
-  # The default `ubuntu` user left alone for now until forge user becomes used, then we can remove this entirely.
+  # The default `ubuntu` user is left in place for now; once a service user is in use, we can remove it entirely
   - name: ubuntu
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
