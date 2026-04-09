@@ -12,7 +12,7 @@
 #
 # Environment variable overrides: all fields can be overridden with
 # CARBIDE_RVS__<SECTION>__<FIELD> (double underscore as separator).
-# For example: CARBIDE_RVS__BMMC__URL=https://...
+# For example: CARBIDE_RVS__NICC__URL=https://...
 #
 # =============================================================================
 
@@ -32,7 +32,7 @@ metrics_endpoint = "[::]:9019"
 # RVS connects to NICC (Carbide API) to query rack/partition info, request
 # instance provisioning, and report validation results.
 
-[NICC]
+[nicc]
 
 # NICC gRPC endpoint URL
 url = "https://carbide-api.forge-system.svc.cluster.local:1079"

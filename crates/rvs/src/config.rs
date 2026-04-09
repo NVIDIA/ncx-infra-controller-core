@@ -149,7 +149,8 @@ mod tests {
 
     #[test]
     fn test_load_from_example_file() {
-        let config = Config::load(Some(Path::new("doc/example_config.toml"))).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/example_config.toml");
+        let config = Config::load(Some(&path)).unwrap();
         assert_eq!(config.listen, "[::]:1089".parse::<SocketAddr>().unwrap());
         assert_eq!(config.nicc.rpc_timeout_secs, 30);
         assert_eq!(config.artifact_cache.cache_dir, "/rvs-cache");

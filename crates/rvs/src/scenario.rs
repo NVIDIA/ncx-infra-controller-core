@@ -77,7 +77,8 @@ mod tests {
 
     #[test]
     fn test_load_example_scenario() {
-        let scenario = Scenario::load(Path::new("doc/example_scenario.toml")).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/example_scenario.toml");
+        let scenario = Scenario::load(&path).unwrap();
         assert_eq!(scenario.rack.model, "gb200nvl");
         assert_eq!(scenario.rack.sot_release, "1.2.5");
         assert!(!scenario.os.uri.is_empty());

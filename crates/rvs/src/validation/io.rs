@@ -19,6 +19,9 @@ pub async fn plan(
     nicc: &NiccClient,
     os_uri: &str,
 ) -> Result<Vec<ValidationJob>, RvsError> {
+    if partitions.all.is_empty() {
+        return Ok(vec![]);
+    }
     assign_run_id(&partitions.all, nicc).await?;
     allocate_instances(&partitions.all, os_uri, nicc).await?;
     wait_for_boot(&partitions.all, nicc).await?;
@@ -84,7 +87,7 @@ pub async fn validate_partition(job: ValidationJob) -> Result<Report, RvsError> 
 ///
 /// Stub: prints tray count to console.
 pub async fn submit_report(report: Report) -> Result<(), RvsError> {
-    println!("validation report: trays_cnt={}", report.trays_cnt);
+    tracing::info!(trays_cnt = report.trays_cnt, "validation report");
     Ok(())
 }
 
