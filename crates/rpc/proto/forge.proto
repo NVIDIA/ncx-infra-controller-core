@@ -1801,6 +1801,9 @@ message PowerShelf {
 
   // Version string for the current controller state (e.g. "V3-T1774905143273055").
   string state_version = 9;
+
+  // The rack that this powershelf is associated with
+  optional common.RackId rack_id = 10;
 }
 
 message PowerShelfList {
@@ -1959,6 +1962,9 @@ message Switch {
 
   Metadata metadata = 8;
   string version = 9;
+
+  // The rack that this switch is associated with
+  optional common.RackId rack_id = 10;
 }
 
 message SwitchList {
@@ -3104,6 +3110,7 @@ message Machine {
 
   optional MachineNVLinkStatusObservation nvlink_status_observation = 44;
 
+  // The rack that this machine is associated with
   optional common.RackId rack_id = 45;
 }
 
