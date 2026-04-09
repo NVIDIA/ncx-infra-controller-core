@@ -1678,7 +1678,6 @@ pub async fn create_test_env_with_overrides(
         Arc::new(config.get_firmware_config()),
         common_pools.clone(),
         work_lock_manager_handle.clone(),
-        rms_sim.as_rms_client(),
     );
 
     // Create some instance types

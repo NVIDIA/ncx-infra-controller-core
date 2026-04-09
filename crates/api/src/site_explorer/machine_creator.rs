@@ -19,7 +19,6 @@ use std::sync::Arc;
 
 use carbide_uuid::machine::MachineId;
 use db::{ObjectColumnFilter, Transaction};
-use librms::RmsApi;
 use model::bmc_info::BmcInfo;
 use model::expected_machine::ExpectedMachineData;
 use model::hardware_info::HardwareInfo;
@@ -46,8 +45,6 @@ pub struct MachineCreator {
     database_connection: PgPool,
     config: SiteExplorerConfig,
     common_pools: Arc<CommonPools>,
-    #[allow(dead_code)]
-    rms_client: Option<Arc<dyn RmsApi>>,
 }
 
 impl MachineCreator {
@@ -55,13 +52,11 @@ impl MachineCreator {
         database_connection: PgPool,
         config: SiteExplorerConfig,
         common_pools: Arc<CommonPools>,
-        rms_client: Option<Arc<dyn RmsApi>>,
     ) -> Self {
         Self {
             database_connection,
             config,
             common_pools,
-            rms_client,
         }
     }
 

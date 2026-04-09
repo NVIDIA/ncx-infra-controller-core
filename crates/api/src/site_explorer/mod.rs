@@ -35,8 +35,6 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::{StreamExt, TryFutureExt};
 use itertools::Itertools;
 use libredfish::model::oem::nvidia_dpu::NicMode;
-use librms::RmsApi;
-use librms::protos::rack_manager::{NewNodeInfo, NodeType as RmsNodeType};
 use mac_address::MacAddress;
 use model::expected_power_shelf::ExpectedPowerShelf;
 use model::expected_switch::ExpectedSwitch;
@@ -65,7 +63,6 @@ mod metrics;
 pub use metrics::SiteExplorationMetrics;
 mod bmc_endpoint_explorer;
 mod redfish;
-pub mod rms;
 pub use bmc_endpoint_explorer::BmcEndpointExplorer;
 mod boot_order_tracker;
 use boot_order_tracker::BootOrderTracker;
@@ -170,7 +167,6 @@ pub struct SiteExplorer {
     machine_creator: MachineCreator,
     switch_creator: SwitchCreator,
     boot_order_tracker: BootOrderTracker,
-    rms_client: Option<Arc<dyn RmsApi>>,
 }
 
 impl SiteExplorer {
@@ -185,7 +181,6 @@ impl SiteExplorer {
         firmware_config: Arc<FirmwareConfig>,
         common_pools: Arc<CommonPools>,
         work_lock_manager_handle: WorkLockManagerHandle,
-        rms_client: Option<Arc<dyn RmsApi>>,
     ) -> Self {
         // We want to hold metrics for longer than the iteration interval, so there is continuity
         // in emitting metrics. However we want to avoid reporting outdated metrics in case
@@ -201,7 +196,6 @@ impl SiteExplorer {
                 database_connection.clone(),
                 explorer_config.clone(),
                 common_pools,
-                rms_client.clone(),
             ),
             switch_creator: SwitchCreator::new(
                 database_connection.clone(),
@@ -215,7 +209,6 @@ impl SiteExplorer {
             firmware_config,
             work_lock_manager_handle,
             boot_order_tracker: BootOrderTracker::default(),
-            rms_client,
         }
     }
 
@@ -771,44 +764,6 @@ impl SiteExplorer {
             power_shelf_id,
             explored_endpoint.address
         );
-
-        // Register the power shelf with Rack Manager if RMS client is available
-        if let Some(rms_client) = &self.rms_client {
-            if let Some(ref rack_id) = expected_shelf.rack_id {
-                let new_node_info = NewNodeInfo {
-                    node_id: power_shelf_id.to_string(),
-                    rack_id: rack_id.to_string(),
-                    r#type: Some(RmsNodeType::Powershelf.into()),
-                    bmc_endpoint: Some(librms::protos::rack_manager::BmcEndpoint {
-                        interface: Some(librms::protos::rack_manager::NetworkInterface {
-                            ip_address: explored_endpoint.address.to_string(),
-                            mac_address: expected_shelf.bmc_mac_address.to_string(),
-                        }),
-                        port: 443,
-                        credentials: None,
-                    }),
-                    host_endpoint: None,
-                };
-                if let Err(e) = rms::add_node_to_rms(rms_client.as_ref(), new_node_info).await {
-                    tracing::warn!(
-                        "Failed to add power shelf {} to Rack Manager: {}",
-                        power_shelf_id,
-                        e
-                    );
-                } else {
-                    tracing::info!(
-                        "Added power shelf {} to Rack Manager for endpoint {}",
-                        power_shelf_id,
-                        explored_endpoint.address,
-                    );
-                }
-            } else {
-                tracing::warn!(
-                    "Cannot add power shelf {} to Rack Manager: rack_id is missing",
-                    power_shelf_id
-                );
-            }
-        }
 
         Ok(true)
     }

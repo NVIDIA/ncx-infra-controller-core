@@ -234,7 +234,6 @@ async fn test_site_explorer_default_pause_ingestion_and_poweron(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // check the ingestion state of the machine
@@ -444,7 +443,6 @@ async fn test_site_explorer_main(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -910,7 +908,6 @@ async fn test_site_explorer_audit_exploration_results(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -1116,7 +1113,6 @@ async fn test_site_explorer_reexplore(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -1383,7 +1379,6 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Create expected_machine entry for host1 w.o fallback_dpu_serial_number
@@ -1599,7 +1594,6 @@ async fn test_site_explorer_health_report(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Run site explorer and check the health state of the Machine
@@ -2174,7 +2168,6 @@ async fn test_site_explorer_unknown_vendor(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -2390,7 +2383,6 @@ async fn test_machine_creation_with_sku(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Create expected_machine entry for host1 w.o fallback_dpu_serial_number
@@ -2723,7 +2715,6 @@ async fn test_expected_machine_device_type_metrics(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Run site explorer to collect metrics
@@ -2871,7 +2862,6 @@ async fn test_site_explorer_power_shelf_discovery(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3024,7 +3014,6 @@ async fn test_site_explorer_switch_discovery(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3173,7 +3162,6 @@ async fn test_site_explorer_power_shelf_with_expected_config(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3327,7 +3315,6 @@ async fn test_site_explorer_power_shelf_creation_limit(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3461,7 +3448,6 @@ async fn test_site_explorer_power_shelf_disabled(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3564,7 +3550,6 @@ async fn test_site_explorer_power_shelf_error_handling(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3630,7 +3615,6 @@ async fn test_site_explorer_creates_power_shelf(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Create a power shelf using FakePowerShelf
@@ -3939,7 +3923,6 @@ async fn test_power_shelf_state_history(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Create the power shelf using site explorer
@@ -4198,7 +4181,6 @@ async fn test_power_shelf_state_history_multiple(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Create the power shelves using site explorer
@@ -4421,7 +4403,6 @@ async fn test_power_shelf_state_history_error_handling(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     // Create the power shelf using site explorer
@@ -4600,7 +4581,6 @@ async fn test_site_explorer_power_shelf_discovery_with_static_ip(
         Arc::new(env.config.get_firmware_config()),
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
     );
 
     explorer.run_single_iteration().await.unwrap();

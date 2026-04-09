@@ -1014,7 +1014,6 @@ pub async fn initialize_and_start_controllers(
         Arc::new(carbide_config.get_firmware_config()),
         common_pools.clone(),
         work_lock_manager_handle.clone(),
-        rms_client.clone(),
     )
     .start(join_set, cancel_token.clone())?;
 

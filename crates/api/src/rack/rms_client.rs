@@ -26,7 +26,6 @@ pub mod test_support {
 
     /// RMS simulation for testing, similar to RedfishSim
     pub struct RmsSim {
-        fail_add_node: Arc<AtomicBool>,
         fail_inventory_get: Arc<AtomicBool>,
         registered_nodes: Arc<Mutex<Vec<rms::NodeInventoryInfo>>>,
     }
@@ -34,7 +33,6 @@ pub mod test_support {
     impl Default for RmsSim {
         fn default() -> Self {
             Self {
-                fail_add_node: Arc::new(AtomicBool::new(false)),
                 fail_inventory_get: Arc::new(AtomicBool::new(false)),
                 registered_nodes: Arc::new(Mutex::new(Vec::new())),
             }
@@ -45,16 +43,9 @@ pub mod test_support {
         /// Convert RmsSim to the type expected by Api and StateHandlerServices
         pub fn as_rms_client(&self) -> Option<Arc<dyn RmsApi>> {
             Some(Arc::new(MockRmsClient {
-                fail_add_node: self.fail_add_node.clone(),
                 fail_inventory_get: self.fail_inventory_get.clone(),
                 registered_nodes: self.registered_nodes.clone(),
             }))
-        }
-
-        /// Set whether `add_node` should return an error for testing
-        /// if registration attempts are failing (and should retry).
-        pub fn set_fail_add_node(&self, fail: bool) {
-            self.fail_add_node.store(fail, Ordering::Relaxed);
         }
 
         /// Set whether `inventory_get` should return an error for
@@ -68,7 +59,6 @@ pub mod test_support {
 
     #[derive(Debug, Clone)]
     pub struct MockRmsClient {
-        fail_add_node: Arc<AtomicBool>,
         fail_inventory_get: Arc<AtomicBool>,
         registered_nodes: Arc<Mutex<Vec<rms::NodeInventoryInfo>>>,
     }
@@ -110,39 +100,8 @@ pub mod test_support {
         }
         async fn add_node(
             &self,
-            cmd: rms::AddNodeRequest,
+            _cmd: rms::AddNodeRequest,
         ) -> Result<rms::AddNodeResponse, RackManagerError> {
-            if self.fail_add_node.load(Ordering::Relaxed) {
-                return Err(RackManagerError::ApiInvocationError(
-                    tonic::Status::unavailable("mock RMS add_node failure"),
-                ));
-            }
-            // Track registered nodes so inventory_get can find them,
-            // just like a real RMS would.
-            let mut registered = self.registered_nodes.lock().await;
-            for node in cmd.node_info {
-                let (ip, mac, port) = node
-                    .bmc_endpoint
-                    .as_ref()
-                    .map(|bmc| {
-                        let iface = bmc.interface.as_ref();
-                        (
-                            iface.map(|i| i.ip_address.clone()).unwrap_or_default(),
-                            iface.map(|i| i.mac_address.clone()).unwrap_or_default(),
-                            bmc.port,
-                        )
-                    })
-                    .unwrap_or_default();
-                registered.push(librms::protos::rack_manager::NodeInventoryInfo {
-                    node_id: node.node_id.clone(),
-                    ip_address: ip,
-                    port,
-                    mac_address: mac,
-                    rack_id: node.rack_id.clone(),
-                    r#type: node.r#type.unwrap_or(0),
-                    ..Default::default()
-                });
-            }
             Ok(rms::AddNodeResponse::default())
         }
         async fn update_node(
