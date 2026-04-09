@@ -156,6 +156,8 @@ pub struct DpuServiceInterfaceTemplateDefinition {
     pub pf_id: i64,
     /// VF Interface ID
     pub vf_id: i64,
+    /// Chained service interfaces vector
+    pub chained_svc_if: Option<Vec<(String, String)>>,
 }
 
 /// Network interface for a DPU service.
