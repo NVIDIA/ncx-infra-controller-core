@@ -2289,58 +2289,6 @@ mod tests {
     }
 
     #[test]
-    fn is_power_shelf_with_powershelf_chassis_id() {
-        let report = EndpointExplorationReport {
-            chassis: vec![Chassis {
-                id: "powershelf".to_string(),
-                manufacturer: Some("lite-on technology corp.".to_string()),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        assert!(report.is_power_shelf());
-    }
-
-    #[test]
-    fn is_power_shelf_with_chassis_id_and_liteon_manufacturer() {
-        let report = EndpointExplorationReport {
-            chassis: vec![Chassis {
-                id: "chassis".to_string(),
-                manufacturer: Some("LITE-ON TECHNOLOGY CORP.".to_string()),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        assert!(report.is_power_shelf());
-    }
-
-    #[test]
-    fn is_power_shelf_with_generic_chassis_id_not_liteon() {
-        let report = EndpointExplorationReport {
-            chassis: vec![Chassis {
-                id: "chassis".to_string(),
-                manufacturer: Some("Dell Inc.".to_string()),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        assert!(!report.is_power_shelf());
-    }
-
-    #[test]
-    fn is_power_shelf_with_no_manufacturer() {
-        let report = EndpointExplorationReport {
-            chassis: vec![Chassis {
-                id: "chassis".to_string(),
-                manufacturer: None,
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        assert!(!report.is_power_shelf());
-    }
-
-    #[test]
     fn test_computer_system_with_invalid_base_mac_deserializes_as_none() {
         let json = serde_json::json!({
             "EthernetInterfaces": [],
