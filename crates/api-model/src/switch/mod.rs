@@ -360,25 +360,6 @@ pub fn state_sla(state: &SwitchControllerState, state_version: &ConfigVersion) -
     }
 }
 
-/// History of Switch states for a single Switch
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SwitchStateHistoryRecord {
-    /// The state that was entered
-    pub state: String,
-    // The version number associated with the state change
-    pub state_version: ConfigVersion,
-}
-
-impl From<SwitchStateHistoryRecord> for rpc::SwitchStateHistoryRecord {
-    fn from(value: SwitchStateHistoryRecord) -> rpc::SwitchStateHistoryRecord {
-        rpc::SwitchStateHistoryRecord {
-            state: value.state,
-            version: value.state_version.version_string(),
-            time: Some(value.state_version.timestamp().into()),
-        }
-    }
-}
-
 impl Switch {
     pub fn is_marked_as_deleted(&self) -> bool {
         self.deleted.is_some()

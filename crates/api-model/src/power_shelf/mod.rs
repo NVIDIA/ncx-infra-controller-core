@@ -260,25 +260,6 @@ pub fn state_sla(state: &PowerShelfControllerState, state_version: &ConfigVersio
     }
 }
 
-/// History of Power Shelf states for a single Power Shelf
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PowerShelfStateHistoryRecord {
-    /// The state that was entered
-    pub state: String,
-    // The version number associated with the state change
-    pub state_version: ConfigVersion,
-}
-
-impl From<PowerShelfStateHistoryRecord> for rpc::PowerShelfStateHistoryRecord {
-    fn from(value: PowerShelfStateHistoryRecord) -> rpc::PowerShelfStateHistoryRecord {
-        rpc::PowerShelfStateHistoryRecord {
-            state: value.state,
-            version: value.state_version.version_string(),
-            time: Some(value.state_version.timestamp().into()),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct PowerShelfSearchFilter {
     pub rack_id: Option<RackId>,
