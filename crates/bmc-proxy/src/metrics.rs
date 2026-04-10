@@ -4,7 +4,7 @@ use metrics_endpoint::{MetricsEndpointConfig, MetricsSetup};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-pub async fn start_metrics(
+pub async fn start(
     address: SocketAddr,
     metrics_setup: MetricsSetup,
     cancellation_token: CancellationToken,

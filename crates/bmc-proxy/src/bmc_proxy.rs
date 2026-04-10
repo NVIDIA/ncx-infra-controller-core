@@ -39,8 +39,6 @@ use crate::config::{AuthConfig, TlsConfig};
 
 #[derive(thiserror::Error, Debug)]
 pub enum BmcProxyError {
-    #[error("Configuration error: {0}")]
-    Config(String),
     #[error("Error creating credential manager: {0}")]
     CredentialManager(String),
     #[error("Invalid configuration: {0}")]

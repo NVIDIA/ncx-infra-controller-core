@@ -22,9 +22,6 @@ description = "Authenticated HTTP proxy for talking to BMC's without sharing cre
 license.workspace = true
 authors.workspace = true
 
-[lib]
-name = "carbide_bmc_proxy"
-
 [[bin]]
 name = "carbide-bmc-proxy"
 path = "src/main.rs"

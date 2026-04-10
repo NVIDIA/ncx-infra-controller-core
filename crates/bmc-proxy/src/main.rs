@@ -17,11 +17,15 @@
 
 use std::sync::Arc;
 
-use carbide_bmc_proxy::bmc_proxy::{BmcProxyError, BmcProxyParams};
-use carbide_bmc_proxy::config::ConfigError;
-use carbide_bmc_proxy::setup::{SetupError, setup_metrics};
-use carbide_bmc_proxy::{Config, setup_logging};
+mod bmc_proxy;
+mod config;
+mod metrics;
+mod setup;
+
+use bmc_proxy::{BmcProxyError, BmcProxyParams};
 use clap::Parser;
+use config::{Config, ConfigError};
+use setup::{SetupError, setup_logging, setup_metrics};
 use sqlx::postgres::PgSslMode;
 use sqlx::{ConnectOptions, PgPool};
 use tokio::task::JoinSet;
@@ -77,6 +81,7 @@ async fn main() -> Result<(), Error> {
     let mut join_set = JoinSet::new();
     let cancel_token = CancellationToken::new();
     let pg_pool = connect_to_database(&config).await?;
+    let metrics_endpoint = config.metrics_endpoint;
 
     let start_params = BmcProxyParams {
         config: Arc::new(config),
@@ -86,6 +91,7 @@ async fn main() -> Result<(), Error> {
     };
 
     let proxy_cancel_token = cancel_token.clone();
+    let metrics_cancel_token = cancel_token.clone();
 
     // Cancel things when we get a ctrl+c
     tokio::spawn(async move {
@@ -93,7 +99,14 @@ async fn main() -> Result<(), Error> {
         cancel_token.cancel();
     });
 
-    carbide_bmc_proxy::bmc_proxy::start(start_params, proxy_cancel_token, &mut join_set).await?;
+    metrics::start(
+        metrics_endpoint,
+        metrics_setup,
+        metrics_cancel_token,
+        &mut join_set,
+    )
+    .await;
+    bmc_proxy::start(start_params, proxy_cancel_token, &mut join_set).await?;
     join_set.join_all().await;
 
     Ok(())
