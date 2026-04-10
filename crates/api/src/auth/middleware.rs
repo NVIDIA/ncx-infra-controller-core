@@ -201,8 +201,8 @@ where
                     let allowed = InternalRBACRules::allowed_from_static(&method_name, principals);
 
                     if !allowed {
-                        let client_address = if let Some(conn_attrs) = extensions
-                            .get::<Arc<carbide_authn::middleware::ConnectionAttributes>>()
+                        let client_address = if let Some(conn_attrs) =
+                            extensions.get::<Arc<carbide_authn::middleware::ConnectionAttributes>>()
                         {
                             conn_attrs.peer_address.to_string()
                         } else {
