@@ -1801,6 +1801,9 @@ message PowerShelf {
 
   // Version string for the current controller state (e.g. "V3-T1774905143273055").
   string state_version = 9;
+
+  // The rack that this powershelf is associated with
+  optional common.RackId rack_id = 10;
 }
 
 message PowerShelfList {
@@ -1959,6 +1962,9 @@ message Switch {
 
   Metadata metadata = 8;
   string version = 9;
+
+  // The rack that this switch is associated with
+  optional common.RackId rack_id = 10;
 }
 
 message SwitchList {
@@ -3104,6 +3110,7 @@ message Machine {
 
   optional MachineNVLinkStatusObservation nvlink_status_observation = 44;
 
+  // The rack that this machine is associated with
   optional common.RackId rack_id = 45;
 }
 
@@ -4787,6 +4794,12 @@ enum IpType {
   // DB records specifically say their source type is `admin`.
   IpTypeRouteServerFromAdminApi = 10;
   IpTypeDpaInterface = 11;
+  // IpTypeStaticBmcIp are BMC IPs that were statically assigned via
+  // ExpectedMachine.bmc_ip_address, ExpectedPowerShelf.bmc_ip_address,
+  // ExpectedSwitch.bmc_ip_address, or operator static assignment
+  // (AllocationType::Static / static-assignments segment), as opposed to
+  // a normal DHCP allocation.
+  IpTypeStaticBmcIp = 12;
 }
 
 message MachineBootOverride {
@@ -4999,6 +5012,9 @@ message ExpectedMachine {
   // deprecated
   bool dpf_enabled = 12 [deprecated = true];
   optional bool is_dpf_enabled = 13;
+  // Static BMC IP (optional). Pre-allocates a machine_interface like expected
+  // switches and power shelves; external IPs use the static-assignments segment.
+  optional string bmc_ip_address = 14;
 }
 
 message ExpectedMachineRequest {

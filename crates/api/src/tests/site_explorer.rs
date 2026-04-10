@@ -169,6 +169,8 @@ impl FakePowerShelf {
         }
     }
 
+    /// Builds model input for `add_expected_power_shelf`; `bmc_ip_address` drives the same static
+    /// BMC pre-allocation path as expected machines / switches.
     fn as_expected_power_shelf(&self) -> model::expected_power_shelf::ExpectedPowerShelf {
         model::expected_power_shelf::ExpectedPowerShelf {
             expected_power_shelf_id: None,
@@ -1428,6 +1430,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
             },
         },
     )
@@ -1476,6 +1479,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
         host_nics: vec![],
         rack_id: None,
         dpf_enabled: Some(true),
+        bmc_ip_address: None,
     };
     db::expected_machine::update(&mut txn, &host1_expected_machine).await?;
     txn.commit().await?;
@@ -2435,6 +2439,7 @@ async fn test_machine_creation_with_sku(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
             },
         },
     )
@@ -2568,6 +2573,7 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
             },
         },
     )
@@ -2589,6 +2595,7 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
             },
         },
     )
@@ -2610,6 +2617,7 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
             },
         },
     )
