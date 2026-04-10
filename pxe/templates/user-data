@@ -1,4 +1,4 @@
-cat << \ZOF >/etc/bf.cfg
+cat <<\ZOF >/etc/bf.cfg
 
 # SFC variables
 ENABLE_BR_HBN=yes
@@ -53,6 +53,54 @@ for deb in /debs/*.deb; do
   [ -e "$deb" ] || continue
   mv -v "$deb" "$forge_path_debs" | while read -r log_line; do ilog "mv: $log_line"; done
 done
+
+# Install nvinit if present
+# TODO: Migrate to deb package
+local nvinit_path="/nvinit_setup"
+if [ -e "$nvinit_path" ]; then
+  mkdir -p /mnt/etc/nvssh
+  chmod 0755 /mnt/etc/nvssh
+
+  # Files to install: src:dest:mode
+  local -a nvinit_files=(
+    "/$nvinit_path/etc-nvssh-nvssh-conf:/mnt/etc/nvssh/nvssh.conf:0644"
+    "/$nvinit_path/etc-sudoersd-nvssh-sudo:/mnt/etc/sudoers.d/nvssh-sudo:0600"
+    "/$nvinit_path/etc-sudoersd-nvssh-sudo-nopasswd:/mnt/etc/sudoers.d/nvssh-sudo-nopasswd:0600"
+    "/$nvinit_path/etc-nsswitch-conf:/mnt/etc/nsswitch.conf:0644"
+    "/$nvinit_path/etc-pamd-sshd:/mnt/etc/pam.d/sshd:0600"
+    "/$nvinit_path/etc-ssh-ngc-users-ca-keys-pem:/mnt/etc/ssh/ngc-users-ca-keys.pem:0644"
+    "/$nvinit_path/sbin-nss-exec:/mnt/sbin/nss_exec:0755"
+    "/$nvinit_path/usr-bin-nvssh:/mnt/usr/bin/nvssh:0755"
+    "/$nvinit_path/etc-ssh-sshd-config:/mnt/etc/ssh/sshd_config:0644"
+  )
+
+  for entry in "${nvinit_files[@]}"; do
+    IFS=':' read -r src dest mode <<< "$entry"
+    mv -v "$src" "$dest" | while read -r log_line; do ilog "mv: $log_line"; done
+    chmod "$mode" "$dest"
+    chroot /mnt chown root:root "${dest#/mnt}"
+  done
+
+  # Groups to create: name:gid (empty gid - auto-assign)
+  local -a nvinit_groups=(
+    "nvssh-sudo-nopasswd:959"
+    "nvssh-sudo:949"
+    "ngc-automation:"
+    "ngc:"
+    "nsv:"
+  )
+
+  for entry in "${nvinit_groups[@]}"; do
+    IFS=':' read -r name gid <<< "$entry"
+    ilog "Creating group: $name"
+    if [ -n "$gid" ]; then
+      chroot /mnt groupadd --gid "$gid" "$name"
+    else
+      chroot /mnt groupadd "$name"
+    fi
+  done
+fi
+# End of nvinit setup
 
 local forge_path_chroot_debs="${forge_path_debs#/mnt}"
 ilog "=== Installing debs from $forge_path_chroot_debs:"
