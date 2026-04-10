@@ -48,18 +48,13 @@ pub const DOCA_HBN_SERVICE_NETWORK: &str = "mybrhbn";
 
 /// DHCP Service Definitions
 pub const DHCP_SERVER_SERVICE_HELM_NAME: &str = "carbide-dhcp-server";
-pub const DHCP_SERVER_SERVICE_HELM_VERSION: &str = "2.0.9";
-pub const DHCP_SERVER_SERVICE_IMAGE_NAME: &str = "forge-dhcp-server";
-pub const DHCP_SERVER_SERVICE_IMAGE_TAG: &str = "v1.9.5-arm64-distroless";
 pub const DHCP_SERVER_SERVICE_NAD_NAME: &str = "mybrsfc-dhcp";
 pub const DHCP_SERVER_SERVICE_MTU: i64 = 1500;
 
 // DPU Agent Service Definitions
 pub const DPU_AGENT_SERVICE_NAME: &str = "carbide-dpu-agent";
 pub const DPU_AGENT_SERVICE_HELM_NAME: &str = "carbide-dpu-agent";
-pub const DPU_AGENT_SERVICE_HELM_VERSION: &str = "0.9.6";
 pub const DPU_AGENT_SERVICE_IMAGE_NAME: &str = "forge-dpu-agent";
-pub const DPU_AGENT_SERVICE_IMAGE_TAG: &str = "v0.9.5-arm64-multistage";
 
 /// FMDS Agent Service Definitions
 pub const FMDS_SERVICE_HELM_NAME: &str = "carbide-fmds";
@@ -68,6 +63,18 @@ pub const FMDS_SERVICE_IMAGE_NAME: &str = "carbide-fmds";
 pub const FMDS_SERVICE_NAD_NAME: &str = "mybrsfc-fmds";
 pub const FMDS_SERVICE_IMAGE_TAG: &str = "v0.1-arm64-distroless";
 pub const FMDS_SERVICE_MTU: i64 = 1500;
+
+/// Compile-time helm version (set by CI via VERSION env var). Empty on PR/fork builds.
+const COMPILE_TIME_HELM_VERSION: &str = match option_env!("CARBIDE_BUILD_HELM_VERSION") {
+    Some(v) => v,
+    None => "",
+};
+
+/// Compile-time image tag (set by CI via VERSION env var). Empty on PR/fork builds.
+const COMPILE_TIME_IMAGE_TAG: &str = match option_env!("CARBIDE_BUILD_GIT_TAG") {
+    Some(v) => v,
+    None => "",
+};
 
 fn doca_hbn_service_interfaces() -> Vec<ServiceInterface> {
     dpu_service_interfaces(DOCA_HBN_SERVICE_NAME, DOCA_HBN_SERVICE_NETWORK)
@@ -131,6 +138,12 @@ pub struct CarbideServiceRegistryConfig {
     pub carbide_helm_registry: String,
     /// Container image registry prefix for Carbide images.
     pub carbide_image_registry: String,
+    /// Helm chart version for Carbide DPU services.
+    /// Compile-time value (from CI) takes precedence; runtime config overrides for PR/fork/local dev.
+    pub helm_version: String,
+    /// Container image tag for Carbide DPU services.
+    /// Compile-time value (from CI) takes precedence; runtime config overrides for PR/fork/local dev.
+    pub image_tag: String,
 }
 
 impl Default for CarbideServiceRegistryConfig {
@@ -140,6 +153,23 @@ impl Default for CarbideServiceRegistryConfig {
             doca_image_registry: DEFAULT_DOCA_IMAGE_REGISTRY.to_string(),
             carbide_helm_registry: DEFAULT_CARBIDE_HELM_REGISTRY.to_string(),
             carbide_image_registry: DEFAULT_CARBIDE_IMAGE_REGISTRY.to_string(),
+            helm_version: COMPILE_TIME_HELM_VERSION.to_string(),
+            image_tag: COMPILE_TIME_IMAGE_TAG.to_string(),
+        }
+    }
+}
+
+impl CarbideServiceRegistryConfig {
+    /// Build from runtime config, falling back to compile-time values when not set.
+    pub fn from_runtime(helm_version: Option<String>, image_tag: Option<String>) -> Self {
+        Self {
+            helm_version: helm_version
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| COMPILE_TIME_HELM_VERSION.to_string()),
+            image_tag: image_tag
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| COMPILE_TIME_IMAGE_TAG.to_string()),
+            ..Self::default()
         }
     }
 }
@@ -195,16 +225,15 @@ fn carbide_service(
     reg: &CarbideServiceRegistryConfig,
     name: &str,
     image_name: &str,
-    version: &str,
 ) -> ServiceDefinition {
     ServiceDefinition {
         helm_values: Some(serde_json::json!({
             "image": {
                 "repository": format!("{}/{}", reg.carbide_image_registry, image_name),
-                "tag": version
+                "tag": reg.image_tag,
             }
         })),
-        ..ServiceDefinition::new(name, &reg.carbide_helm_registry, name, version)
+        ..ServiceDefinition::new(name, &reg.carbide_helm_registry, name, &reg.helm_version)
     }
 }
 
@@ -212,7 +241,7 @@ fn carbide_service(
 #[allow(dead_code)]
 /// OpenTelemetry Collector service definition.
 pub fn otelcol_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinition {
-    let mut svc = carbide_service(reg, "carbide-otelcol", "otelcol-contrib", "0.1.0");
+    let mut svc = carbide_service(reg, "carbide-otelcol", "otelcol-contrib");
     svc.config_ports = Some(vec![ServiceConfigPort {
         name: "prometheus".to_string(),
         port: 9999,
@@ -230,7 +259,7 @@ pub fn dpu_agent_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinitio
             "image": {
                 "repository": format!("{}/{}", reg.carbide_image_registry,
                     DPU_AGENT_SERVICE_IMAGE_NAME),
-                "tag": DPU_AGENT_SERVICE_IMAGE_TAG,
+                "tag": reg.image_tag,
             },
             "hbn": {
                 "nvue_https_address": "nvue",
@@ -257,7 +286,7 @@ pub fn dpu_agent_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinitio
             DPU_AGENT_SERVICE_NAME,
             &reg.carbide_helm_registry,
             DPU_AGENT_SERVICE_HELM_NAME,
-            DPU_AGENT_SERVICE_HELM_VERSION,
+            &reg.helm_version,
         )
     }
 }
@@ -268,9 +297,8 @@ pub fn dhcp_server_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinit
     ServiceDefinition {
         helm_values: Some(serde_json::json!({
             "image": {
-                "repository": format!("{}/{}", reg.carbide_image_registry,
-                    DHCP_SERVER_SERVICE_IMAGE_NAME),
-                "tag": DHCP_SERVER_SERVICE_IMAGE_TAG,
+                "repository": format!("{}/forge-dhcp-server", reg.carbide_image_registry),
+                "tag": reg.image_tag,
             }
         })),
 
@@ -290,7 +318,7 @@ pub fn dhcp_server_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinit
             DHCP_SERVER_SERVICE_NAME,
             &reg.carbide_helm_registry,
             DHCP_SERVER_SERVICE_HELM_NAME,
-            DHCP_SERVER_SERVICE_HELM_VERSION,
+            &reg.helm_version,
         )
     }
 }
@@ -299,12 +327,7 @@ pub fn dhcp_server_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinit
 #[allow(dead_code)]
 /// Forge DPU OTel Agent service definition.
 pub fn dpu_otel_agent_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinition {
-    carbide_service(
-        reg,
-        "carbide-dpu-otel-agent",
-        "forge-dpu-otel-agent",
-        "0.1.0",
-    )
+    carbide_service(reg, "carbide-dpu-otel-agent", "forge-dpu-otel-agent")
 }
 
 /// FMDS Service

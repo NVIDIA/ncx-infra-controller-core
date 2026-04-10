@@ -410,7 +410,10 @@ pub async fn start_api(
         let services = vec![carbide_dpf::services::dts_service(
             &carbide_dpf::services::ServiceRegistryConfig::default(),
         )];
-        let reg = crate::dpf_services::CarbideServiceRegistryConfig::default();
+        let reg = crate::dpf_services::CarbideServiceRegistryConfig::from_runtime(
+            carbide_config.dpf.carbide_helm_version.clone(),
+            carbide_config.dpf.carbide_image_tag.clone(),
+        );
         let v2_services = vec![
             carbide_dpf::services::dts_service(
                 &carbide_dpf::services::ServiceRegistryConfig::default(),

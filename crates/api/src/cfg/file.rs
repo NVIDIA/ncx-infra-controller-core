@@ -671,6 +671,16 @@ pub struct DpfConfig {
     /// This is just temporary flag and will be removed once v2 becomes only option.
     #[serde(default)]
     pub v2: bool,
+    /// Helm chart version for Carbide DPU services (e.g. `"1.2.3-42.gabcdef1"`).
+    /// When unset, the version baked in at compile time is used (CI builds on main).
+    /// Set this in config to test against a specific published version on PR/fork/local dev.
+    #[serde(default)]
+    pub carbide_helm_version: Option<String>,
+    /// Container image tag for Carbide DPU services (e.g. `"v1.2.3-42-gabcdef1"`).
+    /// When unset, the tag baked in at compile time is used (CI builds on main).
+    /// Set this in config to test against a specific published image on PR/fork/local dev.
+    #[serde(default)]
+    pub carbide_image_tag: Option<String>,
 }
 
 impl Default for DpfConfig {
@@ -684,6 +694,8 @@ impl Default for DpfConfig {
             services: None,
             bfcfg_enabled: true,
             v2: false,
+            carbide_helm_version: None,
+            carbide_image_tag: None,
         }
     }
 }
