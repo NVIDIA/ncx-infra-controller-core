@@ -20,8 +20,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ::rpc::forge as rpc;
-use carbide_spiffe::SpiffeContext;
-use carbide_spiffe::middleware::{CertDescriptionMiddleware, ConnectionAttributes};
+use carbide_authn::SpiffeContext;
+use carbide_authn::middleware::{CertDescriptionMiddleware, ConnectionAttributes};
 use hyper::server::conn::{http1, http2};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::service::TowerToHyperService;

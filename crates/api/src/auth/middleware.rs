@@ -16,7 +16,7 @@
  */
 use std::sync::Arc;
 
-use carbide_spiffe::middleware::Principal;
+use carbide_authn::middleware::Principal;
 use futures_util::future::BoxFuture;
 use hyper::{Request, Response, StatusCode};
 use tonic::service::AxumBody;
@@ -202,7 +202,7 @@ where
 
                     if !allowed {
                         let client_address = if let Some(conn_attrs) = extensions
-                            .get::<Arc<carbide_spiffe::middleware::ConnectionAttributes>>()
+                            .get::<Arc<carbide_authn::middleware::ConnectionAttributes>>()
                         {
                             conn_attrs.peer_address.to_string()
                         } else {

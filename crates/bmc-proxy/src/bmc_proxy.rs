@@ -11,8 +11,8 @@ use axum::middleware::{Next, from_fn_with_state};
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
 use bytes::Bytes;
-use carbide_spiffe::SpiffeContext;
-use carbide_spiffe::middleware::{
+use carbide_authn::SpiffeContext;
+use carbide_authn::middleware::{
     AuthContext, CertDescriptionMiddleware, ConnectionAttributes, Principal,
 };
 use forge_secrets::credentials::{

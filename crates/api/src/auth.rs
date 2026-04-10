@@ -17,7 +17,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use carbide_spiffe::middleware::{ExternalUserInfo, Principal};
+use carbide_authn::middleware::{ExternalUserInfo, Principal};
 
 use crate::CarbideError;
 
@@ -27,7 +27,7 @@ pub mod middleware;
 pub mod mqtt_auth;
 mod test_certs;
 
-pub type AuthContext = carbide_spiffe::middleware::AuthContext<Authorization>;
+pub type AuthContext = carbide_authn::middleware::AuthContext<Authorization>;
 
 // An Authorization is sort of like a ticket that says we're allowed to do the
 // thing we're trying to do, and specifically which Principal was permitted to
@@ -209,10 +209,10 @@ mod tests {
     use std::collections::HashMap;
     use std::io::BufRead;
 
-    use carbide_spiffe::SpiffeContext;
-    use carbide_spiffe::config::{AllowedCertCriteria, CertComponent};
-    use carbide_spiffe::middleware::CertDescriptionMiddleware;
-    use carbide_spiffe::spiffe_id::TrustDomain;
+    use carbide_authn::SpiffeContext;
+    use carbide_authn::config::{AllowedCertCriteria, CertComponent};
+    use carbide_authn::middleware::CertDescriptionMiddleware;
+    use carbide_authn::spiffe_id::TrustDomain;
     use eyre::Context;
 
     use super::*;

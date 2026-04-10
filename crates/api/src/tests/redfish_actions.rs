@@ -17,7 +17,7 @@
 use std::time::Duration;
 
 use ::rpc::forge::forge_server::Forge;
-use carbide_spiffe::middleware::{ExternalUserInfo, Principal};
+use carbide_authn::middleware::{ExternalUserInfo, Principal};
 use rpc::forge::{RedfishAction, RedfishActionResult};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tokio::time::Instant;

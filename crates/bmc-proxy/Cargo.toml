@@ -34,7 +34,7 @@ path = "src/main.rs"
 # DO NOT PUT DEPENDENCIES OTHER THAN LOCAL DEPS HERE, THEY SHOULD ALL HAVE 'path =' IN THEM.
 config-version = { path = "../config-version", features = ["sqlx"] }
 carbide-secrets = { path = "../secrets" }
-carbide-spiffe = { path = "../spiffe" }
+carbide-authn = { path = "../authn" }
 carbide-version = { path = "../version" }
 carbide-api-db = { path = "../api-db" }
 logfmt = { path = "../logfmt" }

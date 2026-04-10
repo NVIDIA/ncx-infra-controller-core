@@ -28,7 +28,7 @@ use std::{fmt, fs};
 
 use arc_swap::ArcSwap;
 use bmc_vendor::BMCVendor;
-use carbide_spiffe::config::{AllowedCertCriteria, TrustConfig};
+use carbide_authn::config::{AllowedCertCriteria, TrustConfig};
 use chrono::Duration;
 use duration_str::{deserialize_duration, deserialize_duration_chrono};
 use ipnetwork::{IpNetwork, Ipv4Network};
@@ -3196,7 +3196,7 @@ pub fn default_host_intercept_bridge_port() -> String {
 
 #[cfg(test)]
 mod tests {
-    use carbide_spiffe::config::CertComponent;
+    use carbide_authn::config::CertComponent;
     use chrono::Datelike;
     use figment::Figment;
     use figment::providers::{Env, Format, Toml};

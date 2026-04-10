@@ -53,7 +53,7 @@ carbide-measured-boot = { path = "../measured-boot", features = ["sqlx"] }
 carbide-libmlx = { path = "../libmlx" }
 carbide-api-model = { path = "../api-model", default-features = false }
 carbide-api-db = { path = "../api-db", default-features = false }
-carbide-spiffe = { path = "../spiffe" }
+carbide-authn = { path = "../authn" }
 spancounter = { path = "../spancounter" }
 nras = { path = "../nras" }
 carbide-dpf = { path = "../dpf" }

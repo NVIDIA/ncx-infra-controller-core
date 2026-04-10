@@ -29,7 +29,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{Router, get, post};
 use axum_extra::extract::Host;
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
-use carbide_spiffe::middleware::Principal;
+use carbide_authn::middleware::Principal;
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, Request, StatusCode, Uri};
 use itertools::Itertools;

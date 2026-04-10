@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use carbide_spiffe::config::{AllowedCertCriteria, TrustConfig};
+use carbide_authn::config::{AllowedCertCriteria, TrustConfig};
 use figment::Figment;
 use figment::providers::{Env, Format, Toml};
 use serde::{Deserialize, Serialize};

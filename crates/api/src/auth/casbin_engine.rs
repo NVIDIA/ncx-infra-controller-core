@@ -17,7 +17,7 @@
 use std::error;
 use std::path::{Path, PathBuf};
 
-use carbide_spiffe::middleware::Principal;
+use carbide_authn::middleware::Principal;
 use casbin::{CoreApi, DefaultModel, Enforcer, FileAdapter};
 
 use crate::auth::{Authorization, AuthorizationError, PolicyEngine, Predicate};

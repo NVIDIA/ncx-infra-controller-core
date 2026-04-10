@@ -1350,6 +1350,7 @@ dependencies = [
  "bytes",
  "carbide-api-db",
  "carbide-api-model",
+ "carbide-authn",
  "carbide-dpf",
  "carbide-health-report",
  "carbide-host-support",
@@ -1360,7 +1361,6 @@ dependencies = [
  "carbide-prost-builder",
  "carbide-rpc",
  "carbide-secrets",
- "carbide-spiffe",
  "carbide-sqlx-testing",
  "carbide-ssh",
  "carbide-tls",
@@ -1626,6 +1626,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "carbide-authn"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "hyper",
+ "serde",
+ "thiserror 2.0.17",
+ "tonic 0.14.5",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "x509-parser",
+]
+
+[[package]]
 name = "carbide-bmc-proxy"
 version = "0.0.0"
 dependencies = [
@@ -1633,8 +1648,8 @@ dependencies = [
  "axum-extra",
  "bytes",
  "carbide-api-db",
+ "carbide-authn",
  "carbide-secrets",
- "carbide-spiffe",
  "carbide-utils",
  "carbide-version",
  "casbin",
@@ -2377,21 +2392,6 @@ dependencies = [
  "tokio",
  "tracing",
  "vaultrs",
-]
-
-[[package]]
-name = "carbide-spiffe"
-version = "0.0.0"
-dependencies = [
- "futures-util",
- "hyper",
- "serde",
- "thiserror 2.0.17",
- "tonic 0.14.5",
- "tower 0.5.3",
- "tower-http",
- "tracing",
- "x509-parser",
 ]
 
 [[package]]
