@@ -17,6 +17,7 @@
 
 use chrono::{DateTime, Utc};
 use model::rack_firmware::{RackFirmware, RackFirmwareApplyHistoryRecord};
+use model::rack_type::RackHardwareType;
 use sqlx::Error::RowNotFound;
 use sqlx::postgres::PgRow;
 use sqlx::types::Json;
@@ -32,6 +33,7 @@ struct DbRackFirmwareApplyHistory {
     firmware_id: String,
     rack_id: String,
     firmware_type: String,
+    rack_hardware_type: RackHardwareType,
     applied_at: DateTime<Utc>,
 }
 
@@ -56,6 +58,7 @@ impl From<DbRackFirmwareApplyHistoryWithAvailability> for RackFirmwareApplyHisto
             firmware_id: row.history.firmware_id,
             rack_id: row.history.rack_id,
             firmware_type: row.history.firmware_type,
+            rack_hardware_type: row.history.rack_hardware_type,
             applied_at: row.history.applied_at,
             firmware_available: row.firmware_available,
         }
@@ -67,15 +70,17 @@ pub async fn record_apply_history(
     firmware_id: &str,
     rack_id: &str,
     firmware_type: &str,
+    rack_hardware_type: RackHardwareType,
 ) -> DatabaseResult<()> {
     let query = "INSERT INTO rack_firmware_apply_history \
-        (firmware_id, rack_id, firmware_type) \
-        VALUES ($1, $2, $3)";
+        (firmware_id, rack_id, firmware_type, rack_hardware_type) \
+        VALUES ($1, $2, $3, $4)";
 
     sqlx::query(query)
         .bind(firmware_id)
         .bind(rack_id)
         .bind(firmware_type)
+        .bind(rack_hardware_type)
         .execute(txn)
         .await
         .map_err(|e| DatabaseError::new(query, e))?;
@@ -128,13 +133,15 @@ pub async fn list_apply_history(
 pub async fn create(
     txn: &mut PgConnection,
     id: &str,
+    rack_hardware_type: RackHardwareType,
     config: serde_json::Value,
     parsed_components: Option<serde_json::Value>,
 ) -> DatabaseResult<RackFirmware> {
-    let query = "INSERT INTO rack_firmware (id, config, parsed_components) VALUES ($1, $2::jsonb, $3::jsonb) RETURNING *";
+    let query = "INSERT INTO rack_firmware (id, rack_hardware_type, config, parsed_components) VALUES ($1, $2, $3::jsonb, $4::jsonb) RETURNING *";
 
     sqlx::query_as(query)
         .bind(id)
+        .bind(rack_hardware_type)
         .bind(Json(config))
         .bind(parsed_components.map(Json))
         .fetch_one(txn)
@@ -156,18 +163,24 @@ pub async fn find_by_id(txn: impl DbReader<'_>, id: &str) -> DatabaseResult<Rack
 
 pub async fn list_all(
     txn: &mut PgConnection,
-    only_available: bool,
+    filter: model::rack_firmware::RackFirmwareSearchFilter,
 ) -> DatabaseResult<Vec<RackFirmware>> {
-    let query = if only_available {
-        "SELECT * FROM rack_firmware WHERE available = true ORDER BY created DESC"
-    } else {
-        "SELECT * FROM rack_firmware ORDER BY created DESC"
-    };
+    let mut qb = sqlx::QueryBuilder::new("SELECT * FROM rack_firmware WHERE TRUE");
 
-    sqlx::query_as(query)
+    if filter.only_available {
+        qb.push(" AND available = true");
+    }
+    if let Some(hw_type) = filter.rack_hardware_type {
+        qb.push(" AND rack_hardware_type = ");
+        qb.push_bind(hw_type);
+    }
+
+    qb.push(" ORDER BY created DESC");
+
+    qb.build_query_as()
         .fetch_all(txn)
         .await
-        .map_err(|e| DatabaseError::query(query, e))
+        .map_err(|e| DatabaseError::new("rack_firmware::list_all", e))
 }
 
 pub async fn update_config(
@@ -225,16 +238,28 @@ mod tests {
         let mut txn = pool.begin().await.unwrap();
 
         // Create a firmware config so we can verify the availability join
-        create(&mut txn, "fw-001", json!({"Id": "fw-001"}), None)
-            .await
-            .unwrap();
+        create(
+            &mut txn,
+            "fw-001",
+            RackHardwareType::any(),
+            json!({"Id": "fw-001"}),
+            None,
+        )
+        .await
+        .unwrap();
         set_available(&mut txn, "fw-001", true).await.unwrap();
 
         // Record two apply events for the same firmware
-        record_apply_history(&mut txn, "fw-001", "rack-a", "prod")
-            .await
-            .unwrap();
-        record_apply_history(&mut txn, "fw-001", "rack-b", "dev")
+        record_apply_history(
+            &mut txn,
+            "fw-001",
+            "rack-a",
+            "prod",
+            RackHardwareType::any(),
+        )
+        .await
+        .unwrap();
+        record_apply_history(&mut txn, "fw-001", "rack-b", "dev", RackHardwareType::any())
             .await
             .unwrap();
 
@@ -278,15 +303,27 @@ mod tests {
         let mut txn = pool.begin().await.unwrap();
 
         // Create firmware and mark available
-        create(&mut txn, "fw-002", json!({"Id": "fw-002"}), None)
-            .await
-            .unwrap();
+        create(
+            &mut txn,
+            "fw-002",
+            RackHardwareType::any(),
+            json!({"Id": "fw-002"}),
+            None,
+        )
+        .await
+        .unwrap();
         set_available(&mut txn, "fw-002", true).await.unwrap();
 
         // Record an apply
-        record_apply_history(&mut txn, "fw-002", "rack-a", "prod")
-            .await
-            .unwrap();
+        record_apply_history(
+            &mut txn,
+            "fw-002",
+            "rack-a",
+            "prod",
+            RackHardwareType::any(),
+        )
+        .await
+        .unwrap();
 
         // Verify available = true
         let before = list_apply_history(&mut txn, Some("fw-002"), &[])
@@ -311,9 +348,15 @@ mod tests {
         let mut txn = pool.begin().await.unwrap();
 
         // Record history for a firmware_id that was never created
-        record_apply_history(&mut txn, "fw-ghost", "rack-a", "prod")
-            .await
-            .unwrap();
+        record_apply_history(
+            &mut txn,
+            "fw-ghost",
+            "rack-a",
+            "prod",
+            RackHardwareType::any(),
+        )
+        .await
+        .unwrap();
 
         let history = list_apply_history(&mut txn, None, &[]).await.unwrap();
         assert_eq!(history.len(), 1);

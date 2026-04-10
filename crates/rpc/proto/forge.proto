@@ -366,7 +366,7 @@ service Forge {
   // Get a Rack firmware configuration by ID
   rpc GetRackFirmware(RackFirmwareGetRequest) returns (RackFirmware);
   // List all Rack firmware configurations
-  rpc ListRackFirmware(RackFirmwareListRequest) returns (RackFirmwareList);
+  rpc ListRackFirmware(RackFirmwareSearchFilter) returns (RackFirmwareList);
   // Delete a Rack firmware configuration
   rpc DeleteRackFirmware(RackFirmwareDeleteRequest) returns (google.protobuf.Empty);
   // Apply firmware to all devices in a rack
@@ -6390,12 +6390,6 @@ message DeleteRackRequest {
 
 // Rack Capabilities
 
-enum RackHardwareType {
-  RACK_HARDWARE_TYPE_UNSPECIFIED = 0;
-  RACK_HARDWARE_TYPE_DSX_GB200NVL_36X1 = 1;
-  RACK_HARDWARE_TYPE_DSX_GB200NVL_36X2 = 2;
-  RACK_HARDWARE_TYPE_DSX_GB200NVL_72X1 = 3;
-}
 
 enum RackHardwareTopology {
   RACK_HARDWARE_TOPOLOGY_UNSPECIFIED = 0;
@@ -6435,7 +6429,7 @@ message RackCapabilityPowerShelf {
 }
 
 message RackCapabilitiesSet {
-  RackHardwareType rack_hardware_type = 1;
+  common.RackHardwareType rack_hardware_type = 1;
   RackHardwareTopology rack_hardware_topology = 2;
   RackHardwareClass rack_hardware_class = 3;
   RackCapabilityCompute compute = 4;
@@ -7205,6 +7199,7 @@ message RackFirmware {
   string created = 4;
   string updated = 5;
   string parsed_components = 6; // JSON string of firmware lookup table
+  common.RackHardwareType rack_hardware_type = 7;
 }
 
 message FirmwareComponentInfo {
@@ -7219,14 +7214,16 @@ message FirmwareComponentInfo {
 message RackFirmwareCreateRequest {
   string config_json = 1;
   string artifactory_token = 2;
+  common.RackHardwareType rack_hardware_type = 3;
 }
 
 message RackFirmwareGetRequest {
   string id = 1;
 }
 
-message RackFirmwareListRequest {
+message RackFirmwareSearchFilter {
   bool only_available = 1;
+  common.RackHardwareType rack_hardware_type = 2; // Optional: filter by rack hardware type. Unspecified means no filter.
 }
 
 message RackFirmwareList {
@@ -7297,6 +7294,7 @@ message RackFirmwareHistoryRecord {
   string firmware_type = 3;
   string applied_at = 4;
   bool firmware_available = 5; // Whether the firmware ID still exists and is available
+  common.RackHardwareType rack_hardware_type = 6;
 }
 
 message ModifyDPFStateRequest {

@@ -25,7 +25,7 @@ use rpc::forge::{
     RackFirmwareApplyResponse, RackFirmwareCreateRequest, RackFirmwareDeleteRequest,
     RackFirmwareGetRequest, RackFirmwareHistoryRecords, RackFirmwareHistoryRequest,
     RackFirmwareHistoryResponse, RackFirmwareJobStatusRequest, RackFirmwareJobStatusResponse,
-    RackFirmwareList, RackFirmwareListRequest,
+    RackFirmwareList, RackFirmwareSearchFilter,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -334,7 +334,14 @@ pub async fn create(
         .await
         .map_err(|e| CarbideError::from(DatabaseError::new("begin create", e)))?;
 
-    let db_config = rack_firmware_db::create(&mut txn, &id, config, parsed_components).await?;
+    let rack_hardware_type: model::rack_type::RackHardwareType = req
+        .rack_hardware_type
+        .ok_or_else(|| CarbideError::MissingArgument("rack_hardware_type"))?
+        .into();
+
+    let db_config =
+        rack_firmware_db::create(&mut txn, &id, rack_hardware_type, config, parsed_components)
+            .await?;
 
     txn.commit()
         .await
@@ -379,9 +386,9 @@ pub async fn get(
 /// List all Rack firmware configurations
 pub async fn list(
     api: &Api,
-    request: Request<RackFirmwareListRequest>,
+    request: Request<RackFirmwareSearchFilter>,
 ) -> Result<Response<RackFirmwareList>, Status> {
-    let req = request.into_inner();
+    let filter: model::rack_firmware::RackFirmwareSearchFilter = request.into_inner().into();
 
     let mut txn = api
         .database_connection
@@ -389,7 +396,7 @@ pub async fn list(
         .await
         .map_err(|e| CarbideError::from(DatabaseError::new("begin list", e)))?;
 
-    let db_configs = rack_firmware_db::list_all(&mut txn, req.only_available).await?;
+    let db_configs = rack_firmware_db::list_all(&mut txn, filter).await?;
 
     txn.commit()
         .await
@@ -988,6 +995,38 @@ pub async fn apply(
             message: format!("Failed to get rack: {}", e),
         })?;
 
+    // Validate firmware hardware type and firmware_type against rack capabilities.
+    if let Some(rack_type_name) = rack.config.rack_type.as_deref()
+        && let Some(capabilities) = api.runtime_config.rack_types.get(rack_type_name)
+    {
+        // Validate firmware hardware type matches rack's hardware type.
+        if !fw_config.rack_hardware_type.is_any()
+            && let Some(rack_hw_type) = &capabilities.rack_hardware_type
+            && *rack_hw_type != fw_config.rack_hardware_type
+        {
+            return Err(CarbideError::FailedPrecondition(format!(
+                "Firmware hardware type '{}' does not match rack '{}' hardware type '{}'",
+                fw_config.rack_hardware_type, rack_id, rack_hw_type
+            ))
+            .into());
+        }
+
+        // Validate firmware_type matches rack's hardware class.
+        if let Some(rack_hw_class) = capabilities.rack_hardware_class {
+            let expected_fw_type = match rack_hw_class {
+                model::rack_type::RackHardwareClass::Dev => "dev",
+                model::rack_type::RackHardwareClass::Prod => "prod",
+            };
+            if req.firmware_type != expected_fw_type {
+                return Err(CarbideError::FailedPrecondition(format!(
+                    "Firmware type '{}' does not match rack '{}' hardware class '{}'",
+                    req.firmware_type, rack_id, rack_hw_class
+                ))
+                .into());
+            }
+        }
+    }
+
     // Convert rack to proto to get device IDs
     let rack_proto: rpc::forge::Rack = rack.into();
 
@@ -1214,6 +1253,7 @@ pub async fn apply(
         &req.firmware_id,
         &rack_id_str,
         &req.firmware_type,
+        fw_config.rack_hardware_type,
     )
     .await
     .map_err(CarbideError::from)?;

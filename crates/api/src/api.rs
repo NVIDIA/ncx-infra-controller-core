@@ -1426,7 +1426,7 @@ impl Forge for Api {
 
     async fn list_rack_firmware(
         &self,
-        request: tonic::Request<rpc::RackFirmwareListRequest>,
+        request: tonic::Request<rpc::RackFirmwareSearchFilter>,
     ) -> Result<Response<rpc::RackFirmwareList>, tonic::Status> {
         crate::handlers::rack_firmware::list(self, request).await
     }
