@@ -23,6 +23,9 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
+use attestation::{
+    handle_spdm_attestation_failed_recovery, handle_spdm_poll_state, handle_spdm_trigger_state,
+};
 use carbide_uuid::machine::MachineId;
 use chrono::{DateTime, Duration, Utc};
 use config_version::{ConfigVersion, Versioned};
@@ -45,7 +48,6 @@ use librms::protos::rack_manager::{NewNodeInfo, NodeType as RmsNodeType};
 use machine_validation::{handle_machine_validation_requested, handle_machine_validation_state};
 use measured_boot::records::MeasurementMachineState;
 use model::DpuModel;
-use model::attestation::spdm::SpdmAttestationState;
 use model::firmware::{Firmware, FirmwareComponentType, FirmwareEntry};
 use model::instance::InstanceNetworkSyncStatus;
 use model::instance::config::network::{
@@ -76,9 +78,8 @@ use model::machine::{
 use model::power_manager::PowerHandlingOutcome;
 use model::resource_pool::common::CommonPools;
 use model::site_explorer::ExploredEndpoint;
-use rpc::forge::SpdmAttestationStatus;
 use sku::{handle_bom_validation_requested, handle_bom_validation_state};
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgConnection;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use tokio::sync::Semaphore;
@@ -92,10 +93,8 @@ use crate::cfg::file::{
 };
 use crate::dpf::DpfOperations;
 use crate::firmware_downloader::FirmwareDownloader;
-use crate::handlers::attestation as attestation_handlers;
 use crate::redfish::{
-    self, RedfishClientPool, host_power_control, host_power_control_with_location,
-    set_host_uefi_password,
+    self, host_power_control, host_power_control_with_location, set_host_uefi_password,
 };
 use crate::site_explorer::rms;
 use crate::state_controller::common_services::CommonStateHandlerServices;
@@ -107,6 +106,7 @@ use crate::state_controller::state_handler::{
     StateHandler, StateHandlerContext, StateHandlerError, StateHandlerOutcome,
 };
 
+mod attestation;
 mod dpf;
 mod helpers;
 mod machine_validation;
@@ -1599,55 +1599,7 @@ impl MachineStateHandler {
                         }
                     }
                     FailureCause::SpdmAttestationFailed { .. } => {
-                        // check if the spdm attestation has been restarted via admin cli
-                        // or if it has been disabled via config
-                        let mut txn = ctx.services.db_pool.begin().await?;
-                        let should_resume_attestation = if !ctx.services.site_config.spdm.enabled {
-                            true
-                        } else {
-                            let attestation_status =
-                                db::attestation::spdm::get_attestation_status_for_machine_id(
-                                    &mut txn,
-                                    host_machine_id,
-                                )
-                                .await?;
-                            attestation_status == SpdmAttestationStatus::SpdmAttInProgress
-                                || attestation_status == SpdmAttestationStatus::SpdmAttCancelled
-                                || attestation_status == SpdmAttestationStatus::SpdmAttPassed
-                        };
-                        if should_resume_attestation {
-                            match &details.source {
-                                FailureSource::StateMachineArea(StateMachineArea::HostInit) => Ok(
-                                    StateHandlerOutcome::transition(ManagedHostState::HostInit {
-                                        machine_state: MachineState::SpdmMeasuring {
-                                            spdm_measuring_state: SpdmMeasuringState::PollResult,
-                                        },
-                                    })
-                                    .with_txn(txn),
-                                ),
-                                FailureSource::StateMachineArea(
-                                    StateMachineArea::AssignedInstance,
-                                ) => Ok(StateHandlerOutcome::transition(
-                                    ManagedHostState::PostAssignedMeasuring {
-                                        attestation_mode: AttestationMode::SpdmAttestation {
-                                            spdm_measuring_state: SpdmMeasuringState::PollResult,
-                                        },
-                                    },
-                                )
-                                .with_txn(txn)),
-                                FailureSource::StateMachineArea(StateMachineArea::MainFlow) => {
-                                    Ok(StateHandlerOutcome::transition(
-                                        ManagedHostState::PreAssignedMeasuring {
-                                            spdm_measuring_state: SpdmMeasuringState::PollResult,
-                                        },
-                                    )
-                                    .with_txn(txn))
-                                }
-                                _ => Ok(StateHandlerOutcome::do_nothing()),
-                            }
-                        } else {
-                            Ok(StateHandlerOutcome::do_nothing())
-                        }
+                        handle_spdm_attestation_failed_recovery(ctx, host_machine_id, details).await
                     }
                     FailureCause::MachineValidation { .. }
                         if machine_id.machine_type().is_host() =>
@@ -10255,92 +10207,6 @@ async fn set_host_boot_order(
                 time_since_state_change.num_minutes()
             )))
         }
-    }
-}
-
-async fn handle_spdm_trigger_state(
-    db_pool: &PgPool,
-    redfish_client_pool: Arc<dyn RedfishClientPool>,
-    mh_snapshot: &mut ManagedHostStateSnapshot,
-    host_machine_id: &MachineId,
-    next_spdm_state: ManagedHostState,
-    next_skip_state: ManagedHostState,
-) -> Result<StateHandlerOutcome<ManagedHostState>, StateHandlerError> {
-    // create redfish client
-    let redfish_client = redfish_client_pool
-        .create_client_from_machine(&mh_snapshot.host_snapshot, db_pool)
-        .await?;
-
-    let devices_scheduled = attestation_handlers::trigger_attestation(
-        db_pool,
-        redfish_client,
-        &mh_snapshot.host_snapshot.bmc_info,
-        host_machine_id,
-    )
-    .await
-    .map_err(|e| StateHandlerError::SpdmError(format!("{}", e)))?;
-
-    // if 0 devices scheduled - this means it is unsupported
-    // so we just proceed to the next state
-    if devices_scheduled == 0 {
-        tracing::info!(
-            machine_id = %host_machine_id,
-            "No devices scheduled for SPDM attestation"
-        );
-        Ok(StateHandlerOutcome::transition(next_skip_state))
-    } else {
-        Ok(StateHandlerOutcome::transition(next_spdm_state))
-    }
-}
-
-async fn handle_spdm_poll_state(
-    db_pool: &PgPool,
-    host_machine_id: &MachineId,
-    failure_source: FailureSource,
-    next_skip_state: ManagedHostState,
-) -> Result<StateHandlerOutcome<ManagedHostState>, StateHandlerError> {
-    let mut txn = db_pool.begin().await?;
-
-    // get attestation status for the entire machine
-    let attestation_status =
-        db::attestation::spdm::get_attestation_status_for_machine_id(&mut txn, host_machine_id)
-            .await?;
-
-    // passed or cancelled -> just move to the next state
-    // failed -> get states for all devices and log to the Failed state logging them there
-    match attestation_status {
-        SpdmAttestationStatus::SpdmAttPassed | SpdmAttestationStatus::SpdmAttCancelled => {
-            Ok(StateHandlerOutcome::transition(next_skip_state).with_txn(txn))
-        }
-        SpdmAttestationStatus::SpdmAttFailed => {
-            let attestation_states =
-                db::attestation::spdm::get_attestations_for_machine_id(&mut txn, host_machine_id)
-                    .await?;
-            // here, move to failed state with a full details
-            Ok(StateHandlerOutcome::transition(ManagedHostState::Failed {
-                details: FailureDetails {
-                    cause: FailureCause::SpdmAttestationFailed {
-                        err: attestation_states.iter()
-                        .filter(|elem| matches!(elem.state, SpdmAttestationState::Failed(_)))
-                        .fold(
-                            String::new(),
-                            |mut accum, x: &model::attestation::spdm::SpdmDeviceAttestationDetails| {
-                                accum.push_str(
-                                    &x.get_failure_cause().unwrap_or("".to_string()),
-                                );
-                                accum.push_str(". ");
-                                accum
-                            },
-                        ),
-                    },
-                    failed_at: chrono::Utc::now(),
-                    source: failure_source,
-                },
-                retry_count: 0,
-                machine_id: *host_machine_id,
-            }).with_txn(txn))
-        }
-        SpdmAttestationStatus::SpdmAttInProgress => Ok(StateHandlerOutcome::do_nothing()),
     }
 }
 
