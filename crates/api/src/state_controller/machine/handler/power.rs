@@ -227,7 +227,7 @@ async fn get_power_state(
         libredfish::PowerState::On | libredfish::PowerState::PoweringOn => {
             UsablePowerState::Usable(PowerState::On)
         }
-        libredfish::PowerState::Paused | libredfish::PowerState::Reset => {
+        libredfish::PowerState::Paused | libredfish::PowerState::Reset | libredfish::PowerState::Unknown => {
             UsablePowerState::NotUsable(power_state)
         }
     })
