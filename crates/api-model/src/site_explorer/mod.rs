@@ -1344,6 +1344,7 @@ impl From<PowerState> for rpc::site_explorer::PowerState {
             PowerState::PoweringOff => rpc::site_explorer::PowerState::PoweringOff,
             PowerState::PoweringOn => rpc::site_explorer::PowerState::PoweringOn,
             PowerState::Paused => rpc::site_explorer::PowerState::Paused,
+            PowerState::Unknown => rpc::site_explorer::PowerState::Unknown,
         }
     }
 }
@@ -1356,6 +1357,7 @@ pub enum PowerState {
     PoweringOff,
     PoweringOn,
     Paused,
+    Unknown,
 }
 
 /// `Manager` definition. Matches redfish definition
@@ -1745,6 +1747,7 @@ impl From<libredfish::PowerState> for PowerState {
             libredfish::PowerState::PoweringOn => PowerState::PoweringOn,
             libredfish::PowerState::Paused => PowerState::Paused,
             libredfish::PowerState::Reset => PowerState::PoweringOn,
+            libredfish::PowerState::Unknown => PowerState::Unknown,
         }
     }
 }
