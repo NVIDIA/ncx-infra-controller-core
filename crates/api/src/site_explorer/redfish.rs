@@ -765,6 +765,18 @@ async fn fetch_system(client: &dyn Redfish) -> Result<ComputerSystem, EndpointEx
         vec![]
     };
 
+    if is_powershelf {
+        match client.get_chassis("powershelf").await {
+            Ok(chassis) => match chassis.power_state {
+                Some(power) => system.power_state = power,
+                None => tracing::warn!("Powershelf chassis has no power_state field"),
+            },
+            Err(e) => {
+                tracing::warn!(%e, "Failed to fetch powershelf chassis for power state override")
+            }
+        }
+    }
+
     let is_infinite_boot_enabled = client
         .is_infinite_boot_enabled()
         .await
