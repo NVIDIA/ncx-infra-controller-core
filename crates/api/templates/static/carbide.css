@@ -148,6 +148,12 @@ nav {
   box-shadow: var(--shadow);
 }
 
+nav.nav-disabled {
+  pointer-events: none;
+  opacity: 0.45;
+  transition: opacity 0.2s ease;
+}
+
 /* Auto-hide scrollbar for navigation */
 nav::-webkit-scrollbar {
   width: 8px;

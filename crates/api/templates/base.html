@@ -165,6 +165,7 @@
 				scope.querySelectorAll('input[type="submit"], button[type="submit"]')
 					.forEach(function(b) { b.disabled = true; });
 				pendingScope = scope;
+				document.querySelector('nav').classList.add('nav-disabled');
 			});
 
 			function hideActionSpinner() {
@@ -174,6 +175,7 @@
 				pendingScope.querySelectorAll('input[type="submit"], button[type="submit"]')
 					.forEach(function(b) { b.disabled = false; });
 				pendingScope = null;
+				document.querySelector('nav').classList.remove('nav-disabled');
 			}
 
 			window.addEventListener('pageshow', function(e) {
