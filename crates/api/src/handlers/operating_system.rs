@@ -241,12 +241,12 @@ pub async fn create_operating_system(
             Some(artifacts_to_json(&sanitized))
         };
 
-        // PROVISIONING if any artifact has CACHED_ONLY or LOCAL_ONLY strategy
+        // PROVISIONING if any artifact has CACHED_ONLY strategy and cached_url is not set
         // (cached_url is always empty here since we stripped it above).
-        let status = if sanitized.iter().any(|a| {
-            a.cache_strategy == rpc::IpxeTemplateArtifactCacheStrategy::LocalOnly as i32
-                || a.cache_strategy == rpc::IpxeTemplateArtifactCacheStrategy::CachedOnly as i32
-        }) {
+        let status = if sanitized
+            .iter()
+            .any(|a| a.cache_strategy == rpc::IpxeTemplateArtifactCacheStrategy::CachedOnly as i32)
+        {
             db::operating_system::OS_STATUS_PROVISIONING.to_string()
         } else {
             db::operating_system::OS_STATUS_READY.to_string()
@@ -435,8 +435,7 @@ pub async fn update_operating_system(
 
     let status = if hash_changed || req_artifacts.is_some() {
         let needs_provisioning = effective_artifacts_for_json.iter().any(|a| {
-            (a.cache_strategy == rpc::IpxeTemplateArtifactCacheStrategy::LocalOnly as i32
-                || a.cache_strategy == rpc::IpxeTemplateArtifactCacheStrategy::CachedOnly as i32)
+            a.cache_strategy == rpc::IpxeTemplateArtifactCacheStrategy::CachedOnly as i32
                 && a.cached_url.as_deref().unwrap_or("").is_empty()
         });
         if needs_provisioning {
