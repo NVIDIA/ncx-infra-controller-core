@@ -3492,9 +3492,12 @@ message SshRequest {
 message CopyBfbToDpuRshimRequest {
   SshRequest ssh_request = 1;
   reserved 2;
-  // Optional host BMC IP; if provided, the host will be power-cycled
-  // before BFB copy to ensure the DPU has rshim control.
-  optional string host_bmc_ip = 3;
+  // Host BMC IP address. Required for the mandatory post-copy host
+  // power-cycle to apply the new BFB.
+  string host_bmc_ip = 3;
+  // When true, the host is also power-cycled *before* the BFB copy
+  // to release rshim control to the DPU BMC.
+  bool pre_copy_powercycle = 4;
 }
 
 message UpdateMachineHardwareInfoRequest {
