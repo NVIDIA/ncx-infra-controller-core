@@ -106,7 +106,12 @@ pub(crate) async fn spdm_attestation_run_to_failed_then_to_success(
     // manually trigger attestation via admin-cli
     let res = env
         .api
-        .trigger_machine_attestation(tonic::Request::new(host.id))
+        .trigger_machine_attestation(tonic::Request::new(
+            rpc::forge::SpdmMachineAttestationTriggerRequest {
+                machine_id: Some(host.id),
+                redfish_timeout_secs: u32::MAX,
+            },
+        ))
         .await
         .expect("Failed to trigger SPDM attestation")
         .into_inner();

@@ -2655,7 +2655,7 @@ impl Forge for Api {
 
     async fn trigger_machine_attestation(
         &self,
-        request: tonic::Request<MachineId>,
+        request: tonic::Request<rpc::SpdmMachineAttestationTriggerRequest>,
     ) -> Result<tonic::Response<rpc::SpdmMachineAttestationTriggerResponse>, Status> {
         crate::handlers::attestation::trigger_machine_attestation(self, request).await
     }

@@ -102,6 +102,7 @@ pub(crate) async fn handle_spdm_trigger_state(
         redfish_client,
         &mh_snapshot.host_snapshot.bmc_info,
         host_machine_id,
+        std::time::Duration::MAX,
     )
     .await
     .map_err(|e| StateHandlerError::SpdmError(format!("{}", e)))?;

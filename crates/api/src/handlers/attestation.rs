@@ -26,6 +26,7 @@ use model::attestation::spdm::{SpdmAttestationState, SpdmDeviceAttestation};
 use model::bmc_info::BmcInfo;
 use model::machine::machine_search_config::MachineSearchConfig;
 use sqlx::PgPool;
+use tokio::time as tt;
 use tonic::{Request, Response, Status};
 
 use crate::CarbideError;
@@ -34,18 +35,26 @@ use crate::handlers::utils::convert_and_log_machine_id;
 
 pub(crate) async fn trigger_machine_attestation(
     api: &Api,
-    request: Request<MachineId>,
+    request: Request<rpc::SpdmMachineAttestationTriggerRequest>,
 ) -> Result<Response<rpc::SpdmMachineAttestationTriggerResponse>, Status> {
     log_request_data(&request);
 
-    let machine_id = request.get_ref();
-    log_machine_id(machine_id);
+    let request_payload = request.get_ref();
+    let machine_id = request_payload
+        .machine_id
+        .ok_or(Status::from(CarbideError::Internal {
+            message: "No machine id supplied".to_string(),
+        }))?;
+    let redfish_timeout_duration =
+        std::time::Duration::from_secs(request_payload.redfish_timeout_secs as u64);
+
+    log_machine_id(&machine_id);
 
     let mut db_reader = api.db_reader();
 
     let machines = db::machine::find(
         &mut db_reader,
-        ObjectFilter::List(&[*machine_id]),
+        ObjectFilter::List(&[machine_id]),
         MachineSearchConfig::default(),
     )
     .await?;
@@ -64,26 +73,40 @@ pub(crate) async fn trigger_machine_attestation(
         }
     };
 
-    let redfish_client = api
-        .redfish_pool
-        .create_client_for_ingested_host(
-            bmc_info.ip_addr().map_err(|e| CarbideError::Internal {
-                message: format!("{}", e),
-            })?,
-            bmc_info.port,
-            &api.database_connection,
-        )
-        .await
-        .map_err(|e| CarbideError::RedfishClientCreation {
-            inner: Box::new(e),
-            machine_id: *machine_id,
-        })?;
+    let redfish_client_future = api.redfish_pool.create_client_for_ingested_host(
+        bmc_info.ip_addr().map_err(|e| CarbideError::Internal {
+            message: format!("{}", e),
+        })?,
+        bmc_info.port,
+        &api.database_connection,
+    );
 
-    let records_inserted =
-        trigger_attestation(api.pg_pool(), redfish_client, bmc_info, machine_id).await?;
+    let redfish_client = match tt::timeout(redfish_timeout_duration, redfish_client_future).await {
+        Ok(redfish_result) => redfish_result.map_err(|e| CarbideError::RedfishClientCreation {
+            inner: Box::new(e),
+            machine_id,
+        })?,
+        Err(_) => {
+            return Err(Status::from(CarbideError::Internal {
+                message: format!(
+                    "redfish creation could not finish in {} seconds",
+                    redfish_timeout_duration.as_secs()
+                ),
+            }));
+        }
+    };
+
+    let records_inserted = trigger_attestation(
+        api.pg_pool(),
+        redfish_client,
+        bmc_info,
+        &machine_id,
+        redfish_timeout_duration,
+    )
+    .await?;
 
     Ok(Response::new(rpc::SpdmMachineAttestationTriggerResponse {
-        machine_id: Some(*machine_id),
+        machine_id: Some(machine_id),
         devices_under_attestation: records_inserted as i32,
     }))
 }
@@ -93,6 +116,7 @@ pub async fn trigger_attestation(
     redfish_client: Box<dyn libredfish::Redfish>,
     bmc_info: &BmcInfo,
     machine_id: &MachineId,
+    redfish_timeout_duration: std::time::Duration,
 ) -> Result<u64, CarbideError> {
     // retrieve bmc info for a machine and create redfish client
     // get service root
@@ -100,22 +124,44 @@ pub async fn trigger_attestation(
     // get component integrities and create/insert device attestations
     // - if none, return NotSupported
 
-    let service_root = redfish_client
-        .get_service_root()
-        .await
-        .map_err(CarbideError::RedfishError)?;
+    let service_root_future = redfish_client.get_service_root();
+
+    let service_root = match tt::timeout(redfish_timeout_duration, service_root_future).await {
+        Ok(redfish_result) => redfish_result.map_err(CarbideError::RedfishError)?,
+        Err(_) => {
+            return Err(CarbideError::Internal {
+                message: format!(
+                    "redfish service_root could not finish in {} secods",
+                    redfish_timeout_duration.as_secs()
+                ),
+            });
+        }
+    };
 
     if service_root.component_integrity.is_none() {
         // let's treat 0 devices under attestation as NotSupported
         return Ok(0);
     }
 
-    let component_integrities = redfish_client
-        .get_component_integrities()
-        .await
-        .map_err(|e| {
-            CarbideError::AttestationError(format!("Error getting component integrities: {}", e))
-        })?;
+    let component_integrities_future = redfish_client.get_component_integrities();
+
+    let component_integrities =
+        match tt::timeout(redfish_timeout_duration, component_integrities_future).await {
+            Ok(redfish_result) => redfish_result.map_err(|e| {
+                CarbideError::AttestationError(format!(
+                    "Error getting component integrities: {}",
+                    e
+                ))
+            })?,
+            Err(_) => {
+                return Err(CarbideError::Internal {
+                    message: format!(
+                        "redfish get_component_integrities could not finish in {} secods",
+                        redfish_timeout_duration.as_secs()
+                    ),
+                });
+            }
+        };
 
     let components = get_components_supporting_spdm(&component_integrities);
 
@@ -196,7 +242,6 @@ pub(crate) async fn list_machine_ids_under_attestation(
     Ok(Response::new(MachineIdList { machine_ids }))
 }
 
-#[allow(txn_without_commit)]
 pub(crate) async fn list_attestations_for_machine_id(
     api: &Api,
     request: Request<MachineId>,
@@ -209,6 +254,7 @@ pub(crate) async fn list_attestations_for_machine_id(
     let mut txn = api.txn_begin().await?;
     let attestations_details =
         db::attestation::spdm::get_attestations_for_machine_id(&mut txn, machine_id).await?;
+    txn.commit().await?;
 
     Ok(Response::new(rpc::SpdmListAttestationsResponse {
         attestations_details: attestations_details

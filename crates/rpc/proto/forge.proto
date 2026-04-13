@@ -700,7 +700,7 @@ service Forge {
   rpc FindInstancesByDpuExtensionService(FindInstancesByDpuExtensionServiceRequest) returns (FindInstancesByDpuExtensionServiceResponse);
 
   // SPDM attestation APIs start
-  rpc TriggerMachineAttestation(common.MachineId) returns (SpdmMachineAttestationTriggerResponse);
+  rpc TriggerMachineAttestation(SpdmMachineAttestationTriggerRequest) returns (SpdmMachineAttestationTriggerResponse);
   rpc CancelMachineAttestation(common.MachineId) returns (google.protobuf.Empty);
   rpc FindMachineIdsUnderAttestation(google.protobuf.Empty) returns (common.MachineIdList);
   rpc ListAttestationsForMachineId(common.MachineId) returns (SpdmListAttestationsResponse);
@@ -867,6 +867,11 @@ message SpdmAttestationDetails{
 
 message SpdmListAttestationsResponse {
   repeated SpdmAttestationDetails attestations_details = 1;
+}
+
+message SpdmMachineAttestationTriggerRequest {
+  common.MachineId machine_id = 1;
+  uint32 redfish_timeout_secs = 2;
 }
 
 // Machine Identity - JWT-SVID token signing

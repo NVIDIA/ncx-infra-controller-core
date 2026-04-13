@@ -18,6 +18,7 @@ pub mod tests {
 
     use carbide_uuid::machine::MachineId;
     use model::attestation::spdm::{SpdmAttestationState, SpdmObjectId};
+    use rpc::forge::SpdmMachineAttestationTriggerRequest;
     use rpc::forge::forge_server::Forge;
     use sqlx::PgConnection;
     //use sqlx::PgConnection;
@@ -27,7 +28,6 @@ pub mod tests {
         RedfishOverrides, TestEnvOverrides, create_managed_host, create_test_env,
         create_test_env_with_overrides,
     };
-
     // A simple test to test basic db functions.
     #[crate::sqlx_test]
     async fn test_attestation_succeeds(pool: sqlx::PgPool) -> Result<(), eyre::Error> {
@@ -47,7 +47,10 @@ pub mod tests {
         let (machine_id, _dpu_id) = create_managed_host(&env).await.into();
         let _ = env
             .api
-            .trigger_machine_attestation(Request::new(machine_id))
+            .trigger_machine_attestation(Request::new(SpdmMachineAttestationTriggerRequest {
+                machine_id: Some(machine_id),
+                redfish_timeout_secs: u32::MAX,
+            }))
             .await?;
 
         // device attestations should be created now
@@ -230,7 +233,10 @@ pub mod tests {
         let (machine_id, _dpu_id) = create_managed_host(&env).await.into();
         let response = env
             .api
-            .trigger_machine_attestation(Request::new(machine_id))
+            .trigger_machine_attestation(Request::new(SpdmMachineAttestationTriggerRequest {
+                machine_id: Some(machine_id),
+                redfish_timeout_secs: u32::MAX,
+            }))
             .await?;
 
         assert_eq!(0, response.into_inner().devices_under_attestation);
@@ -264,7 +270,10 @@ pub mod tests {
         let (machine_id, _dpu_id) = create_managed_host(&env).await.into();
         let response = env
             .api
-            .trigger_machine_attestation(Request::new(machine_id))
+            .trigger_machine_attestation(Request::new(SpdmMachineAttestationTriggerRequest {
+                machine_id: Some(machine_id),
+                redfish_timeout_secs: u32::MAX,
+            }))
             .await?;
 
         assert_eq!(3, response.into_inner().devices_under_attestation);
@@ -322,7 +331,10 @@ pub mod tests {
         let (machine_id, _dpu_id) = create_managed_host(&env).await.into();
         let response = env
             .api
-            .trigger_machine_attestation(Request::new(machine_id))
+            .trigger_machine_attestation(Request::new(SpdmMachineAttestationTriggerRequest {
+                machine_id: Some(machine_id),
+                redfish_timeout_secs: u32::MAX,
+            }))
             .await?;
 
         assert_eq!(3, response.into_inner().devices_under_attestation);
@@ -401,7 +413,10 @@ pub mod tests {
         let (machine_id, _dpu_id) = create_managed_host(&env).await.into();
         let _ = env
             .api
-            .trigger_machine_attestation(Request::new(machine_id))
+            .trigger_machine_attestation(Request::new(SpdmMachineAttestationTriggerRequest {
+                machine_id: Some(machine_id),
+                redfish_timeout_secs: u32::MAX,
+            }))
             .await?;
 
         // device attestations should be created now
