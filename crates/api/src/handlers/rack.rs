@@ -195,7 +195,7 @@ pub async fn find_by_ids(
 pub async fn find_rack_state_histories(
     api: &Api,
     request: Request<rpc::RackStateHistoriesRequest>,
-) -> Result<Response<rpc::RackStateHistories>, Status> {
+) -> Result<Response<rpc::StateHistories>, Status> {
     log_request_data(&request);
     let request = request.into_inner();
     let rack_ids = request.rack_ids;
@@ -218,11 +218,11 @@ pub async fn find_rack_state_histories(
         .await
         .map_err(CarbideError::from)?;
 
-    let mut response = rpc::RackStateHistories::default();
+    let mut response = rpc::StateHistories::default();
     for (rack_id, records) in results {
         response.histories.insert(
             rack_id.to_string(),
-            ::rpc::forge::RackStateHistoryRecords {
+            ::rpc::forge::StateHistoryRecords {
                 records: records.into_iter().map(Into::into).collect(),
             },
         );
@@ -391,6 +391,48 @@ async fn remove_rack_override_by_source(
     db_rack::remove_health_report_override(&mut *txn, &rack.id, mode, &source).await?;
 
     Ok(())
+}
+
+pub async fn get_rack_capabilities(
+    api: &Api,
+    request: Request<rpc::GetRackCapabilitiesRequest>,
+) -> Result<Response<rpc::GetRackCapabilitiesResponse>, Status> {
+    log_request_data(&request);
+
+    let req = request.into_inner();
+    let rack_id = req
+        .rack_id
+        .ok_or_else(|| CarbideError::MissingArgument("rack_id"))?;
+
+    let rack = db_rack::get(&api.database_connection, &rack_id)
+        .await
+        .map_err(CarbideError::from)?;
+
+    let rack_type_name = rack.config.rack_type.as_deref().unwrap_or_default();
+    if rack_type_name.is_empty() {
+        return Err(CarbideError::NotFoundError {
+            kind: "rack_type for rack",
+            id: rack_id.to_string(),
+        }
+        .into());
+    }
+
+    let capabilities = api
+        .runtime_config
+        .rack_types
+        .get(rack_type_name)
+        .ok_or_else(|| CarbideError::NotFoundError {
+            kind: "rack capabilities for rack_type",
+            id: rack_type_name.to_string(),
+        })?;
+
+    let rpc_capabilities: rpc::RackCapabilitiesSet = capabilities.into();
+
+    Ok(Response::new(rpc::GetRackCapabilitiesResponse {
+        rack_id: Some(rack_id),
+        rack_type: rack_type_name.to_string(),
+        capabilities: Some(rpc_capabilities),
+    }))
 }
 
 pub(crate) async fn update_rack_metadata(

@@ -978,6 +978,7 @@ dependencies = [
 name = "bmc-explorer"
 version = "0.1.0"
 dependencies = [
+ "axum 0.8.6",
  "bmc-mock",
  "bmc-vendor",
  "carbide-api-model",
@@ -1354,6 +1355,7 @@ dependencies = [
  "carbide-dpf",
  "carbide-health-report",
  "carbide-host-support",
+ "carbide-ipxe-renderer",
  "carbide-libmlx",
  "carbide-macros",
  "carbide-measured-boot",
@@ -1475,6 +1477,7 @@ dependencies = [
  "carbide-api-model",
  "carbide-health-report",
  "carbide-host-support",
+ "carbide-ipxe-renderer",
  "carbide-libmlx",
  "carbide-macros",
  "carbide-measured-boot",
@@ -1548,6 +1551,7 @@ dependencies = [
  "carbide-dpf",
  "carbide-health-report",
  "carbide-host-support",
+ "carbide-ipxe-renderer",
  "carbide-libmlx",
  "carbide-network",
  "carbide-rpc",
@@ -2052,6 +2056,16 @@ dependencies = [
  "tower-service",
  "tracing",
  "tryhard",
+]
+
+[[package]]
+name = "carbide-ipxe-renderer"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -5725,7 +5739,7 @@ dependencies = [
 [[package]]
 name = "libredfish"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.43.5#add240967b48f7781fead48b8e3b223acbbc96d3"
+source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.43.9#a2f873edee9a49494a05b737e49c9c4e6378761b"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5756,8 +5770,8 @@ dependencies = [
 
 [[package]]
 name = "librms"
-version = "0.0.5"
-source = "git+https://github.com/NVIDIA/nv-rms-client.git?tag=v0.0.5#d516c7838fa4185ee6e7de426f3c759081624b0a"
+version = "0.0.11"
+source = "git+https://github.com/NVIDIA/nv-rms-client.git?tag=v0.0.9.beta-rc2#52c7d4a0a1cda0c11bfbd544afb3acf13b328dab"
 dependencies = [
  "async-trait",
  "chrono",
@@ -10309,7 +10323,7 @@ dependencies = [
 [[package]]
 name = "tonic-client-wrapper"
 version = "1.0.0"
-source = "git+https://github.com/NVIDIA/nv-rms-client.git?tag=v0.0.5#d516c7838fa4185ee6e7de426f3c759081624b0a"
+source = "git+https://github.com/NVIDIA/nv-rms-client.git?tag=v0.0.9.beta-rc2#52c7d4a0a1cda0c11bfbd544afb3acf13b328dab"
 dependencies = [
  "async-trait",
  "heck 0.5.0",

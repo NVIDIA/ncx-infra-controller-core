@@ -263,11 +263,14 @@ pub async fn start_api(
     )
     .await?;
 
-    let rms_client = match carbide_config.rms_api_url.clone() {
+    let rms_client = match carbide_config.rms.api_url.clone() {
         Some(url) if !url.is_empty() => {
-            // let the crate pick up default certs, enforce tls
-            let rms_client_config =
-                librms::client_config::RmsClientConfig::new(None, None, None, true);
+            let rms_client_config = librms::client_config::RmsClientConfig::new(
+                carbide_config.rms.root_ca_path.clone(),
+                carbide_config.rms.client_cert.clone(),
+                carbide_config.rms.client_key.clone(),
+                carbide_config.rms.enforce_tls,
+            );
             let rms_api_config = librms::client::RmsApiConfig::new(&url, &rms_client_config);
             let rms_client_pool = librms::RmsClientPool::new(&rms_api_config);
             let shared_rms_client = rms_client_pool.create_client().await;
@@ -417,6 +420,15 @@ pub async fn start_api(
         let services = vec![carbide_dpf::services::dts_service(
             &carbide_dpf::services::ServiceRegistryConfig::default(),
         )];
+        let reg = crate::dpf_services::CarbideServiceRegistryConfig::default();
+        let v2_services = vec![
+            carbide_dpf::services::dts_service(
+                &carbide_dpf::services::ServiceRegistryConfig::default(),
+            ),
+            crate::dpf_services::dhcp_server_service(&reg),
+            crate::dpf_services::doca_hbn_service(&reg),
+            crate::dpf_services::dpu_agent_service(&reg),
+        ];
 
         let bfcfg_template = if carbide_config.dpf.bfcfg_enabled {
             Some(crate::dpf::render_bfcfg(&carbide_config)?)
@@ -426,7 +438,7 @@ pub async fn start_api(
 
         let bfb_url = if carbide_config.dpf.v2 && carbide_config.dpf.bfb_url.is_empty() {
             // This should move to cfg/file as a default value once v2 is the only mode.
-            "https://content.mellanox.com/BlueField/BFBs/Ubuntu22.04/bf-bundle-3.2.0-113_25.10_ubuntu-22.04_prod.bfb".to_string()
+            "https://content.mellanox.com/BlueField/BFBs/Ubuntu24.04/bf-bundle-3.2.1-34_25.11_ubuntu-24.04_64k_prod.bfb".to_string()
         } else if carbide_config.dpf.bfb_url.is_empty() {
             crate::dpf::resolve_bfb_url().await?
         } else {
@@ -445,8 +457,7 @@ pub async fn start_api(
                 carbide_config.dpf.deployment_name.clone()
             },
             services: if carbide_config.dpf.v2 {
-                // Enable all the services.
-                Vec::new()
+                v2_services
             } else {
                 services
             },
@@ -455,11 +466,6 @@ pub async fn start_api(
                 None
             } else {
                 bfcfg_template
-            },
-            dpu_flavor: if carbide_config.dpf.v2 {
-                Some((*carbide_config).clone().into())
-            } else {
-                None
             },
         };
 
@@ -1012,6 +1018,7 @@ pub async fn initialize_and_start_controllers(
         common_pools.clone(),
         work_lock_manager_handle.clone(),
         rms_client.clone(),
+        credential_manager.clone(),
     )
     .start(join_set, cancel_token.clone())?;
 

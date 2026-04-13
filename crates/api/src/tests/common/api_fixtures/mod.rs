@@ -1049,6 +1049,7 @@ fn host_firmware_example() -> HashMap<String, Firmware> {
 
 pub fn get_config() -> CarbideConfig {
     CarbideConfig {
+        bgp_leaf_session_password: None,
         rack_validation_config: crate::cfg::file::RackValidationConfig {
             enabled: true,
             ..Default::default()
@@ -1202,9 +1203,12 @@ pub fn get_config() -> CarbideConfig {
         }),
         mlxconfig_profiles: None,
         rack_management_enabled: false,
-        rms_api_url: Some(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080).to_string(),
-        ),
+        rms: crate::cfg::file::RmsConfig {
+            api_url: Some(
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080).to_string(),
+            ),
+            ..Default::default()
+        },
         rack_types: Default::default(),
         spdm_state_controller: SpdmStateControllerConfig {
             controller: StateControllerConfig::default(),
@@ -1223,6 +1227,9 @@ pub fn get_config() -> CarbideConfig {
         dpf: crate::cfg::file::DpfConfig::default(),
         x86_pxe_boot_url_override: None,
         arm_pxe_boot_url_override: None,
+        external_api_url: None,
+        external_pxe_url: None,
+        external_static_pxe_url: None,
         supernic_firmware_profiles: HashMap::default(),
         component_manager: None,
     }
@@ -1678,6 +1685,7 @@ pub async fn create_test_env_with_overrides(
         common_pools.clone(),
         work_lock_manager_handle.clone(),
         rms_sim.as_rms_client(),
+        credential_manager.clone(),
     );
 
     // Create some instance types
@@ -1731,8 +1739,10 @@ pub async fn create_test_env_with_overrides(
         network_controller.run_single_iteration().await;
         network_controller.run_single_iteration().await;
 
-        // Create static-assignments "anchor segment"
-        create_static_assignments_segment(&api).await;
+        // Synthetic segment for operator static IPs outside Carbide-managed prefixes (expected
+        // machine / switch / shelf BMC pre-allocation). Required for static-BMC integration tests.
+        // Pass the domain to match production behavior (db_init passes Some(domain_id)).
+        create_static_assignments_segment(&api, Some(domain)).await;
         network_controller.run_single_iteration().await;
         network_controller.run_single_iteration().await;
 
