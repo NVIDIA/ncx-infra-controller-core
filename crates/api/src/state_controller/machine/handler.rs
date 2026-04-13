@@ -9987,7 +9987,7 @@ mod tests {
                 RedfishAuth::Key(CredentialKey::HostRedfish {
                     credential_type: CredentialType::SiteDefault,
                 }),
-                false,
+                None,
             )
             .await
             .unwrap();
