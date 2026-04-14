@@ -128,3 +128,24 @@ fn parse_delete_missing_id_fails() {
     let result = Cmd::try_parse_from(["rack-firmware", "delete"]);
     assert!(result.is_err(), "should fail without id");
 }
+
+// parse_set_default ensures set-default parses with firmware ID.
+#[test]
+fn parse_set_default() {
+    let cmd = Cmd::try_parse_from(["rack-firmware", "set-default", "fw-001"])
+        .expect("should parse set-default");
+
+    match cmd {
+        Cmd::SetDefault(args) => {
+            assert_eq!(args.firmware_id, "fw-001");
+        }
+        _ => panic!("expected SetDefault variant"),
+    }
+}
+
+// parse_set_default_missing_id_fails ensures set-default fails without ID.
+#[test]
+fn parse_set_default_missing_id_fails() {
+    let result = Cmd::try_parse_from(["rack-firmware", "set-default"]);
+    assert!(result.is_err(), "should fail without firmware_id");
+}

@@ -37,6 +37,7 @@ pub async fn list(
         table.set_titles(Row::new(vec![
             Cell::new("ID"),
             Cell::new("Hardware Type"),
+            Cell::new("Default"),
             Cell::new("Available"),
             Cell::new("Created"),
             Cell::new("Updated"),
@@ -48,9 +49,11 @@ pub async fn list(
                 .as_ref()
                 .map(|t| t.value.as_str())
                 .unwrap_or("N/A");
+            let default_marker = if config.is_default { "*" } else { "" };
             table.add_row(Row::new(vec![
                 Cell::new(&config.id),
                 Cell::new(hw_type),
+                Cell::new(default_marker),
                 Cell::new(&config.available.to_string()),
                 Cell::new(&config.created),
                 Cell::new(&config.updated),

@@ -29,6 +29,7 @@ pub struct RackFirmware {
     pub rack_hardware_type: RackHardwareType,
     pub config: Json<serde_json::Value>,
     pub available: bool,
+    pub is_default: bool,
     pub parsed_components: Option<Json<serde_json::Value>>,
     pub created: DateTime<Utc>,
     pub updated: DateTime<Utc>,
@@ -41,6 +42,7 @@ impl<'r> FromRow<'r, PgRow> for RackFirmware {
             rack_hardware_type: row.try_get("rack_hardware_type")?,
             config: row.try_get("config")?,
             available: row.try_get("available")?,
+            is_default: row.try_get("is_default")?,
             parsed_components: row.try_get("parsed_components")?,
             created: row.try_get("created")?,
             updated: row.try_get("updated")?,
@@ -64,6 +66,7 @@ impl From<&RackFirmware> for rpc::forge::RackFirmware {
             updated: db.updated.format("%Y-%m-%d %H:%M:%S").to_string(),
             parsed_components,
             rack_hardware_type: Some(db.rack_hardware_type.clone().into()),
+            is_default: db.is_default,
         }
     }
 }

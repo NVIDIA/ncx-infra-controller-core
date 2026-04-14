@@ -375,6 +375,7 @@ service Forge {
   rpc GetRackFirmwareJobStatus(RackFirmwareJobStatusRequest) returns (RackFirmwareJobStatusResponse);
   // Get the history of rack firmware apply operations
   rpc GetRackFirmwareHistory(RackFirmwareHistoryRequest) returns (RackFirmwareHistoryResponse);
+  rpc RackFirmwareSetDefault(RackFirmwareSetDefaultRequest) returns (google.protobuf.Empty);
 
   // Replace all expected machines in site
   rpc ReplaceAllExpectedMachines(ExpectedMachineList) returns (google.protobuf.Empty);
@@ -7203,6 +7204,11 @@ message RackFirmware {
   string updated = 5;
   string parsed_components = 6; // JSON string of firmware lookup table
   common.RackHardwareType rack_hardware_type = 7;
+  bool is_default = 8;
+}
+
+message RackFirmwareSetDefaultRequest {
+  string firmware_id = 1;
 }
 
 message FirmwareComponentInfo {

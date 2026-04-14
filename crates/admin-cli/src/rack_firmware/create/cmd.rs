@@ -40,6 +40,7 @@ pub async fn create(
             .map(|t| t.value.as_str())
             .unwrap_or("N/A");
         table.add_row(row!["Hardware Type", hw_type]);
+        table.add_row(row!["Default", result.is_default]);
         table.add_row(row!["Available", result.available]);
         table.add_row(row!["Created", result.created]);
         table.printstd();

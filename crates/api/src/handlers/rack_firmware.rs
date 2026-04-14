@@ -25,7 +25,7 @@ use rpc::forge::{
     RackFirmwareApplyResponse, RackFirmwareCreateRequest, RackFirmwareDeleteRequest,
     RackFirmwareGetRequest, RackFirmwareHistoryRecords, RackFirmwareHistoryRequest,
     RackFirmwareHistoryResponse, RackFirmwareJobStatusRequest, RackFirmwareJobStatusResponse,
-    RackFirmwareList, RackFirmwareSearchFilter,
+    RackFirmwareList, RackFirmwareSearchFilter, RackFirmwareSetDefaultRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -339,9 +339,24 @@ pub async fn create(
         .ok_or_else(|| CarbideError::MissingArgument("rack_hardware_type"))?
         .into();
 
-    let db_config =
-        rack_firmware_db::create(&mut txn, &id, rack_hardware_type, config, parsed_components)
-            .await?;
+    let mut db_config = rack_firmware_db::create(
+        &mut txn,
+        &id,
+        rack_hardware_type.clone(),
+        config,
+        parsed_components,
+    )
+    .await?;
+
+    // Auto-set as default if no default exists for this rack_hardware_type.
+    if !rack_firmware_db::has_default(&mut txn, &rack_hardware_type).await? {
+        db_config = rack_firmware_db::set_default(&mut txn, &id).await?;
+        tracing::info!(
+            firmware_id = %id,
+            rack_hardware_type = %rack_hardware_type,
+            "Auto-set as default firmware (first for this rack hardware type)."
+        );
+    }
 
     txn.commit()
         .await
@@ -1441,4 +1456,30 @@ pub async fn get_history(
         .collect();
 
     Ok(Response::new(RackFirmwareHistoryResponse { histories }))
+}
+
+/// Set a rack firmware configuration as the default for its rack hardware type.
+pub async fn set_default(
+    api: &Api,
+    request: Request<RackFirmwareSetDefaultRequest>,
+) -> Result<Response<()>, Status> {
+    let req = request.into_inner();
+
+    if req.firmware_id.is_empty() {
+        return Err(CarbideError::InvalidArgument("firmware_id is required".to_string()).into());
+    }
+
+    let mut txn = api
+        .database_connection
+        .begin()
+        .await
+        .map_err(|e| CarbideError::from(DatabaseError::new("begin set_default", e)))?;
+
+    rack_firmware_db::set_default(&mut txn, &req.firmware_id).await?;
+
+    txn.commit()
+        .await
+        .map_err(|e| CarbideError::from(DatabaseError::new("commit set_default", e)))?;
+
+    Ok(Response::new(()))
 }
