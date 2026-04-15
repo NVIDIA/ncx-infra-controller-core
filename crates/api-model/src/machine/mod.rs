@@ -457,8 +457,6 @@ impl ManagedHostStateSnapshot {
                 let mut rpc_machine: rpc::forge::Machine = dpu_snapshot.clone().into();
                 // In case the DPU does not know the associated Host - we can backfill the data here
                 rpc_machine.associated_host_machine_id = Some(self.host_snapshot.id);
-                // Overwrite state_sla with the configured MachineSlaConfig
-                // (the From<Machine> impl uses MachineSlaConfig::default())
                 rpc_machine.state_sla = Some(
                     state_sla(
                         &dpu_snapshot.id,
@@ -2539,11 +2537,15 @@ pub fn state_sla(
         ManagedHostState::Ready => StateSla::no_sla(),
         ManagedHostState::Assigned { instance_state } => match instance_state {
             InstanceState::Ready => StateSla::no_sla(),
-            InstanceState::BootingWithDiscoveryImage { retry } if retry.count > 1 => {
-                StateSla::with_sla(
-                    sla_config.assigned_booting_with_discovery_image,
-                    time_in_state,
-                )
+            InstanceState::BootingWithDiscoveryImage { retry } => {
+                if retry.count > 1 {
+                    StateSla::with_sla(std::time::Duration::ZERO, time_in_state)
+                } else {
+                    StateSla::with_sla(
+                        sla_config.assigned_booting_with_discovery_image,
+                        time_in_state,
+                    )
+                }
             }
             InstanceState::HostPlatformConfiguration { .. } => {
                 StateSla::with_sla(slas::ASSIGNED_HOST_PLATFORM_CONFIGURATION, time_in_state)
