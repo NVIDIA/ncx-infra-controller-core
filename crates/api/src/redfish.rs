@@ -821,8 +821,13 @@ pub mod test_support {
                     HashMap<libredfish::BiosProfileType, HashMap<String, serde_json::Value>>,
                 >,
             >,
-        ) -> Result<(), RedfishError> {
-            Ok(())
+        ) -> Result<Option<String>, RedfishError> {
+            let mut state = self.state.lock().unwrap();
+            let host_state = state.hosts.get_mut(&self._host).unwrap();
+            host_state.actions.push(RedfishSimAction::MachineSetup {
+                oem_manager_profiles: oem_manager_profiles.clone(),
+            });
+            Ok(None)
         }
 
         async fn machine_setup_status(
