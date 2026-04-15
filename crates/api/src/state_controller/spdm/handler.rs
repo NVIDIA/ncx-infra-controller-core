@@ -87,26 +87,6 @@ impl StateHandler for SpdmAttestationStateHandler {
         controller_state: &SpdmAttestationState,
         ctx: &mut StateHandlerContext<Self::ContextObjects>,
     ) -> Result<StateHandlerOutcome<SpdmAttestationState>, StateHandlerError> {
-        // TODO: Fix txn_held_across_await in handle_object_state_inner, then move it back inline
-        let pool = ctx.services.db_pool.clone();
-        let mut txn = pool.begin().await?;
-        let outcome = self
-            .handle_object_state_inner(object_id, snapshot, controller_state, &mut txn, ctx)
-            .await?;
-        Ok(outcome.with_txn(txn))
-    }
-}
-
-impl SpdmAttestationStateHandler {
-    #[allow(txn_held_across_await)]
-    async fn handle_object_state_inner(
-        &self,
-        object_id: &SpdmObjectId,
-        snapshot: &mut SpdmDeviceAttestation,
-        controller_state: &SpdmAttestationState,
-        txn: &mut sqlx::PgConnection,
-        ctx: &mut StateHandlerContext<'_, SpdmStateHandlerContextObjects>,
-    ) -> Result<StateHandlerOutcome<SpdmAttestationState>, StateHandlerError> {
         // record metrics irrespective of the state of the machine
         self.record_metrics(snapshot, ctx);
 
@@ -144,11 +124,13 @@ impl SpdmAttestationStateHandler {
                 };
 
                 let metadata = SpdmMachineDeviceMetadata { firmware_version };
-                db::attestation::spdm::update_metadata(txn, machine_id, device_id, &metadata)
+                let mut txn = ctx.services.db_pool.begin().await?;
+                db::attestation::spdm::update_metadata(&mut txn, machine_id, device_id, &metadata)
                     .await?;
-                Ok(StateHandlerOutcome::transition(
-                    SpdmAttestationState::FetchCertificate,
-                ))
+                Ok(
+                    StateHandlerOutcome::transition(SpdmAttestationState::FetchCertificate)
+                        .with_txn(txn),
+                )
             }
             SpdmAttestationState::FetchCertificate => {
                 let redfish_client = redfish_client(&snapshot.bmc_info, ctx).await?;
@@ -168,8 +150,9 @@ impl SpdmAttestationStateHandler {
                         error,
                     })?;
 
+                let mut txn = ctx.services.db_pool.begin().await?;
                 db::attestation::spdm::update_certificate(
-                    txn,
+                    &mut txn,
                     &object_id.0,
                     device_id,
                     &ca_certificate,
@@ -177,7 +160,8 @@ impl SpdmAttestationStateHandler {
                 .await?;
                 Ok(StateHandlerOutcome::transition(
                     SpdmAttestationState::TriggerEvidenceCollection { retry_count: 0 },
-                ))
+                )
+                .with_txn(txn))
             }
             SpdmAttestationState::TriggerEvidenceCollection { retry_count } => {
                 // firmware version and certificate are collected. Let's trigger the
@@ -235,16 +219,18 @@ impl SpdmAttestationStateHandler {
                                 error: e,
                             }
                         })?;
+                        let mut txn = ctx.services.db_pool.begin().await?;
                         db::attestation::spdm::update_evidence(
-                            txn,
+                            &mut txn,
                             &object_id.0,
                             device_id,
                             &evidence,
                         )
                         .await?;
-                        Ok(StateHandlerOutcome::transition(
-                            SpdmAttestationState::NrasVerification,
-                        ))
+                        Ok(
+                            StateHandlerOutcome::transition(SpdmAttestationState::NrasVerification)
+                                .with_txn(txn),
+                        )
                     }
                     Some(TaskState::Running) | Some(TaskState::New) | Some(TaskState::Starting) => {
                         Ok(StateHandlerOutcome::wait(format!(
@@ -307,16 +293,19 @@ impl SpdmAttestationStateHandler {
                 ))
             }
             SpdmAttestationState::Passed => {
-                db::attestation::spdm::set_completed_at(txn, machine_id, device_id).await?;
-                Ok(StateHandlerOutcome::do_nothing())
+                let mut txn = ctx.services.db_pool.begin().await?;
+                db::attestation::spdm::set_completed_at(&mut txn, machine_id, device_id).await?;
+                Ok(StateHandlerOutcome::do_nothing().with_txn(txn))
             }
             SpdmAttestationState::Failed(_reason) => {
-                db::attestation::spdm::set_completed_at(txn, machine_id, device_id).await?;
-                Ok(StateHandlerOutcome::do_nothing())
+                let mut txn = ctx.services.db_pool.begin().await?;
+                db::attestation::spdm::set_completed_at(&mut txn, machine_id, device_id).await?;
+                Ok(StateHandlerOutcome::do_nothing().with_txn(txn))
             }
             SpdmAttestationState::Cancelled => {
-                db::attestation::spdm::set_completed_at(txn, machine_id, device_id).await?;
-                Ok(StateHandlerOutcome::do_nothing())
+                let mut txn = ctx.services.db_pool.begin().await?;
+                db::attestation::spdm::set_completed_at(&mut txn, machine_id, device_id).await?;
+                Ok(StateHandlerOutcome::do_nothing().with_txn(txn))
             }
         }
     }
