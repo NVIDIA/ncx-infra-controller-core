@@ -91,6 +91,20 @@ async fn trigger_rack_firmware_reprovisioning_requests(
     Ok(())
 }
 
+async fn clear_rack_firmware_device_statuses(
+    txn: &mut sqlx::PgConnection,
+    machine_ids: &[carbide_uuid::machine::MachineId],
+    switch_ids: &[carbide_uuid::switch::SwitchId],
+) -> Result<(), StateHandlerError> {
+    for machine_id in machine_ids {
+        db_machine::update_rack_fw_details(txn, machine_id, None).await?;
+    }
+    for switch_id in switch_ids {
+        db_switch::update_firmware_upgrade_status(txn, *switch_id, None).await?;
+    }
+    Ok(())
+}
+
 fn skip_firmware_upgrade_outcome(
     rack_id: &RackId,
     reason: impl AsRef<str>,
@@ -466,6 +480,12 @@ pub async fn handle_maintenance(
                 trigger_rack_firmware_reprovisioning_requests(
                     txn.as_mut(),
                     id,
+                    &inventory.machine_ids,
+                    &inventory.switch_ids,
+                )
+                .await?;
+                clear_rack_firmware_device_statuses(
+                    txn.as_mut(),
                     &inventory.machine_ids,
                     &inventory.switch_ids,
                 )

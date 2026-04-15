@@ -1067,6 +1067,21 @@ async fn test_firmware_upgrade_start_transitions_to_wait_for_complete(
     .await;
     let (rack_id, host) = create_single_compute_rack(&env, &pool).await?;
     insert_default_rack_firmware(&pool, "fw-default", RackHardwareType::any(), true).await;
+    {
+        let mut txn = pool.begin().await?;
+        db::machine::update_rack_fw_details(
+            txn.as_mut(),
+            &host.host_snapshot.id,
+            Some(&model::rack::RackFirmwareUpgradeStatus {
+                task_id: "stale-rack-job".to_string(),
+                status: RackFirmwareUpgradeState::Completed,
+                started_at: Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+                ended_at: Some(chrono::Utc::now() - chrono::Duration::minutes(9)),
+            }),
+        )
+        .await?;
+        txn.commit().await?;
+    }
     env.rms_sim
         .queue_update_firmware_response(
             librms::protos::rack_manager::UpdateFirmwareByDeviceListResponse {
@@ -1155,6 +1170,10 @@ async fn test_firmware_upgrade_start_transitions_to_wait_for_complete(
     .await?
     .expect("machine should exist");
     assert!(machine.host_reprovision_requested.is_some());
+    assert!(
+        machine.rack_fw_details.is_none(),
+        "rack firmware details should be cleared at the start of a new rack firmware cycle"
+    );
     assert!(
         job.started_at.is_some_and(|started_at| {
             started_at
