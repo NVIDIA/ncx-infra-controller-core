@@ -95,7 +95,10 @@ impl CollectorState {
         }
     }
 
-    pub(super) fn map_mut(&mut self, kind: CollectorKind) -> &mut HashMap<Cow<'static, str>, Collector> {
+    pub(super) fn map_mut(
+        &mut self,
+        kind: CollectorKind,
+    ) -> &mut HashMap<Cow<'static, str>, Collector> {
         match kind {
             CollectorKind::Sensor => &mut self.sensors,
             CollectorKind::Logs => &mut self.logs,
