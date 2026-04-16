@@ -289,13 +289,16 @@ impl PowerShelfManager for PsmPowerShelfBackend {
                 let mac = ep.pmc_mac.to_string();
                 vec![
                     psm::FirmwareUpdateQuery {
-                        pmc_mac_address: mac.clone(),
+                        pmc_mac_address: mac,
                         component: psm::PowershelfComponent::Pmc as i32,
                     },
+                    /*
+                    TODO: support retrieving fw status gracefully
                     psm::FirmwareUpdateQuery {
                         pmc_mac_address: mac,
                         component: psm::PowershelfComponent::Psu as i32,
                     },
+                    */
                 ]
             })
             .collect();
