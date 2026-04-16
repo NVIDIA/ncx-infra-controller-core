@@ -103,7 +103,6 @@ async fn create_test_vpcs(
             device: None,
             device_instance: 0,
             virtual_function_id: None,
-            ip_address: None,
         }],
     };
     mh.instance_builer(env)
