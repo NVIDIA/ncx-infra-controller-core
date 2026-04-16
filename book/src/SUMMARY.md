@@ -36,7 +36,9 @@
 - [SKU Validation](manuals/sku_validation.md)
 - [NVLink Partitioning](manuals/nvlink_partitioning.md)
 - [Release Instance API Enhancements](manuals/breakfix_integration.md)
-- [Managing VPC Peering](manuals/vpc_peering_management.md)
+- [Managing VPCs]()
+  - [VPC Routing Profiles](manuals/vpc/vpc_routing_profiles.md)
+  - [VPC Peering](manuals/vpc/vpc_peering_management.md)
 - [Metrics]()
     - [Core metrics](manuals/metrics/core_metrics.md)
 
