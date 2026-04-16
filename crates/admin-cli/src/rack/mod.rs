@@ -18,6 +18,7 @@
 pub mod capabilities;
 mod delete;
 mod list;
+mod maintenance;
 pub mod metadata;
 mod show;
 
@@ -40,4 +41,6 @@ pub enum Cmd {
     Metadata(metadata::Args),
     #[clap(subcommand, about = "Rack capabilities")]
     Capabilities(capabilities::Args),
+    #[clap(subcommand, about = "On-demand rack maintenance")]
+    Maintenance(maintenance::Args),
 }
