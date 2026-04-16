@@ -27,6 +27,7 @@
 
 - [Site Setup](manuals/site-setup.md)
     - [Site Reference Architecture](manuals/site-reference-arch.md)
+    - [Networking Requirements](manuals/networking_requirements.md)
 - [Building NICo Containers](manuals/building_nico_containers.md)
 - [Ingesting Hosts](manuals/ingesting_machines.md)
 - [Removing Hosts](manuals/removing_machines.md)
@@ -36,7 +37,9 @@
 - [SKU Validation](manuals/sku_validation.md)
 - [NVLink Partitioning](manuals/nvlink_partitioning.md)
 - [Release Instance API Enhancements](manuals/breakfix_integration.md)
-- [Managing VPC Peering](manuals/vpc_peering_management.md)
+- [Managing VPCs]()
+  - [VPC Routing Profiles](manuals/vpc/vpc_routing_profiles.md)
+  - [VPC Peering](manuals/vpc/vpc_peering_management.md)
 - [Metrics]()
     - [Core metrics](manuals/metrics/core_metrics.md)
 
@@ -56,6 +59,7 @@
 - [Visual Studio Code Remote Development](development/vscode_remote.md)
 - [Database]()
     - [Data Model / DB Schema](development/schema.md)
+- [Adding Support for New Hardware](development/new_hardware_support.md)
 - [DPU/Bluefield](dpu-operations.md)
 
 # Kubernetes
