@@ -720,42 +720,25 @@ impl EndpointExplorer for BmcEndpointExplorer {
             Ok(vendor) => vendor,
             Err(e) => {
                 tracing::error!(%bmc_ip_address, "Failed to probe Redfish service root endpoint: {e}");
-                // This used to be part of a workaround for Lite-On power shelf BMCs,
-                // because they don't expose Vendor details in the service root, so
-                // we needed to make a subsequent call to get Vendor details from the
-                // Chassis endpoint (Vendor details are needed so we can know how to
-                // rotate/update the BMC password into Vault). I tried to make this
-                // more generic, since it seemed useful -- this will attempt to get
-                // the BMC root credentials from Vault (for devices that have already
-                // already their credentials rotated -- like maybe we force-deleted
-                // and are re-ingesting), and if those aren't found, then we'll assume
-                // it's still the default from the Expected-* configuration, and fall
-                // back to the expected BMC username/password.
+
+                // Lite-On power shelf BMCs don't expose Vendor details in the
+                // service root, so we fall back to probing the Chassis endpoint.
+                // Only attempt this for power shelf endpoints — machines and
+                // switches should never need this workaround.
                 //
-                // We will then continue on to doing a set_sitewide_bmc_root_password
-                // using the Vendor details we found here (either changing from the
-                // expected defaults, or taking whatever was in Vault and potentially
-                // re-writing it with something new).
-                let (username, password) = match self
-                    .get_bmc_root_credentials(bmc_mac_address)
-                    .await
-                {
-                    Ok(Credentials::UsernamePassword { username, password }) => {
-                        (username, password)
-                    }
-                    Err(_) => {
-                        if let Some(eps) = expected_power_shelf {
-                            (eps.bmc_username.clone(), eps.bmc_password.clone())
-                        } else if let Some(es) = expected_switch {
-                            (es.bmc_username.clone(), es.bmc_password.clone())
-                        } else if let Some(em) = expected_machine {
-                            (em.data.bmc_username.clone(), em.data.bmc_password.clone())
-                        } else {
-                            tracing::debug!(%bmc_ip_address, "No credentials available for Lite-On workaround, returning original probe error");
-                            return Err(e);
-                        }
-                    }
+                // In the future, if we want to expand this to other kinds of trays we can
+                // expand the pattern matching logic below.
+                let Some(eps) = expected_power_shelf else {
+                    return Err(e);
                 };
+
+                let (username, password) =
+                    match self.get_bmc_root_credentials(bmc_mac_address).await {
+                        Ok(Credentials::UsernamePassword { username, password }) => {
+                            (username, password)
+                        }
+                        Err(_) => (eps.bmc_username.clone(), eps.bmc_password.clone()),
+                    };
 
                 // Lite-On power shelf BMCs don't expose vendor details in the
                 // service root, so we fall back to checking the Manufacturer

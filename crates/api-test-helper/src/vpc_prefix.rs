@@ -15,29 +15,29 @@
  * limitations under the License.
  */
 
-mod delete;
-mod list;
-pub mod metadata;
-pub mod profile;
-mod show;
+use std::net::SocketAddr;
 
-#[cfg(test)]
-mod tests;
+use super::grpcurl::grpcurl_id;
 
-use clap::Parser;
+pub async fn create(
+    carbide_api_addrs: &[SocketAddr],
+    vpc_id: &str,
+    prefix: &str,
+    name: &str,
+) -> eyre::Result<String> {
+    tracing::info!("Creating VPC prefix {prefix} ({name})");
 
-use crate::cfg::dispatch::Dispatch;
-
-#[derive(Parser, Debug, Dispatch)]
-pub enum Cmd {
-    #[clap(about = "Show rack information")]
-    Show(show::Args),
-    #[clap(about = "List all racks")]
-    List(list::Args),
-    #[clap(about = "Delete the rack")]
-    Delete(delete::Args),
-    #[clap(subcommand, about = "Edit Metadata associated with a Rack")]
-    Metadata(metadata::Args),
-    #[clap(subcommand, about = "Rack profile")]
-    Profile(profile::Args),
+    let data = serde_json::json!({
+        "vpc_id": { "value": vpc_id },
+        "config": {
+            "prefix": prefix,
+        },
+        "metadata": {
+            "name": name,
+            "description": format!("VPC prefix for {prefix}"),
+        },
+    });
+    let prefix_id = grpcurl_id(carbide_api_addrs, "CreateVpcPrefix", &data.to_string()).await?;
+    tracing::info!("VPC prefix created with ID {prefix_id}");
+    Ok(prefix_id)
 }

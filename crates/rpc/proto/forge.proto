@@ -677,7 +677,7 @@ service Forge {
   // Deprecated: Use FindRackIds
   rpc GetRack(GetRackRequest) returns (GetRackResponse);
   rpc DeleteRack(DeleteRackRequest) returns (google.protobuf.Empty);
-  rpc GetRackCapabilities(GetRackCapabilitiesRequest) returns (GetRackCapabilitiesResponse);
+  rpc GetRackProfile(GetRackProfileRequest) returns (GetRackProfileResponse);
 
   //
   // Compute Allocations
@@ -2087,8 +2087,8 @@ message LinkedExpectedSwitch {
 message ExpectedRack {
   // The rack identifier. Same rack_id referenced by expected machines, switches, and power shelves.
   optional common.RackId rack_id = 1;
-  // The rack type name. Determines expected counts of compute trays, switches, and power shelves.
-  string rack_type = 2;
+  // The rack profile ID. Determines expected counts of compute trays, switches, and power shelves.
+  common.RackProfileId rack_profile_id = 2;
   // Metadata that will be associated with the rack.
   Metadata metadata = 3;
 }
@@ -2739,7 +2739,8 @@ message InstanceInterfaceConfig {
   oneof network_details {
     common.NetworkSegmentId segment_id = 5;
     // In case of vpc_prefix_id, carbide should allocate a network segment
-    // and continue IP allocation.
+    // and continue IP allocation. This field is address-family agnostic —
+    // it can be an IPv4 or IPv6 VPC prefix.
     common.VpcPrefixId vpc_prefix_id = 6;
   }
 
@@ -2768,10 +2769,21 @@ message InstanceInterfaceConfig {
   // for this network interface.
   optional uint32 virtual_function_id = 9;
 
-  // Explicit _host_ IP address requested for the interface.
-  // Only allowed when VPC prefix is used.
-  // Must match VPC prefix defined for the interface.
+  // Explicit _host_ IP address requested for the interface (for vpc_prefix_id).
   optional string ip_address = 10;
+
+  // Optional IPv6 configuration for dual-stack interfaces. When set alongside
+  // vpc_prefix_id (field 6), both prefixes are allocated to a single network segment.
+  optional InstanceInterfaceIpv6Config ipv6_interface_config = 11;
+}
+
+// IPv6 configuration for a dual-stack instance interface.
+message InstanceInterfaceIpv6Config {
+  // The IPv6 VPC prefix to allocate from. The primary vpc_prefix_id creates
+  // the segment, and this prefix is added to it.
+  common.VpcPrefixId vpc_prefix_id = 1;
+  // Explicit host IPv6 address requested for this interface.
+  optional string ip_address = 2;
 }
 
 // The configuration that a customer desires for an instances IB interface
@@ -3929,6 +3941,9 @@ message FlatInterfaceConfig {
   // MTU size
   optional uint32 mtu = 18;
 
+  // IPv6 configuration for dual-stack FNN interfaces.
+  optional FlatInterfaceIpv6Config ipv6_interface_config = 19;
+
   // The details of the network security group associated with
   // either the instance or its parent VPC.
   // Currently, source would either be INSTANCE or VPC.
@@ -3941,6 +3956,18 @@ message FlatInterfaceConfig {
 
   // A UUID used to associate a network status with an interface config.
   optional common.UUID internal_uuid = 108;
+}
+
+// IPv6 configuration for a dual-stack FNN interface, sent from the API to
+// the DPU agent as part of FlatInterfaceConfig.
+message FlatInterfaceIpv6Config {
+  // Host IPv6 address (e.g. "2001:db8::1").
+  string ip = 1;
+  // Interface-specific prefix allocation (e.g. "2001:db8::/127").
+  string interface_prefix = 2;
+  // SVI IP for L2 FNN segments — the DPU's IPv6 gateway address on the VLAN.
+  // Only set for L2 segments (can_stretch = true).
+  optional string svi_ip = 3;
 }
 
 message FlatInterfaceNetworkSecurityGroupConfig {
@@ -4714,6 +4741,7 @@ enum ConfigSetting {
   CREATE_MACHINES = 1;
   BMC_PROXY = 2;
   TRACING_ENABLED = 3;
+  SITE_EXPLORER_ENABLED = 4;
 }
 
 message FindIpAddressRequest {
@@ -6455,22 +6483,26 @@ message RackCapabilityPowerShelf {
 }
 
 message RackCapabilitiesSet {
+  RackCapabilityCompute compute = 1;
+  RackCapabilitySwitch switch = 2;
+  RackCapabilityPowerShelf power_shelf = 3;
+}
+
+message RackProfile {
   common.RackHardwareType rack_hardware_type = 1;
   RackHardwareTopology rack_hardware_topology = 2;
   RackHardwareClass rack_hardware_class = 3;
-  RackCapabilityCompute compute = 4;
-  RackCapabilitySwitch switch = 5;
-  RackCapabilityPowerShelf power_shelf = 6;
+  RackCapabilitiesSet capabilities = 4;
 }
 
-message GetRackCapabilitiesRequest {
+message GetRackProfileRequest {
   common.RackId rack_id = 1;
 }
 
-message GetRackCapabilitiesResponse {
+message GetRackProfileResponse {
   common.RackId rack_id = 1;
-  string rack_type = 2;
-  RackCapabilitiesSet capabilities = 3;
+  common.RackProfileId rack_profile_id = 2;
+  RackProfile profile = 3;
 }
 
 // put some sample rack manager commands in for now

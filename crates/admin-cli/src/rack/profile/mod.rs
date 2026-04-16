@@ -28,7 +28,7 @@ impl Run for Args {
     async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
         match self {
             Args::Show(args) => {
-                show::cmd::show_capabilities(&ctx.api_client, args, &ctx.config).await?;
+                show::cmd::show_profile(&ctx.api_client, args, &ctx.config).await?;
             }
         }
         Ok(())

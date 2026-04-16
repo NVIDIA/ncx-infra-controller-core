@@ -15,11 +15,22 @@
  * limitations under the License.
  */
 
-use carbide_uuid::rack::RackId;
-use clap::Parser;
+use ::rpc::admin_cli::CarbideCliResult;
+use ::rpc::forge::ConfigSetting;
 
-#[derive(Parser, Debug, Clone)]
-pub struct Args {
-    #[clap(help = "Rack ID to get capabilities for")]
-    pub rack_id: RackId,
+use super::args::Args;
+use crate::rpc::ApiClient;
+
+pub async fn site_explorer_enabled(opts: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
+    let enabled = opts.is_enabled();
+    api_client
+        .set_dynamic_config(
+            ConfigSetting::SiteExplorerEnabled,
+            enabled.to_string(),
+            None,
+        )
+        .await?;
+    let state = if enabled { "enabled" } else { "disabled" };
+    println!("site-explorer {state}");
+    Ok(())
 }

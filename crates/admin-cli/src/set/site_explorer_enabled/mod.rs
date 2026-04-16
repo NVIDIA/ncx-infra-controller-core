@@ -15,29 +15,17 @@
  * limitations under the License.
  */
 
-mod delete;
-mod list;
-pub mod metadata;
-pub mod profile;
-mod show;
+pub mod args;
+pub mod cmd;
 
-#[cfg(test)]
-mod tests;
+use ::rpc::admin_cli::CarbideCliResult;
+pub use args::Args;
 
-use clap::Parser;
+use crate::cfg::run::Run;
+use crate::cfg::runtime::RuntimeContext;
 
-use crate::cfg::dispatch::Dispatch;
-
-#[derive(Parser, Debug, Dispatch)]
-pub enum Cmd {
-    #[clap(about = "Show rack information")]
-    Show(show::Args),
-    #[clap(about = "List all racks")]
-    List(list::Args),
-    #[clap(about = "Delete the rack")]
-    Delete(delete::Args),
-    #[clap(subcommand, about = "Edit Metadata associated with a Rack")]
-    Metadata(metadata::Args),
-    #[clap(subcommand, about = "Rack profile")]
-    Profile(profile::Args),
+impl Run for Args {
+    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmd::site_explorer_enabled(self, &ctx.api_client).await
+    }
 }

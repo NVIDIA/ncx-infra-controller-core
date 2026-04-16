@@ -509,13 +509,13 @@ pub struct CarbideConfig {
     #[serde(default)]
     pub rms: RmsConfig,
 
-    /// rack_types contains the rack type definitions. When expected racks
-    /// are created, they are given a rack_type name to reference. This maps
-    /// those names to the actual RackTypeConfig. This may eventually change,
+    /// rack_profiles contains the rack profile definitions. When expected racks
+    /// are created, they are given a rack_profile_id to reference. This maps
+    /// those names to the actual RackProfileConfig. This may eventually change,
     /// and/or co-exist with a DCIM providing us an entire config as part of
     /// the ingestion call.
     #[serde(default)]
-    pub rack_types: model::rack_type::RackTypeConfig,
+    pub rack_profiles: model::rack_type::RackProfileConfig,
 
     /// Treat any dpu found as a regular NIC and skip configuring it as a managed dpu.
     /// This is specifically for dev labs to allow using GB200/300 and VR compute
@@ -1611,9 +1611,13 @@ impl NvLinkConfig {
 /// SiteExplorer related configuration for hardware discovery and ingestion.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SiteExplorerConfig {
-    /// Whether SiteExplorer is enabled.
-    #[serde(default = "default_to_true")]
-    pub enabled: bool,
+    /// Whether SiteExplorer is enabled. Dynamically toggleable at runtime via SetDynamicConfig.
+    #[serde(
+        default = "SiteExplorerConfig::default_enabled",
+        deserialize_with = "deserialize_arc_atomic_bool",
+        serialize_with = "serialize_arc_atomic_bool"
+    )]
+    pub enabled: Arc<AtomicBool>,
     /// The interval at which site explorer runs.
     /// Defaults to 5 Minutes if not specified.
     #[serde(
@@ -1767,7 +1771,7 @@ pub struct SiteExplorerConfig {
 impl Default for SiteExplorerConfig {
     fn default() -> Self {
         SiteExplorerConfig {
-            enabled: true,
+            enabled: Arc::new(true.into()),
             run_interval: Self::default_run_interval(),
             concurrent_explorations: Self::default_concurrent_explorations(),
             explorations_per_run: Self::default_explorations_per_run(),
@@ -1795,7 +1799,7 @@ impl Default for SiteExplorerConfig {
 
 impl PartialEq for SiteExplorerConfig {
     fn eq(&self, other: &SiteExplorerConfig) -> bool {
-        self.enabled == other.enabled
+        self.enabled.load(AtomicOrdering::Relaxed) == other.enabled.load(AtomicOrdering::Relaxed)
             && self.run_interval == other.run_interval
             && self.concurrent_explorations == other.concurrent_explorations
             && self.explorations_per_run == other.explorations_per_run
@@ -1809,6 +1813,10 @@ impl PartialEq for SiteExplorerConfig {
 impl SiteExplorerConfig {
     pub const fn default_run_interval() -> std::time::Duration {
         std::time::Duration::from_secs(120)
+    }
+
+    pub fn default_enabled() -> Arc<AtomicBool> {
+        Arc::new(true.into())
     }
 
     pub fn default_create_machines() -> Arc<AtomicBool> {
@@ -3479,7 +3487,7 @@ mod tests {
         assert!(config.ib_config.is_none());
         assert!(config.ib_fabrics.is_empty());
         assert!(config.vpc_peering_policy.is_none());
-        assert!(config.site_explorer.enabled);
+        assert!(config.site_explorer.enabled.load(AtomicOrdering::Relaxed));
         assert!(
             config
                 .site_explorer
@@ -3573,7 +3581,7 @@ mod tests {
         assert_eq!(
             config.site_explorer,
             SiteExplorerConfig {
-                enabled: false,
+                enabled: Arc::new(false.into()),
                 run_interval: std::time::Duration::from_secs(120),
                 concurrent_explorations: 10,
                 explorations_per_run: 12,
@@ -3746,7 +3754,7 @@ mod tests {
         assert_eq!(
             config.site_explorer,
             SiteExplorerConfig {
-                enabled: true,
+                enabled: Arc::new(true.into()),
                 run_interval: std::time::Duration::from_secs(100),
                 concurrent_explorations: 30,
                 explorations_per_run: 11,
@@ -3946,17 +3954,23 @@ mod tests {
         );
         assert!(mlxconfig_profile.get_variable("NONEXISTENT_GOO").is_none());
 
-        assert_eq!(config.rack_types.rack_types.len(), 2);
-        let nvl72 = config.rack_types.get("NVL72").unwrap();
-        assert_eq!(nvl72.compute.count, 18);
-        assert_eq!(nvl72.compute.name.as_deref(), Some("GB200"));
-        assert_eq!(nvl72.compute.vendor.as_deref(), Some("NVIDIA"));
-        assert_eq!(nvl72.switch.count, 9);
-        assert_eq!(nvl72.power_shelf.count, 8);
-        let nvl36 = config.rack_types.get("NVL36").unwrap();
-        assert_eq!(nvl36.compute.count, 9);
-        assert_eq!(nvl36.switch.count, 9);
-        assert_eq!(nvl36.power_shelf.count, 2);
+        assert_eq!(config.rack_profiles.rack_profiles.len(), 2);
+        let nvl72 = config.rack_profiles.get("NVL72").unwrap();
+        assert_eq!(nvl72.rack_capabilities.compute.count, 18);
+        assert_eq!(
+            nvl72.rack_capabilities.compute.name.as_deref(),
+            Some("GB200")
+        );
+        assert_eq!(
+            nvl72.rack_capabilities.compute.vendor.as_deref(),
+            Some("NVIDIA")
+        );
+        assert_eq!(nvl72.rack_capabilities.switch.count, 9);
+        assert_eq!(nvl72.rack_capabilities.power_shelf.count, 8);
+        let nvl36 = config.rack_profiles.get("NVL36").unwrap();
+        assert_eq!(nvl36.rack_capabilities.compute.count, 9);
+        assert_eq!(nvl36.rack_capabilities.switch.count, 9);
+        assert_eq!(nvl36.rack_capabilities.power_shelf.count, 2);
     }
 
     #[test]
@@ -4049,7 +4063,7 @@ mod tests {
         assert_eq!(
             config.site_explorer,
             SiteExplorerConfig {
-                enabled: false,
+                enabled: Arc::new(false.into()),
                 run_interval: std::time::Duration::from_secs(100),
                 concurrent_explorations: 10,
                 explorations_per_run: 12,
