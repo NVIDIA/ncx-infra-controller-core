@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 
-use carbide_uuid::rack::RackId;
+use carbide_uuid::rack::{RackId, RackProfileId};
 use chrono::{DateTime, Utc};
 use config_version::{ConfigVersion, Versioned};
 use rpc::Timestamp;
@@ -27,17 +27,18 @@ use sqlx::{FromRow, Row};
 
 use crate::StateSla;
 use crate::controller_outcome::PersistentStateHandlerOutcome;
-use crate::machine::health_override::HealthReportOverrides;
+use crate::health::HealthReportSources;
 use crate::metadata::Metadata;
 
 #[derive(Debug, Clone)]
 pub struct Rack {
     pub id: RackId,
+    pub rack_profile_id: Option<RackProfileId>,
     pub config: RackConfig,
     pub controller_state: Versioned<RackState>,
     pub controller_state_outcome: Option<PersistentStateHandlerOutcome>,
     pub firmware_upgrade_job: Option<FirmwareUpgradeJob>,
-    pub health_report_overrides: HealthReportOverrides,
+    pub health_report_sources: HealthReportSources,
     pub created: DateTime<Utc>,
     pub updated: DateTime<Utc>,
     pub deleted: Option<DateTime<Utc>>,
@@ -151,12 +152,12 @@ pub enum RackFirmwareUpgradeState {
 
 impl From<Rack> for rpc::forge::Rack {
     fn from(value: Rack) -> Self {
-        let health = derive_rack_aggregate_health(&value.health_report_overrides);
-        let health_overrides = value
-            .health_report_overrides
+        let health = derive_rack_aggregate_health(&value.health_report_sources);
+        let health_sources = value
+            .health_report_sources
             .clone()
             .into_iter()
-            .map(|(hr, m)| rpc::forge::HealthOverrideOrigin {
+            .map(|(hr, m)| rpc::forge::HealthSourceOrigin {
                 mode: m as i32,
                 source: hr.source,
             })
@@ -175,7 +176,7 @@ impl From<Rack> for rpc::forge::Rack {
             updated: Some(Timestamp::from(value.updated)),
             deleted: value.deleted.map(Timestamp::from),
             health: Some(health.into()),
-            health_overrides,
+            health_sources,
             metadata: Some(value.metadata.into()),
             version: value.version.version_string(),
         }
@@ -191,12 +192,12 @@ impl From<rpc::forge::RackSearchFilter> for RackSearchFilter {
     }
 }
 
-fn derive_rack_aggregate_health(overrides: &HealthReportOverrides) -> health_report::HealthReport {
-    if let Some(replace) = &overrides.replace {
+fn derive_rack_aggregate_health(sources: &HealthReportSources) -> health_report::HealthReport {
+    if let Some(replace) = &sources.replace {
         return replace.clone();
     }
     let mut output = health_report::HealthReport::empty("rack-aggregate-health".to_string());
-    for report in overrides.merges.values() {
+    for report in sources.merges.values() {
         output.merge(report);
     }
     output.observed_at = Some(chrono::Utc::now());
@@ -209,8 +210,9 @@ impl<'r> FromRow<'r, PgRow> for Rack {
         let controller_state: sqlx::types::Json<RackState> = row.try_get("controller_state")?;
         let controller_state_outcome: Option<sqlx::types::Json<PersistentStateHandlerOutcome>> =
             row.try_get("controller_state_outcome").ok();
-        let health_report_overrides: HealthReportOverrides = row
-            .try_get::<sqlx::types::Json<HealthReportOverrides>, _>("health_report_overrides")
+        // DB column is still named "health_report_overrides" for backward compatibility.
+        let health_report_sources: HealthReportSources = row
+            .try_get::<sqlx::types::Json<HealthReportSources>, _>("health_report_overrides")
             .map(|j| j.0)
             .unwrap_or_default();
         let labels: sqlx::types::Json<HashMap<String, String>> = row.try_get("labels")?;
@@ -226,6 +228,7 @@ impl<'r> FromRow<'r, PgRow> for Rack {
             .map(|j| j.0);
         Ok(Rack {
             id: row.try_get("id")?,
+            rack_profile_id: row.try_get("rack_profile_id")?,
             config: config.0,
             controller_state: Versioned {
                 value: controller_state.0,
@@ -233,7 +236,7 @@ impl<'r> FromRow<'r, PgRow> for Rack {
             },
             controller_state_outcome: controller_state_outcome.map(|o| o.0),
             firmware_upgrade_job,
-            health_report_overrides,
+            health_report_sources,
             created: row.try_get("created")?,
             updated: row.try_get("updated")?,
             deleted: row.try_get("deleted")?,
@@ -506,12 +509,6 @@ impl MachineRvLabels {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct RackConfig {
-    /// rack_type is the name of the rack type (e.g. "NVL72") that maps to
-    /// a RackCapabilitiesSet in the config file. The capabilities are looked
-    /// up at runtime so config changes apply retroactively to all racks.
-    #[serde(default)]
-    pub rack_type: Option<String>,
-
     /// When set, the Ready state handler will transition back to Maintenance
     /// to re-provision the rack to a new version.
     #[serde(default)]

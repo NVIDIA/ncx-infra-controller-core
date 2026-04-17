@@ -15,11 +15,18 @@
  * limitations under the License.
  */
 
-use carbide_uuid::rack::RackId;
-use clap::Parser;
+pub mod args;
+pub mod cmd;
 
-#[derive(Parser, Debug, Clone)]
-pub struct Args {
-    #[clap(help = "Rack ID to get capabilities for")]
-    pub rack_id: RackId,
+use ::rpc::admin_cli::CarbideCliResult;
+pub use args::Args;
+
+use crate::cfg::run::Run;
+use crate::cfg::runtime::RuntimeContext;
+
+impl Run for Args {
+    async fn run(self, _ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+        cmd::print_empty_template();
+        Ok(())
+    }
 }

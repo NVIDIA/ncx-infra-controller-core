@@ -17,10 +17,18 @@
 
 use clap::Parser;
 
-use super::show;
-
 #[derive(Parser, Debug, Clone)]
-pub enum Args {
-    #[clap(about = "Show rack capabilities for a given rack")]
-    Show(show::Args),
+#[clap(group = clap::ArgGroup::new("toggle").required(true))]
+pub struct Args {
+    #[clap(long, group = "toggle", help = "Enable site-explorer")]
+    pub enable: bool,
+
+    #[clap(long, group = "toggle", help = "Disable site-explorer")]
+    pub disable: bool,
+}
+
+impl Args {
+    pub fn is_enabled(&self) -> bool {
+        self.enable
+    }
 }

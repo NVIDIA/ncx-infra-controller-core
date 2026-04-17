@@ -15,22 +15,22 @@
  * limitations under the License.
  */
 
-pub mod args;
-mod show;
-
 use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Args;
+use ::rpc::forge::ConfigSetting;
 
-use crate::cfg::run::Run;
-use crate::cfg::runtime::RuntimeContext;
+use super::args::Args;
+use crate::rpc::ApiClient;
 
-impl Run for Args {
-    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
-        match self {
-            Args::Show(args) => {
-                show::cmd::show_capabilities(&ctx.api_client, args, &ctx.config).await?;
-            }
-        }
-        Ok(())
-    }
+pub async fn site_explorer_enabled(opts: Args, api_client: &ApiClient) -> CarbideCliResult<()> {
+    let enabled = opts.is_enabled();
+    api_client
+        .set_dynamic_config(
+            ConfigSetting::SiteExplorerEnabled,
+            enabled.to_string(),
+            None,
+        )
+        .await?;
+    let state = if enabled { "enabled" } else { "disabled" };
+    println!("site-explorer {state}");
+    Ok(())
 }
