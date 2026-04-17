@@ -5268,6 +5268,16 @@ impl StateHandler for InstanceStateHandler {
                     Ok(StateHandlerOutcome::transition(next_state))
                 }
                 InstanceState::WaitingForExtensionServicesConfig => {
+                    // Extension services run on DPUs. A zero-DPU host has no
+                    // DPUs to run them on, so there is nothing to wait for;
+                    // skip straight to the next state.
+                    if mh_snapshot.is_zero_dpu() {
+                        let next_state = ManagedHostState::Assigned {
+                            instance_state: InstanceState::WaitingForRebootToReady,
+                        };
+                        return Ok(StateHandlerOutcome::transition(next_state));
+                    }
+
                     // If no extension services are configured, skip the wait and proceed
                     if instance
                         .config
@@ -5553,12 +5563,16 @@ impl StateHandler for InstanceStateHandler {
                     .await
                 }
                 InstanceState::WaitingForDpusToUp => {
-                    if !are_dpus_up_trigger_reboot_if_needed(
-                        mh_snapshot,
-                        &self.reachability_params,
-                        ctx,
-                    )
-                    .await
+                    // A zero-DPU host has no DPUs to wait for. Skip the
+                    // readiness check and proceed with the rest of the
+                    // handler (custom-PXE reboot, termination flow, etc).
+                    if !mh_snapshot.is_zero_dpu()
+                        && !are_dpus_up_trigger_reboot_if_needed(
+                            mh_snapshot,
+                            &self.reachability_params,
+                            ctx,
+                        )
+                        .await
                     {
                         return Ok(StateHandlerOutcome::wait(
                             "Waiting for DPUs to come up.".to_string(),
@@ -5908,6 +5922,17 @@ impl StateHandler for InstanceStateHandler {
                     Ok(StateHandlerOutcome::transition(next_state).with_txn(txn))
                 }
                 InstanceState::DPUReprovision { .. } => {
+                    // Reaching DPUReprovision with no DPUs is technically a
+                    // bug/violation; the reprovision branch should have been
+                    // skipped upstream. But, without this guard, the empty loop
+                    // below falls through to `do_nothing()` and the host
+                    // would/could sit in `DPUReprovision` forever.
+                    if mh_snapshot.is_zero_dpu() {
+                        return Err(StateHandlerError::GenericError(eyre!(
+                            "DPUReprovision state entered on zero-DPU host {host_machine_id}; reprovision requires DPUs"
+                        )));
+                    }
+
                     for dpu_snapshot in &mh_snapshot.dpu_snapshots {
                         if let outcome @ StateHandlerOutcome::Transition { .. } =
                             handle_dpu_reprovision(
