@@ -763,9 +763,18 @@ fn enumerate_hardware_inner(
 
     let device_count = enumerator.scan_devices()?.count();
 
-    // If there are no GPUs present on the host we do not want to run nvidia-smi as it will fail
+    // If there are no GPUs present on the host we do not want to run nvidia-smi as it will fail.
+    // We do not want an nvidia-smi failure to prevent the agent from registering, so on error we log a warning and fall back to an empty GPU list (treated as no GPUs).
     let gpus = if device_count > 0 {
-        gpu::get_nvidia_smi_data()?
+        match gpu::get_nvidia_smi_data() {
+            Ok(gpus) => gpus,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not get GPU data from nvidia-smi for {device_count} detected device(s); treating as no GPUs: {e}"
+                );
+                vec![]
+            }
+        }
     } else {
         tracing::debug!("No GPUs detected, skipping");
         vec![]
