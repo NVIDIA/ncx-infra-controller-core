@@ -115,14 +115,9 @@ pub(crate) async fn ensure_rack_exists(
                 rack_type: Some(expected.rack_profile_id.as_str().to_string()),
                 ..Default::default()
             };
-            let rack = db::rack::create(
-                &mut *txn,
-                rack_id,
-                &config,
-                Some(&expected.metadata),
-            )
-            .await
-            .map_err(CarbideError::from)?;
+            let rack = db::rack::create(&mut *txn, rack_id, &config, Some(&expected.metadata))
+                .await
+                .map_err(CarbideError::from)?;
 
             Ok(Some(rack))
         }
