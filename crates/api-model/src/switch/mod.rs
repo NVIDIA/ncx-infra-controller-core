@@ -139,6 +139,8 @@ pub struct Switch {
     /// Firmware upgrade status during ReProvisioning, set by the rack state machine.
     pub firmware_upgrade_status: Option<RackFirmwareUpgradeStatus>,
 
+    /// FabricManager / NMX-C status set by the rack state machine.
+    pub fabric_manager_status: Option<String>,
     /// The rack that this switch is associated with.
     pub rack_id: Option<RackId>,
     // Columns for these exist, but are unused in rust code
@@ -163,6 +165,7 @@ impl<'r> FromRow<'r, PgRow> for Switch {
             row.try_get("switch_reprovisioning_requested").ok();
         let firmware_upgrade_status: Option<sqlx::types::Json<RackFirmwareUpgradeStatus>> =
             row.try_get("firmware_upgrade_status").ok();
+        let fabric_manager_status: Option<String> = row.try_get("fabric_manager_status").ok();
 
         // DB column is still named "health_report_overrides" for backward compatibility.
         let health_report_sources: HealthReportSources = row
@@ -188,6 +191,7 @@ impl<'r> FromRow<'r, PgRow> for Switch {
             controller_state_outcome: controller_state_outcome.map(|o| o.0),
             switch_reprovisioning_requested: switch_reprovisioning_requested.map(|j| j.0),
             firmware_upgrade_status: firmware_upgrade_status.map(|j| j.0),
+            fabric_manager_status,
             metadata,
             version: row.try_get("version")?,
             rack_id: row.try_get("rack_id").ok().flatten(),
@@ -294,6 +298,7 @@ impl TryFrom<Switch> for rpc::Switch {
             version: src.version.version_string(),
             rack_id: src.rack_id,
             placement_in_rack,
+            fabric_manager_status: src.fabric_manager_status,
             health: Some(health.into()),
             health_sources,
         })
@@ -459,6 +464,7 @@ mod tests {
             }),
             switch_reprovisioning_requested: None,
             firmware_upgrade_status: None,
+            fabric_manager_status: Some("running".to_string()),
             metadata: Metadata::default(),
             version: ConfigVersion::initial(),
             rack_id: None,
@@ -476,6 +482,10 @@ mod tests {
         assert!(status.state_sla.is_some(), "state_sla should be populated");
         assert_eq!(status.power_state, Some("on".to_string()));
         assert_eq!(status.health_status, Some("ok".to_string()));
+        assert_eq!(
+            rpc_switch.fabric_manager_status,
+            Some("running".to_string())
+        );
     }
 
     #[test]
@@ -500,6 +510,7 @@ mod tests {
             }),
             switch_reprovisioning_requested: None,
             firmware_upgrade_status: None,
+            fabric_manager_status: None,
             metadata: Metadata::default(),
             version: ConfigVersion::initial(),
             rack_id: None,
@@ -518,6 +529,7 @@ mod tests {
         );
         assert_eq!(status.power_state, None);
         assert_eq!(status.health_status, None);
+        assert_eq!(rpc_switch.fabric_manager_status, None);
     }
 
     #[test]

@@ -1987,6 +1987,7 @@ message Switch {
   optional PlacementInRack placement_in_rack = 11;
   health.HealthReport health = 12;
   repeated HealthSourceOrigin health_sources = 13;
+  optional string fabric_manager_status = 14;
 }
 
 message SwitchList {

@@ -39,6 +39,7 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                 "Tray",
                 "Power State",
                 "Health",
+                "FabricManager(nmxc)",
                 "State"
             ]);
 
@@ -87,6 +88,9 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                     .and_then(|status| status.health_status.as_deref())
                     .unwrap_or("N/A");
 
+                let fabric_manager_status =
+                    switch.fabric_manager_status.as_deref().unwrap_or("N/A");
+
                 table.add_row(row![
                     id,
                     name,
@@ -95,6 +99,7 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                     tray_index,
                     power_state,
                     health,
+                    fabric_manager_status,
                     switch.controller_state,
                 ]);
             }
@@ -119,6 +124,7 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                 "Tray",
                 "Power State",
                 "Health",
+                "FabricManager(nmxc)",
                 "State"
             ]);
 
@@ -167,6 +173,9 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                     .and_then(|status| status.health_status.as_deref())
                     .unwrap_or("N/A");
 
+                let fabric_manager_status =
+                    switch.fabric_manager_status.as_deref().unwrap_or("N/A");
+
                 table.add_row(row![
                     id,
                     name,
@@ -175,6 +184,7 @@ pub fn show_switches(switches: Vec<Switch>, output_format: OutputFormat) -> Resu
                     tray_index,
                     power_state,
                     health,
+                    fabric_manager_status,
                     switch.controller_state,
                 ]);
             }
