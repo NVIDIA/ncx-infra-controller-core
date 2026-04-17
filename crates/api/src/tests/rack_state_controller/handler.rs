@@ -22,9 +22,8 @@ use db::{ObjectColumnFilter, expected_rack as db_expected_rack, rack as db_rack}
 use model::expected_machine::ExpectedMachineData;
 use model::expected_rack::ExpectedRack;
 use model::rack::{
-    FirmwareUpgradeDeviceStatus, FirmwareUpgradeJob, FirmwareUpgradeState, NvosUpdateState, Rack,
-    RackConfig, RackFirmwareUpgradeState, RackMaintenanceState, RackPowerState, RackState,
-    RackValidationState,
+    FirmwareUpgradeDeviceStatus, FirmwareUpgradeJob, FirmwareUpgradeState, Rack, RackConfig,
+    RackFirmwareUpgradeState, RackMaintenanceState, RackPowerState, RackState, RackValidationState,
 };
 use model::rack_type::{
     RackCapabilitiesSet, RackCapabilityCompute, RackCapabilityPowerShelf, RackCapabilitySwitch,
