@@ -49,7 +49,6 @@
 
 # Development
 
-- [Contributing](contributing.md)
 - [Codebase Overview](codebase_overview.md)
 - [Bootable Artifacts](bootable_artifacts.md)
 - [Bootstrap New Cluster](kubernetes/bootstrap.md)
