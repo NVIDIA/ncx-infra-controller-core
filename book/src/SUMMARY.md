@@ -49,6 +49,7 @@
 
 # Development
 
+- [Semantic Versioning Policy](development/semantic-versioning.md)
 - [Contributing](contributing.md)
 - [Codebase Overview](codebase_overview.md)
 - [Bootable Artifacts](bootable_artifacts.md)
