@@ -44,11 +44,12 @@ enum RulePrincipal {
     Rla,
     MaintenanceJobs,
     DsxExchangeConsumer,
+    ImageCache,
     Anonymous, // Permitted for everything
 }
 use self::RulePrincipal::{
-    Agent, Anonymous, Dhcp, Dns, DsxExchangeConsumer, ForgeAdminCLI, Health, Machineatron,
-    MaintenanceJobs, Pxe, Rla, Scout, SiteAgent, Ssh, SshRs,
+    Agent, Anonymous, Dhcp, Dns, DsxExchangeConsumer, ForgeAdminCLI, Health, ImageCache,
+    Machineatron, MaintenanceJobs, Pxe, Rla, Scout, SiteAgent, Ssh, SshRs,
 };
 
 impl InternalRBACRules {
@@ -402,15 +403,21 @@ impl InternalRBACRules {
         x.perm("GetOperatingSystem", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("UpdateOperatingSystem", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("DeleteOperatingSystem", vec![ForgeAdminCLI, SiteAgent]);
-        x.perm("FindOperatingSystemIds", vec![ForgeAdminCLI, SiteAgent]);
-        x.perm("FindOperatingSystemsByIds", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm(
+            "FindOperatingSystemIds",
+            vec![ForgeAdminCLI, SiteAgent, ImageCache],
+        );
+        x.perm(
+            "FindOperatingSystemsByIds",
+            vec![ForgeAdminCLI, SiteAgent, ImageCache],
+        );
         x.perm(
             "GetOperatingSystemCachableIpxeTemplateArtifacts",
             vec![ForgeAdminCLI],
         );
         x.perm(
             "UpdateOperatingSystemCachableIpxeTemplateArtifacts",
-            vec![ForgeAdminCLI],
+            vec![ForgeAdminCLI, ImageCache],
         );
         x.perm("GetIpxeTemplate", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("ListIpxeTemplates", vec![ForgeAdminCLI, SiteAgent]);
@@ -882,6 +889,9 @@ impl RuleInfo {
                     RulePrincipal::DsxExchangeConsumer => Principal::SpiffeServiceIdentifier(
                         "carbide-dsx-exchange-consumer".to_string(),
                     ),
+                    RulePrincipal::ImageCache => {
+                        Principal::SpiffeServiceIdentifier("carbide-imagecache".to_string())
+                    }
                     RulePrincipal::Anonymous => Principal::Anonymous,
                 })
                 .collect(),

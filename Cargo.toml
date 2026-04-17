@@ -203,6 +203,7 @@ rtnetlink = "0.14"
 rumqttc = "0.24"
 russh = "0.54.6"
 rustc-hash = "2.1.1"
+rust-s3 = { version = "0.35", default-features = false, features = ["tokio-rustls-tls"] }
 rustls-pemfile = "2.2.0"
 serde = "1.0.228"
 serde_json = "1.0"
