@@ -238,15 +238,13 @@ async fn publish_all<P: MqttPublisher>(
     }
 }
 
-pub fn health_report_has_rack_leak_alert(report: &HealthReport) -> bool {
-    report
-        .alerts
-        .iter()
-        .any(|alert| alert.id.as_str() == RACK_LEAK_ALERT_ID)
-}
-
 fn explicit_rack_leak_state(report: &HealthReport) -> Option<bool> {
-    (report.source == RACK_LEAK_OVERRIDE_SOURCE).then(|| health_report_has_rack_leak_alert(report))
+    (report.source == RACK_LEAK_OVERRIDE_SOURCE).then(|| {
+        report
+            .alerts
+            .iter()
+            .any(|alert| alert.id.as_str() == RACK_LEAK_ALERT_ID)
+    })
 }
 
 fn rack_has_active_leak(rack: &Rack) -> Option<bool> {
@@ -430,13 +428,6 @@ mod tests {
     async fn shutdown(mut join_set: JoinSet<()>, cancel_token: CancellationToken) {
         cancel_token.cancel();
         while join_set.join_next().await.is_some() {}
-    }
-
-    #[test]
-    fn detects_rack_leak_alerts() {
-        let report = report("dsx-exchange-consumer", true);
-
-        assert!(health_report_has_rack_leak_alert(&report));
     }
 
     #[test]
