@@ -17,7 +17,7 @@
 
 //! Handler for RackState::Maintenance.
 
-use carbide_uuid::rack::RackId;
+use carbide_uuid::rack::{RackId, RackProfileId};
 use db::{
     host_machine_update as db_host_machine_update, machine as db_machine,
     machine_topology as db_machine_topology, rack as db_rack, rack_firmware as db_rack_firmware,
@@ -26,7 +26,7 @@ use db::{
 use librms::protos::rack_manager as rms;
 use model::rack::{
     FirmwareUpgradeDeviceInfo, FirmwareUpgradeDeviceStatus, FirmwareUpgradeState, NvosUpdateJob,
-    NvosUpdateState, NvosUpdateSwitchStatus, Rack, RackConfig, RackFirmwareUpgradeState,
+    NvosUpdateState, NvosUpdateSwitchStatus, Rack, RackFirmwareUpgradeState,
     RackFirmwareUpgradeStatus, RackMaintenanceState, RackNvosUpdateState, RackNvosUpdateStatus,
     RackPowerState, RackState, RackValidationState, ResolvedNvosArtifact,
 };
@@ -34,7 +34,7 @@ use model::rack_firmware::{RackFirmware, RackFirmwareSearchFilter};
 use model::rack_type::RackHardwareType;
 
 use crate::rack::firmware_update::{
-    build_firmware_update_batches, build_new_node_info, firmware_type_for_capabilities,
+    build_firmware_update_batches, build_new_node_info, firmware_type_for_profile,
     load_rack_firmware_inventory, submit_firmware_update_batches,
 };
 use crate::state_controller::rack::context::RackStateHandlerContextObjects;
@@ -97,22 +97,22 @@ async fn trigger_rack_firmware_reprovisioning_requests(
 
 fn desired_rack_hardware_type(
     id: &RackId,
-    config: &RackConfig,
+    rack_profile_id: Option<&RackProfileId>,
     ctx: &StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> RackHardwareType {
-    super::resolve_capabilities(id, config, ctx)
-        .and_then(|caps| caps.rack_hardware_type.clone())
+    super::resolve_profile(id, rack_profile_id, ctx)
+        .and_then(|profile| profile.rack_hardware_type.clone())
         .unwrap_or_else(RackHardwareType::any)
 }
 
 fn preferred_nvos_lookup_keys(
     id: &RackId,
-    config: &RackConfig,
+    rack_profile_id: Option<&RackProfileId>,
     ctx: &StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Vec<String> {
     let mut keys = Vec::new();
-    if let Some(class) =
-        super::resolve_capabilities(id, config, ctx).and_then(|caps| caps.rack_hardware_class)
+    if let Some(class) = super::resolve_profile(id, rack_profile_id, ctx)
+        .and_then(|profile| profile.rack_hardware_class)
     {
         keys.push(format!("NVOS_{}", class));
     }
@@ -175,11 +175,11 @@ fn resolve_nvos_artifact_from_firmware(
 
 async fn resolve_default_nvos_artifact(
     id: &RackId,
-    config: &RackConfig,
+    rack_profile_id: Option<&RackProfileId>,
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<Option<ResolvedNvosArtifact>, StateHandlerError> {
-    let desired_hw_type = desired_rack_hardware_type(id, config, ctx);
-    let lookup_keys = preferred_nvos_lookup_keys(id, config, ctx);
+    let desired_hw_type = desired_rack_hardware_type(id, rack_profile_id, ctx);
+    let lookup_keys = preferred_nvos_lookup_keys(id, rack_profile_id, ctx);
     let mut hardware_types = vec![desired_hw_type.clone()];
     if !desired_hw_type.is_any() {
         hardware_types.push(RackHardwareType::any());
@@ -748,7 +748,7 @@ pub(crate) fn apply_nvos_job_status_response(
 pub async fn handle_maintenance(
     id: &RackId,
     state: &mut Rack,
-    config: &RackConfig,
+    rack_profile_id: Option<&RackProfileId>,
     maintenance_state: &RackMaintenanceState,
     ctx: &mut StateHandlerContext<'_, RackStateHandlerContextObjects>,
 ) -> Result<StateHandlerOutcome<RackState>, StateHandlerError> {
@@ -757,13 +757,13 @@ pub async fn handle_maintenance(
             rack_firmware_upgrade,
         } => match rack_firmware_upgrade {
             FirmwareUpgradeState::Start => {
-                let Some(capabilities) = super::resolve_capabilities(id, config, ctx) else {
+                let Some(profile) = super::resolve_profile(id, rack_profile_id, ctx) else {
                     return Ok(skip_firmware_upgrade_outcome(
                         id,
-                        "rack type is missing or unknown",
+                        "rack profile is missing or unknown",
                     ));
                 };
-                let Some(rack_hardware_type) = capabilities.rack_hardware_type.as_ref() else {
+                let Some(rack_hardware_type) = profile.rack_hardware_type.as_ref() else {
                     return Ok(skip_firmware_upgrade_outcome(
                         id,
                         "rack capabilities do not define rack_hardware_type",
@@ -810,7 +810,7 @@ pub async fn handle_maintenance(
                         error
                     ))
                 })?;
-                let firmware_type = firmware_type_for_capabilities(capabilities);
+                let firmware_type = firmware_type_for_profile(profile);
                 let batches = match build_firmware_update_batches(
                     id,
                     &default_firmware,
@@ -1013,7 +1013,7 @@ pub async fn handle_maintenance(
                 state.firmware_upgrade_job = None;
 
                 let next_maintenance_state = if let Some(artifact) =
-                    resolve_default_nvos_artifact(id, config, ctx).await?
+                        resolve_default_nvos_artifact(id, rack_profile_id, ctx).await?
                 {
                     tracing::info!(
                         "Rack {} has a default NVOS artifact available; advancing to NVOSUpdate(Start) with firmware {} ({})",

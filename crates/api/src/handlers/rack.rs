@@ -18,7 +18,7 @@ use std::str::FromStr;
 
 use ::rpc::errors::RpcDataConversionError;
 use ::rpc::forge::{self as rpc, HealthReportEntry};
-use carbide_uuid::rack::RackId;
+use carbide_uuid::rack::{RackId, RackProfileId};
 use db::{
     ObjectColumnFilter, WithTransaction, expected_machine as db_expected_machine,
     expected_power_shelf as db_expected_power_shelf, expected_switch as db_expected_switch,
@@ -446,13 +446,15 @@ pub async fn get_rack_profile(
         id: rack_id.to_string(),
     })?;
 
-    let rack_profile_id =
-        rack.rack_profile_id
-            .as_ref()
-            .ok_or_else(|| CarbideError::NotFoundError {
-                kind: "rack_profile_id for rack",
-                id: rack_id.to_string(),
-            })?;
+    let rack_profile_id = rack
+        .config
+        .rack_type
+        .as_deref()
+        .map(RackProfileId::new)
+        .ok_or_else(|| CarbideError::NotFoundError {
+            kind: "rack_profile_id for rack",
+            id: rack_id.to_string(),
+        })?;
 
     let profile = api
         .runtime_config
