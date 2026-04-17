@@ -225,6 +225,7 @@ hyper = { features = ["client", "http1"], workspace = true }
 http = { workspace = true }
 mockito = { workspace = true }
 once_cell = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

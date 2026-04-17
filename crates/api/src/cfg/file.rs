@@ -34,6 +34,7 @@ use carbide_utils::config::{
 };
 use chrono::Duration;
 use duration_str::{deserialize_duration, deserialize_duration_chrono};
+use figment::Figment;
 use ipnetwork::{IpNetwork, Ipv4Network};
 use itertools::Itertools;
 use libmlx::firmware::config::FirmwareFlasherProfile;
@@ -616,6 +617,19 @@ pub struct CarbideConfig {
     /// The default routing-profile to use when a tenant is created.
     #[serde(default = "default_tenant_routing_profile")]
     pub default_tenant_routing_profile_type: String,
+
+    /// The initial_objects.toml file for seeding the database
+    #[serde(default)]
+    pub initial_objects_file: Option<PathBuf>,
+
+    /// The Figment that produced this config, when one was used. Kept after
+    /// extraction so runtime code can attribute individual keys back to their
+    /// source files via `Figment::find_metadata`
+    ///
+    /// `None` for `CarbideConfig` values that didn't come from `parse_carbide_config`
+    /// (test fixtures, programmatic construction).
+    #[serde(skip)]
+    pub config_ctx: Option<Figment>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1481,6 +1495,131 @@ impl From<&StateControllerConfig> for IterationConfig {
             metric_emission_interval: config.metric_emission_interval,
             metric_hold_time: config.metric_hold_time,
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct InitialObjectsConfig {
+    /// Resource pools that allocate IPs, VNIs, etc.
+    /// Required, but wrapped in `Option` so partial configs
+    /// can be deserialized and merged.
+    pub pools: Option<HashMap<String, ResourcePoolDef>>,
+}
+
+/// InfiniBand fabric manager configuration.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct IBFabricConfig {
+    /// Maximum InfiniBand partitions per tenant (1-31).
+    #[serde(
+        default = "IBFabricConfig::default_max_partition_per_tenant",
+        deserialize_with = "IBFabricConfig::deserialize_max_partition"
+    )]
+    pub max_partition_per_tenant: i32,
+
+    /// Enables InfiniBand fabric management.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Whether a fabric configuration that does not
+    /// adhere to security requirements for tenant
+    /// isolation and infrastructure protection is
+    /// allowed.
+    #[serde(default)]
+    pub allow_insecure: bool,
+
+    /// Maximum transmission unit for InfiniBand fabric
+    /// traffic.
+    #[serde(
+        default = "IBMtu::default",
+        deserialize_with = "IBFabricConfig::deserialize_mtu"
+    )]
+    pub mtu: IBMtu,
+
+    /// Rate limit for InfiniBand fabric traffic.
+    #[serde(
+        default = "IBRateLimit::default",
+        deserialize_with = "IBFabricConfig::deserialize_rate_limit"
+    )]
+    pub rate_limit: IBRateLimit,
+
+    /// Quality of service level for InfiniBand
+    /// packets.
+    #[serde(
+        default = "IBServiceLevel::default",
+        deserialize_with = "IBFabricConfig::deserialize_service_level"
+    )]
+    pub service_level: IBServiceLevel,
+
+    /// The interval at which ib fabric monitor runs in seconds.
+    /// Defaults to 1 Minute if not specified.
+    #[serde(
+        default = "IBFabricConfig::default_fabric_monitor_run_interval",
+        deserialize_with = "deserialize_duration",
+        serialize_with = "as_std_duration"
+    )]
+    pub fabric_monitor_run_interval: std::time::Duration,
+}
+
+impl Default for IBFabricConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_partition_per_tenant: Self::default_max_partition_per_tenant(),
+            allow_insecure: false,
+            mtu: IBMtu::default(),
+            rate_limit: IBRateLimit::default(),
+            service_level: IBServiceLevel::default(),
+            fabric_monitor_run_interval: Self::default_fabric_monitor_run_interval(),
+        }
+    }
+}
+
+impl IBFabricConfig {
+    pub const fn default_max_partition_per_tenant() -> i32 {
+        MAX_IB_PARTITION_PER_TENANT
+    }
+
+    pub const fn default_fabric_monitor_run_interval() -> std::time::Duration {
+        std::time::Duration::from_secs(60)
+    }
+
+    pub fn deserialize_max_partition<'de, D>(deserializer: D) -> Result<i32, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let max_pkey = i32::deserialize(deserializer)?;
+
+        match max_pkey {
+            1..=31 => Ok(max_pkey),
+            _ => Err(serde::de::Error::custom("invalid max partition per tenant")),
+        }
+    }
+
+    pub fn deserialize_mtu<'de, D>(deserializer: D) -> Result<IBMtu, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mtu = i32::deserialize(deserializer)?;
+
+        IBMtu::try_from(mtu).map_err(|e| serde::de::Error::custom(e.to_string()))
+    }
+
+    pub fn deserialize_rate_limit<'de, D>(deserializer: D) -> Result<IBRateLimit, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let rate_limit = i32::deserialize(deserializer)?;
+
+        IBRateLimit::try_from(rate_limit).map_err(|e| serde::de::Error::custom(e.to_string()))
+    }
+
+    pub fn deserialize_service_level<'de, D>(deserializer: D) -> Result<IBServiceLevel, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let service_level = i32::deserialize(deserializer)?;
+
+        IBServiceLevel::try_from(service_level).map_err(|e| serde::de::Error::custom(e.to_string()))
     }
 }
 
@@ -2836,6 +2975,7 @@ mod tests {
         assert!(config.ib_fabrics.is_empty());
         assert!(config.vpc_peering_policy.is_none());
         assert!(config.site_explorer.enabled.load(AtomicOrdering::Relaxed));
+        assert!(config.initial_objects_file.is_none());
         assert!(
             config
                 .site_explorer
@@ -3824,5 +3964,72 @@ firmware_url = "https://firmware.example.com/fw-b.bin"
             .unwrap();
 
         assert!(config.supernic_firmware_profiles.is_empty());
+    }
+    #[test]
+    fn deserialize_initial_objects() {
+        let f = PathBuf::from(format!("{TEST_DATA_DIR}/initial_objects.toml"));
+        let config: InitialObjectsConfig = Toml::from_path(f.as_path()).unwrap();
+        let pools = config.pools.as_ref().unwrap();
+        assert_eq!(
+            pools.get("lo-ip").unwrap(),
+            &ResourcePoolDef {
+                ranges: Vec::new(),
+                prefix: Some("10.180.62.1/26".to_string()),
+                pool_type: resource_pool::ResourcePoolType::Ipv4,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("vlan-id").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "100".to_string(),
+                    end: "501".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("fnn-asn").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "4268000000".to_string(),
+                    end: "4268999999".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("vni").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "1024500".to_string(),
+                    end: "1024550".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("vpc-vni").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "2024500".to_string(),
+                    end: "2024550".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
     }
 }
