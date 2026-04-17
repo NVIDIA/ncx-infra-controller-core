@@ -2959,6 +2959,7 @@ dependencies = [
  "carbide-macros",
  "carbide-sqlx-testing",
  "carbide-uuid",
+ "chrono",
  "librms",
  "mac_address",
  "prost 0.14.1",
