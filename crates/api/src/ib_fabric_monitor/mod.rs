@@ -43,10 +43,10 @@ use sqlx::{PgConnection, PgPool};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
+use utils::periodic_timer::PeriodicTimer;
 
 use crate::cfg::file::{CarbideConfig, IbFabricDefinition};
 use crate::ib::{GetPartitionOptions, IBFabricManager, IBFabricManagerType};
-use crate::periodic_timer::PeriodicTimer;
 use crate::{CarbideError, CarbideResult};
 
 /// `IbFabricMonitor` monitors the health of all connected InfiniBand fabrics in periodic intervals

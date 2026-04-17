@@ -95,7 +95,6 @@ mod network_segment;
 mod nv_redfish;
 mod nvl_partition_monitor;
 mod nvlink;
-mod periodic_timer;
 mod preingestion_manager;
 mod rack;
 mod redfish;

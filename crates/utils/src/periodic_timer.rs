@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 /// }
 /// ```
 #[derive(Debug, Clone)]
-pub(crate) struct PeriodicTimer {
+pub struct PeriodicTimer {
     interval: Duration,
 }
 
@@ -47,20 +47,20 @@ pub(crate) struct PeriodicTimer {
 /// the Tick::sleep routine can subtract the elapsed time from the
 /// configured interval.
 #[derive(Debug)]
-pub(crate) struct Tick {
+pub struct Tick {
     interval: Duration,
     started_at: Instant,
 }
 
 impl PeriodicTimer {
-    pub(crate) fn new(interval: Duration) -> Self {
+    pub fn new(interval: Duration) -> Self {
         Self { interval }
     }
 
     /// tick() begins a new tick. This is intended to be called
     /// before running the iteration work, and is used to track
     /// the time of the iteration.
-    pub(crate) fn tick(&self) -> Tick {
+    pub fn tick(&self) -> Tick {
         Tick {
             interval: self.interval,
             started_at: Instant::now(),
@@ -72,12 +72,12 @@ impl Tick {
     /// remaining returns how long to sleep so that the total cycle time
     /// (iteration + sleep) is as close to the configured run interval as
     /// possible.
-    pub(crate) fn remaining(&self) -> Duration {
+    pub fn remaining(&self) -> Duration {
         self.interval.saturating_sub(self.started_at.elapsed())
     }
 
     /// sleep sleeps for the remaining time in this Tick.
-    pub(crate) async fn sleep(self) {
+    pub async fn sleep(self) {
         tokio::time::sleep(self.remaining()).await;
     }
 
@@ -85,7 +85,7 @@ impl Tick {
     /// Used in adaptive situations (e.g. ib_fabric_monitor) which may
     /// want a shorter interval under certain conditions (e.g. when changes
     /// were detected) while still subtracting elapsed time.
-    pub(crate) fn set_interval(&mut self, interval: Duration) {
+    pub fn set_interval(&mut self, interval: Duration) {
         self.interval = interval;
     }
 }

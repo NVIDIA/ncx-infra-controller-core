@@ -42,11 +42,11 @@ use sqlx::PgPool;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
+use utils::periodic_timer::PeriodicTimer;
 
 use crate::api::TransactionVending;
 use crate::cfg::file::NvLinkConfig;
 use crate::nvlink::NmxmClientPool;
-use crate::periodic_timer::PeriodicTimer;
 use crate::{CarbideError, CarbideResult};
 
 mod metrics;

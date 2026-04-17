@@ -23,6 +23,7 @@ pub mod cmd;
 mod host_port_pair;
 pub mod managed_host_display;
 pub mod models;
+pub mod periodic_timer;
 pub mod sku;
 
 pub use host_port_pair::{HostPortPair, HostPortParseError};
