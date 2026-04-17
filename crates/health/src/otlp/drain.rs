@@ -134,6 +134,8 @@ impl OtlpDrainTask {
         }
 
         let request = build_export_request(batch);
+        batch.clear();
+
         let record_count = request
             .resource_logs
             .iter()
@@ -142,7 +144,6 @@ impl OtlpDrainTask {
             .sum::<usize>();
 
         if record_count == 0 {
-            batch.clear();
             return;
         }
 
@@ -182,8 +183,6 @@ impl OtlpDrainTask {
                 }
             }
         }
-
-        batch.clear();
     }
 }
 

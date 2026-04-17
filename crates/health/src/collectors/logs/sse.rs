@@ -18,13 +18,14 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures::StreamExt;
 use nv_redfish::core::{Bmc, EntityTypeRef};
 use nv_redfish::event_service::{Event, EventStreamPayload};
 use nv_redfish::resource::Health;
 
 use crate::HealthError;
-use crate::collectors::runtime::{ConnectFuture, EventStream, StreamingCollector, open_sse_stream};
+use crate::collectors::runtime::{EventStream, StreamingCollector, open_sse_stream};
 use crate::endpoint::BmcEndpoint;
 use crate::sink::{CollectorEvent, LogRecord};
 
@@ -34,6 +35,7 @@ pub struct SseLogCollector<B: Bmc> {
     bmc: Arc<B>,
 }
 
+#[async_trait]
 impl<B: Bmc + 'static> StreamingCollector<B> for SseLogCollector<B> {
     type Config = SseLogCollectorConfig;
 
@@ -45,20 +47,18 @@ impl<B: Bmc + 'static> StreamingCollector<B> for SseLogCollector<B> {
         Ok(Self { bmc })
     }
 
-    fn connect(&mut self) -> ConnectFuture<'_> {
-        Box::pin(async move {
-            let sse_stream = open_sse_stream(Arc::clone(&self.bmc)).await?;
+    async fn connect(&mut self) -> Result<EventStream<'_>, HealthError> {
+        let sse_stream = open_sse_stream(Arc::clone(&self.bmc)).await?;
 
-            let bmc = Arc::clone(&self.bmc);
-            let event_stream: EventStream<'_> = sse_stream
-                .flat_map(move |result| {
-                    let events = map_payload(result, bmc.as_ref());
-                    futures::stream::iter(events)
-                })
-                .boxed();
+        let bmc = Arc::clone(&self.bmc);
+        let event_stream: EventStream<'_> = sse_stream
+            .flat_map(move |result| {
+                let events = map_payload(result, bmc.as_ref());
+                futures::stream::iter(events)
+            })
+            .boxed();
 
-            Ok(event_stream)
-        })
+        Ok(event_stream)
     }
 
     fn collector_type(&self) -> &'static str {

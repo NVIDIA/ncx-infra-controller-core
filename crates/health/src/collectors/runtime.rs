@@ -20,6 +20,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use http::header::InvalidHeaderValue;
@@ -76,11 +77,9 @@ pub trait PeriodicCollector<B: Bmc>: Send + 'static {
 
 pub type EventStream<'a> = BoxStream<'a, Result<CollectorEvent, HealthError>>;
 
-pub type ConnectFuture<'a> =
-    Pin<Box<dyn std::future::Future<Output = Result<EventStream<'a>, HealthError>> + Send + 'a>>;
-
 /// Trait for collectors that maintain a long-lived stream (SSE, gRPC, etc.)
 /// runtime.rs creates the BMC client and injects it, the collector opens the stream and maps payloads to events
+#[async_trait]
 pub trait StreamingCollector<B: Bmc>: Send + 'static {
     type Config: Send + 'static;
 
@@ -93,7 +92,7 @@ pub trait StreamingCollector<B: Bmc>: Send + 'static {
         Self: Sized;
 
     /// Open or reopen the streaming connection using the injected BMC.
-    fn connect(&mut self) -> ConnectFuture<'_>;
+    async fn connect(&mut self) -> Result<EventStream<'_>, HealthError>;
 
     fn collector_type(&self) -> &'static str;
 }
@@ -473,12 +472,10 @@ impl Collector {
                     "streaming collector connecting"
                 );
 
-                let stream = tokio::select! {
-                    _ = cancel_clone.cancelled() => {
-                        metrics.connection_state.set(STREAM_STATE_CLOSED);
-                        return;
-                    }
-                    result = collector.connect() => result,
+                let Some(stream) = cancel_clone.run_until_cancelled(collector.connect()).await
+                else {
+                    metrics.connection_state.set(STREAM_STATE_CLOSED);
+                    return;
                 };
 
                 let mut stream = match stream {
@@ -501,28 +498,27 @@ impl Collector {
                             "streaming collector connection failed"
                         );
                         let delay = backoff.next_delay();
-                        tokio::select! {
-                            _ = cancel_clone.cancelled() => {
-                                metrics.connection_state.set(STREAM_STATE_CLOSED);
-                                return;
-                            }
-                            _ = tokio::time::sleep(delay) => continue,
+                        if cancel_clone
+                            .run_until_cancelled(tokio::time::sleep(delay))
+                            .await
+                            .is_none()
+                        {
+                            metrics.connection_state.set(STREAM_STATE_CLOSED);
+                            return;
                         }
+                        continue;
                     }
                 };
 
                 loop {
-                    let item = tokio::select! {
-                        _ = cancel_clone.cancelled() => {
-                            metrics.connection_state.set(STREAM_STATE_CLOSED);
-                            tracing::info!(
-                                collector_type,
-                                endpoint = ?endpoint.addr,
-                                "streaming collector shutting down"
-                            );
-                            return;
-                        }
-                        item = stream.next() => item,
+                    let Some(item) = cancel_clone.run_until_cancelled(stream.next()).await else {
+                        metrics.connection_state.set(STREAM_STATE_CLOSED);
+                        tracing::info!(
+                            collector_type,
+                            endpoint = ?endpoint.addr,
+                            "streaming collector shutting down"
+                        );
+                        return;
                     };
 
                     match item {
@@ -555,12 +551,13 @@ impl Collector {
                 // stream ended or errored -- transition to CONNECTING and retry
                 metrics.connection_state.set(STREAM_STATE_CONNECTING);
                 let delay = backoff.next_delay();
-                tokio::select! {
-                    _ = cancel_clone.cancelled() => {
-                        metrics.connection_state.set(STREAM_STATE_CLOSED);
-                        return;
-                    }
-                    _ = tokio::time::sleep(delay) => {}
+                if cancel_clone
+                    .run_until_cancelled(tokio::time::sleep(delay))
+                    .await
+                    .is_none()
+                {
+                    metrics.connection_state.set(STREAM_STATE_CLOSED);
+                    return;
                 }
             }
         });
