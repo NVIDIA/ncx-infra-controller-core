@@ -998,6 +998,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "carbide-api",
+ "carbide-ipmi",
  "carbide-secrets",
  "clap",
  "libredfish",
@@ -1355,6 +1356,7 @@ dependencies = [
  "carbide-dpf",
  "carbide-health-report",
  "carbide-host-support",
+ "carbide-ipmi",
  "carbide-ipxe-renderer",
  "carbide-libmlx",
  "carbide-macros",
@@ -2063,6 +2065,22 @@ dependencies = [
  "tower-service",
  "tracing",
  "tryhard",
+]
+
+[[package]]
+name = "carbide-ipmi"
+version = "0.0.1"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "carbide-secrets",
+ "carbide-utils",
+ "carbide-uuid",
+ "eyre",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

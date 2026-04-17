@@ -19,8 +19,7 @@ use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use carbide::{
-    BmcEndpointExplorer, IPMIToolTestImpl, NvRedfishClientPool, RedfishClientPoolImpl,
-    SiteExplorerExploreMode,
+    BmcEndpointExplorer, NvRedfishClientPool, RedfishClientPoolImpl, SiteExplorerExploreMode,
 };
 use clap::Parser;
 use forge_secrets::credentials::{Credentials, TestCredentialManager};
@@ -86,7 +85,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rf_pool,
         proxy_address.clone(),
     ));
-    let ipmi_tool = Arc::new(IPMIToolTestImpl {});
     let mode = match args.mode.as_str() {
         "libredfish" => SiteExplorerExploreMode::LibRedfish,
         "nv-redfish" => SiteExplorerExploreMode::NvRedfish,
@@ -103,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let explorer = BmcEndpointExplorer::new(
         redfish_client_pool,
         Arc::new(NvRedfishClientPool::new(proxy_address)),
-        ipmi_tool,
+        carbide_ipmi::test_support(),
         credential_provider.clone(),
         rotate_switch_nvos_credentials,
         mode,

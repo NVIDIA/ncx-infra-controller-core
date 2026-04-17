@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use carbide_ipmi::IPMITool;
 use db::machine::update_dpu_asns;
 use db::resource_pool::DefineResourcePoolError;
 use db::{Transaction, work_lock_manager};
@@ -57,7 +58,6 @@ use crate::firmware_downloader::FirmwareDownloader;
 use crate::handlers::machine_validation::apply_config_on_startup;
 use crate::ib::{self, IBFabricManager};
 use crate::ib_fabric_monitor::IbFabricMonitor;
-use crate::ipmitool::{IPMITool, IPMIToolHttpImpl, IPMIToolImpl, IPMIToolTestImpl};
 use crate::listener::ApiListenMode;
 use crate::logging::log_limiter::LogLimiter;
 use crate::logging::service_health_metrics::{
@@ -193,18 +193,15 @@ pub fn create_ipmi_tool(
     match carbide_config.dpu_ipmi_tool_impl.as_deref() {
         Some("test") => {
             tracing::info!("Disabling ipmitool");
-            Arc::new(IPMIToolTestImpl {})
+            carbide_ipmi::test_support()
         }
         Some("bmc-mock") => {
             tracing::info!("Using HTTP IPMI transport via bmc_proxy");
-            Arc::new(IPMIToolHttpImpl::new(bmc_proxy))
+            carbide_ipmi::bmc_mock(bmc_proxy)
         }
         _ => {
             tracing::info!("Using lanplus IPMI transport (/usr/bin/ipmitool)");
-            Arc::new(IPMIToolImpl::new(
-                credential_reader,
-                &carbide_config.dpu_ipmi_reboot_attempts,
-            ))
+            carbide_ipmi::tool(credential_reader, carbide_config.dpu_ipmi_reboot_attempts)
         }
     }
 }

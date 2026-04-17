@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use carbide_ipmi::IPMITool;
 use db::db_read::PgPoolReader;
 use forge_secrets::credentials::CredentialManager;
 use libredfish::Redfish;
@@ -28,7 +29,6 @@ use sqlx::PgPool;
 use crate::cfg::file::CarbideConfig;
 use crate::dpa::handler::DpaInfo;
 use crate::ib::IBFabricManager;
-use crate::ipmitool::IPMITool;
 use crate::redfish::RedfishClientPool;
 use crate::state_controller::state_handler::StateHandlerError;
 

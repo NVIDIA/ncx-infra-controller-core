@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use carbide_ipmi::IPMITool;
 use carbide_uuid::instance::InstanceId;
 use carbide_uuid::instance_type::InstanceTypeId;
 use carbide_uuid::machine::MachineId;
@@ -99,7 +100,6 @@ use crate::dpf::DpfOperations;
 use crate::ethernet_virtualization::{EthVirtData, SiteFabricPrefixList};
 use crate::ib::{self, IBFabricManagerImpl, IBFabricManagerType};
 use crate::ib_fabric_monitor::IbFabricMonitor;
-use crate::ipmitool::IPMIToolTestImpl;
 use crate::logging::level_filter::ActiveLevel;
 use crate::logging::log_limiter::LogLimiter;
 use crate::nv_redfish::NvRedfishClientPool;
@@ -336,7 +336,7 @@ pub struct TestEnv {
     pub redfish_sim: Arc<RedfishSim>,
     pub ib_fabric_monitor: Arc<IbFabricMonitor>,
     pub ib_fabric_manager: Arc<IBFabricManagerImpl>,
-    pub ipmi_tool: Arc<IPMIToolTestImpl>,
+    pub ipmi_tool: Arc<dyn IPMITool>,
     machine_state_controller: Arc<Mutex<StateController<MachineStateControllerIO>>>,
     spdm_state_controller: Arc<Mutex<StateController<SpdmStateControllerIO>>>,
     pub machine_state_handler: SwapHandler<MachineStateHandler>,
@@ -1473,12 +1473,11 @@ pub async fn create_test_env_with_overrides(
         tracing_enabled: Arc::new(false.into()),
     };
 
-    let ipmi_tool = Arc::new(IPMIToolTestImpl {});
     let bmc_proxy = Arc::new(ArcSwap::new(None.into()));
     let bmc_explorer = Arc::new(BmcEndpointExplorer::new(
         redfish_sim.clone(),
         Arc::new(NvRedfishClientPool::new(bmc_proxy)),
-        ipmi_tool.clone(),
+        carbide_ipmi::test_support(),
         composite_manager.clone(),
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // Tests use MockEndpointExplorer. So this doesn't affect anything.
@@ -1521,7 +1520,7 @@ pub async fn create_test_env_with_overrides(
     });
 
     let attestation_enabled = config.attestation_enabled;
-    let ipmi_tool = Arc::new(IPMIToolTestImpl {});
+    let ipmi_tool = carbide_ipmi::test_support();
     let mut power_options: PowerOptionConfig = config.power_manager_options.clone().into();
     if let Some(v) = overrides.power_manager_enabled {
         power_options.enabled = v;

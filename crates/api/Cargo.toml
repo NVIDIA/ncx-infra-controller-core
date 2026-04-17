@@ -41,6 +41,7 @@ carbide-secrets = { path = "../secrets" }
 carbide-version = { path = "../version" }
 carbide-health-report = { path = "../health-report" }
 carbide-ipxe-renderer = { path = "../ipxe-renderer" }
+carbide-ipmi = { path = "../ipmi" }
 dns-record = { path = "../dns-record" }
 libnmxm = { path = "../libnmxm" }
 logfmt = { path = "../logfmt" }

@@ -82,7 +82,6 @@ mod handlers;
 mod ib;
 mod ib_fabric_monitor;
 mod instance;
-mod ipmitool;
 mod ipxe;
 mod listener;
 mod logging;
@@ -117,7 +116,6 @@ pub use cfg::file::SiteExplorerExploreMode;
 pub use db::{DatabaseError, DatabaseResult};
 // Save typing
 pub(crate) use errors::{CarbideError, CarbideResult};
-pub use ipmitool::IPMIToolTestImpl;
 pub use nv_redfish::NvRedfishClientPool;
 pub use redfish::RedfishClientPoolImpl;
 pub use site_explorer::BmcEndpointExplorer;

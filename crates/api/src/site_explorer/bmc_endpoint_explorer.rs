@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use carbide_ipmi::IPMITool;
 use forge_secrets::credentials::{CredentialManager, Credentials};
 use libredfish::model::oem::nvidia_dpu::NicMode;
 use libredfish::model::service_root::RedfishVendor;
@@ -37,7 +38,6 @@ use super::credentials::{CredentialClient, get_bmc_root_credential_key};
 use super::metrics::SiteExplorationMetrics;
 use super::redfish::RedfishClient;
 use crate::cfg::file::SiteExplorerExploreMode;
-use crate::ipmitool::IPMITool;
 use crate::nv_redfish::NvRedfishClientPool;
 use crate::redfish::RedfishClientPool;
 use crate::site_explorer::EndpointExplorer;
