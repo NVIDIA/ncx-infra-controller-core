@@ -58,7 +58,6 @@ use utils::periodic_timer::PeriodicTimer;
 use version_compare::Cmp;
 
 use crate::cfg::file::FirmwareConfig;
-use crate::{CarbideError, CarbideResult};
 mod endpoint_explorer;
 pub use endpoint_explorer::EndpointExplorer;
 mod credentials;
@@ -85,6 +84,9 @@ use carbide_uuid::rack::RackId;
 use model::rack::Rack;
 pub use switch_creator::SwitchCreator;
 pub mod config;
+pub mod errors;
+
+use errors::{SiteExplorerError, SiteExplorerResult};
 
 use self::metrics::{PairingBlockerReason, exploration_error_to_metric_label};
 use crate::site_explorer::explored_endpoint_index::ExploredEndpointIndex;
@@ -97,13 +99,11 @@ use crate::site_explorer::explored_endpoint_index::ExploredEndpointIndex;
 pub(crate) async fn ensure_rack_exists(
     txn: &mut sqlx::PgConnection,
     rack_id: &RackId,
-) -> CarbideResult<Option<Rack>> {
+) -> SiteExplorerResult<Option<Rack>> {
     match db::rack::find_by(txn, ObjectColumnFilter::One(db::rack::IdColumn, rack_id)).await {
         Ok(mut racks) if !racks.is_empty() => Ok(racks.pop()),
         Ok(_) | Err(DatabaseError::NotFoundError { .. }) => {
-            let expected = db::expected_rack::find_by_rack_id(&mut *txn, rack_id)
-                .await
-                .map_err(CarbideError::from)?;
+            let expected = db::expected_rack::find_by_rack_id(&mut *txn, rack_id).await?;
 
             let Some(expected) = expected else {
                 tracing::warn!(
@@ -122,12 +122,11 @@ pub(crate) async fn ensure_rack_exists(
                 &config,
                 Some(&expected.metadata),
             )
-            .await
-            .map_err(CarbideError::from)?;
+            .await?;
 
             Ok(Some(rack))
         }
-        Err(e) => Err(CarbideError::from(e)),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -295,12 +294,12 @@ impl SiteExplorer {
     // https://github.com/rust-lang/rust/issues/110011 will be
     // implemented
     #[track_caller]
-    fn txn_begin(&self) -> impl Future<Output = CarbideResult<db::Transaction<'_>>> {
+    fn txn_begin(&self) -> impl Future<Output = SiteExplorerResult<db::Transaction<'_>>> {
         let loc = Location::caller();
         db::Transaction::begin_with_location(&self.database_connection, loc).map_err(Into::into)
     }
 
-    pub async fn run_single_iteration(&self) -> CarbideResult<SiteIdentifiedHosts> {
+    pub async fn run_single_iteration(&self) -> SiteExplorerResult<SiteIdentifiedHosts> {
         let mut metrics = SiteExplorationMetrics::new();
 
         let _work_lock = match self
@@ -310,7 +309,7 @@ impl SiteExplorer {
         {
             Ok(lock) => lock,
             Err(e) => {
-                return Err(CarbideError::internal(format!(
+                return Err(SiteExplorerError::internal(format!(
                     "Failed to acquire connection: {e}"
                 )));
             }
@@ -394,7 +393,7 @@ impl SiteExplorer {
         &self,
         metrics: &mut SiteExplorationMetrics,
         expected_endpoint_index: &ExploredEndpointIndex,
-    ) -> CarbideResult<()> {
+    ) -> SiteExplorerResult<()> {
         let mut txn = self.txn_begin().await?;
 
         // Grab them all because we care about everything,
@@ -567,7 +566,7 @@ impl SiteExplorer {
     async fn explore_site(
         &self,
         metrics: &mut SiteExplorationMetrics,
-    ) -> CarbideResult<SiteIdentifiedHosts> {
+    ) -> SiteExplorerResult<SiteIdentifiedHosts> {
         self.check_preconditions(metrics).await?;
         let expected_endpoint_index = self.update_explored_endpoints(metrics).await?;
 
@@ -610,7 +609,7 @@ impl SiteExplorer {
 
         if self.config.create_power_shelves.load(Ordering::Relaxed) {
             let start_create_power_shelves = std::time::Instant::now();
-            let create_power_shelves_res: Result<(), CarbideError> = self
+            let create_power_shelves_res = self
                 .create_power_shelves(metrics, explored_power_shelves, &expected_endpoint_index)
                 .await;
             metrics.create_power_shelves_latency = Some(start_create_power_shelves.elapsed());
@@ -622,7 +621,7 @@ impl SiteExplorer {
 
         if self.config.create_switches.load(Ordering::Relaxed) {
             let start_create_switches = std::time::Instant::now();
-            let create_switches_res: Result<(), CarbideError> = self
+            let create_switches_res = self
                 .switch_creator
                 .create_switches(metrics, &explored_switches, &expected_endpoint_index)
                 .await;
@@ -642,7 +641,7 @@ impl SiteExplorer {
         metrics: &mut SiteExplorationMetrics,
         explored_power_shelves: Vec<(ExploredEndpoint, EndpointExplorationReport)>,
         expected_endpoint_index: &ExploredEndpointIndex,
-    ) -> CarbideResult<()> {
+    ) -> SiteExplorerResult<()> {
         for (endpoint, _report) in explored_power_shelves {
             let address = endpoint.address;
             let Some(expected_power_shelf) =
@@ -682,7 +681,7 @@ impl SiteExplorer {
         explored_endpoint: ExploredEndpoint,
         expected_shelf: &ExpectedPowerShelf,
         pool: &PgPool,
-    ) -> CarbideResult<bool> {
+    ) -> SiteExplorerResult<bool> {
         let mut txn = pool
             .begin()
             .await
@@ -734,7 +733,7 @@ impl SiteExplorer {
             Ok(id) => id,
             Err(e) => {
                 tracing::error!(%e, "Failed to create power shelf ID");
-                return Err(CarbideError::InvalidArgument(format!(
+                return Err(SiteExplorerError::InvalidArgument(format!(
                     "Failed to create power shelf ID: {e}"
                 )));
             }
@@ -791,7 +790,7 @@ impl SiteExplorer {
     async fn identify_machines_to_ingest(
         &self,
         metrics: &mut SiteExplorationMetrics,
-    ) -> CarbideResult<(
+    ) -> SiteExplorerResult<(
         HashMap<IpAddr, ExploredEndpoint>,
         HashMap<IpAddr, ExploredEndpoint>,
     )> {
@@ -842,7 +841,7 @@ impl SiteExplorer {
         expected_explored_endpoint_index: &ExploredEndpointIndex,
         explored_dpus: HashMap<IpAddr, ExploredEndpoint>,
         explored_hosts: HashMap<IpAddr, ExploredEndpoint>,
-    ) -> CarbideResult<Vec<(ExploredManagedHost, EndpointExplorationReport)>> {
+    ) -> SiteExplorerResult<Vec<(ExploredManagedHost, EndpointExplorationReport)>> {
         // Per-host DPU-mode resolution. The old/deprecated/fallback site-wide
         // `force_dpu_nic_mode` flag is preserved as a fallback when no
         // per-host override is declared; a per-host `NicMode` or `NoDpu`
@@ -1213,7 +1212,7 @@ impl SiteExplorer {
 
     async fn identify_power_shelves_to_ingest(
         &self,
-    ) -> CarbideResult<Vec<(ExploredEndpoint, EndpointExplorationReport)>> {
+    ) -> SiteExplorerResult<Vec<(ExploredEndpoint, EndpointExplorationReport)>> {
         let mut txn = self
             .database_connection
             .begin()
@@ -1241,7 +1240,7 @@ impl SiteExplorer {
         Ok(explored_power_shelves)
     }
 
-    async fn identify_switches_to_ingest(&self) -> CarbideResult<Vec<ExploredManagedSwitch>> {
+    async fn identify_switches_to_ingest(&self) -> SiteExplorerResult<Vec<ExploredManagedSwitch>> {
         let mut txn = self
             .database_connection
             .begin()
@@ -1271,17 +1270,20 @@ impl SiteExplorer {
     ///
     /// Doing this upfront avoids the risk of trying to log into BMCs without
     /// the necessary credentials - which could trigger a lockout.
-    async fn check_preconditions(&self, metrics: &mut SiteExplorationMetrics) -> CarbideResult<()> {
+    async fn check_preconditions(
+        &self,
+        metrics: &mut SiteExplorationMetrics,
+    ) -> SiteExplorerResult<()> {
         self.endpoint_explorer
             .check_preconditions(metrics)
             .await
-            .map_err(|e| CarbideError::internal(e.to_string()))
+            .map_err(|e| SiteExplorerError::internal(e.to_string()))
     }
 
     async fn update_explored_endpoints(
         &self,
         metrics: &mut SiteExplorationMetrics,
-    ) -> CarbideResult<ExploredEndpointIndex> {
+    ) -> SiteExplorerResult<ExploredEndpointIndex> {
         let mut txn = self.txn_begin().await?;
 
         let underlay_segments =
@@ -1845,7 +1847,7 @@ impl SiteExplorer {
         }
     }
 
-    pub async fn ipmitool_reset_bmc(&self, endpoint: &Endpoint<'_>) -> CarbideResult<()> {
+    pub async fn ipmitool_reset_bmc(&self, endpoint: &Endpoint<'_>) -> SiteExplorerResult<()> {
         tracing::info!(
             "SiteExplorer is initiating a cold BMC reset through IPMI to IP {}",
             endpoint.address
@@ -1868,14 +1870,14 @@ impl SiteExplorer {
 
                 Ok(())
             }
-            Err(e) => Err(CarbideError::internal(format!(
+            Err(e) => Err(SiteExplorerError::internal(format!(
                 "site-explorer failed to cold reset bmc through ipmitool {}: {:#?}",
                 endpoint.address, e
             ))),
         }
     }
 
-    pub async fn redfish_reset_bmc(&self, endpoint: &Endpoint<'_>) -> CarbideResult<()> {
+    pub async fn redfish_reset_bmc(&self, endpoint: &Endpoint<'_>) -> SiteExplorerResult<()> {
         tracing::info!(
             "SiteExplorer is initiating a BMC reset through Redfish to IP {}",
             endpoint.address
@@ -1897,7 +1899,7 @@ impl SiteExplorer {
 
                 Ok(())
             }
-            Err(e) => Err(CarbideError::internal(format!(
+            Err(e) => Err(SiteExplorerError::internal(format!(
                 "site-explorer failed to reset bmc through redfish {}: {:#?}",
                 endpoint.address, e
             ))),
@@ -1919,7 +1921,7 @@ impl SiteExplorer {
             }
         }
     }
-    pub async fn clear_nvram(&self, endpoint: &Endpoint<'_>) -> CarbideResult<()> {
+    pub async fn clear_nvram(&self, endpoint: &Endpoint<'_>) -> SiteExplorerResult<()> {
         tracing::info!(
             "SiteExplorer is issuing a clean_nvram through Redfish to IP {}",
             endpoint.address
@@ -1931,7 +1933,7 @@ impl SiteExplorer {
             .clear_nvram(bmc_target_addr, endpoint.iface)
             .await
             .map_err(|err| {
-                CarbideError::internal(format!(
+                SiteExplorerError::internal(format!(
                     "site-explorer failed to clear nvram {}: {:#?}",
                     endpoint.address, err
                 ))
@@ -1940,7 +1942,7 @@ impl SiteExplorer {
         self.force_restart(endpoint).await
     }
 
-    pub async fn force_restart(&self, endpoint: &Endpoint<'_>) -> CarbideResult<()> {
+    pub async fn force_restart(&self, endpoint: &Endpoint<'_>) -> SiteExplorerResult<()> {
         tracing::info!(
             "SiteExplorer is initiating a reboot through Redfish to IP {}",
             endpoint.address
@@ -1965,7 +1967,7 @@ impl SiteExplorer {
 
                 Ok(())
             }
-            Err(e) => Err(CarbideError::internal(format!(
+            Err(e) => Err(SiteExplorerError::internal(format!(
                 "site-explorer failed to reboot {}: {:#?}",
                 endpoint.address, e
             ))),
@@ -1975,7 +1977,7 @@ impl SiteExplorer {
     async fn is_managed_host_created_for_endpoint(
         &self,
         bmc_ip_address: IpAddr,
-    ) -> CarbideResult<bool> {
+    ) -> SiteExplorerResult<bool> {
         let mut txn = self.txn_begin().await?;
 
         let is_endpoint_in_managed_host =
@@ -1992,7 +1994,7 @@ impl SiteExplorer {
         &self,
         metrics: &mut SiteExplorationMetrics,
         dpu_endpoint: &ExploredEndpoint,
-    ) -> CarbideResult<bool> {
+    ) -> SiteExplorerResult<bool> {
         let is_managed_host_created_for_endpoint = match self
             .is_managed_host_created_for_endpoint(dpu_endpoint.address)
             .await
@@ -2046,7 +2048,7 @@ impl SiteExplorer {
         &self,
         dpu_endpoint: &ExploredEndpoint,
         mode: NicMode,
-    ) -> CarbideResult<()> {
+    ) -> SiteExplorerResult<()> {
         let bmc_target_port = self.config.override_target_port.unwrap_or(443);
         let bmc_target_addr = SocketAddr::new(dpu_endpoint.address, bmc_target_port);
 
@@ -2057,7 +2059,7 @@ impl SiteExplorer {
         self.endpoint_explorer
             .set_nic_mode(bmc_target_addr, &interface, mode)
             .await
-            .map_err(|err| CarbideError::EndpointExplorationError {
+            .map_err(|err| SiteExplorerError::EndpointExplorationError {
                 action: "set_nic_mode",
                 err,
             })
@@ -2067,7 +2069,7 @@ impl SiteExplorer {
         &self,
         bmc_ip_address: IpAddr,
         action: libredfish::SystemPowerControl,
-    ) -> CarbideResult<()> {
+    ) -> SiteExplorerResult<()> {
         let bmc_target_port = self.config.override_target_port.unwrap_or(443);
         let bmc_target_addr = SocketAddr::new(bmc_ip_address, bmc_target_port);
 
@@ -2076,13 +2078,13 @@ impl SiteExplorer {
         self.endpoint_explorer
             .redfish_power_control(bmc_target_addr, &interface, action)
             .await
-            .map_err(|err| CarbideError::EndpointExplorationError {
+            .map_err(|err| SiteExplorerError::EndpointExplorationError {
                 action: "redfish_power_control",
                 err,
             })
     }
 
-    async fn redfish_powercycle(&self, bmc_ip_address: IpAddr) -> CarbideResult<()> {
+    async fn redfish_powercycle(&self, bmc_ip_address: IpAddr) -> SiteExplorerResult<()> {
         self.redfish_power_control(bmc_ip_address, libredfish::SystemPowerControl::PowerCycle)
             .await?;
 
@@ -2096,7 +2098,7 @@ impl SiteExplorer {
     async fn find_machine_interface_for_ip(
         &self,
         ip_address: IpAddr,
-    ) -> CarbideResult<MachineInterfaceSnapshot> {
+    ) -> SiteExplorerResult<MachineInterfaceSnapshot> {
         let mut txn = self.txn_begin().await?;
 
         let machine_interface = db::machine_interface::find_by_ip(&mut txn, ip_address).await?;
@@ -2105,7 +2107,7 @@ impl SiteExplorer {
 
         match machine_interface {
             Some(interface) => Ok(interface),
-            None => Err(CarbideError::NotFoundError {
+            None => Err(SiteExplorerError::NotFoundError {
                 kind: "machine_interface",
                 id: format!("remote_ip={ip_address:?}"),
             }),
@@ -2123,7 +2125,7 @@ impl SiteExplorer {
         &self,
         metrics: &mut SiteExplorationMetrics,
         host_endpoint: &ExploredEndpoint,
-    ) -> CarbideResult<bool> {
+    ) -> SiteExplorerResult<bool> {
         let is_managed_host_created_for_endpoint = match self
             .is_managed_host_created_for_endpoint(host_endpoint.address)
             .await
@@ -2332,7 +2334,7 @@ impl SiteExplorer {
         dpu_ep: &ExploredEndpoint,
         dpu_model: String,
         host_dpu_mode: DpuMode,
-    ) -> CarbideResult<bool> {
+    ) -> SiteExplorerResult<bool> {
         // Compute the target NIC mode. `None` means "no opinion -- don't
         // attempt to reconfigure" (e.g., BF2 where the heuristic doesn't
         // apply, or NoDpu where we defer to the health-check path).
