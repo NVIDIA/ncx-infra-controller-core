@@ -19,11 +19,13 @@ use carbide_uuid::machine::{MachineId, MachineIdSource, MachineType};
 use carbide_uuid::rack::{RackId, RackProfileId};
 use db::db_read::DbReader;
 use db::{ObjectColumnFilter, expected_rack as db_expected_rack, rack as db_rack};
+use librms::protos::rack_manager as rms;
 use model::expected_machine::ExpectedMachineData;
 use model::expected_rack::ExpectedRack;
 use model::rack::{
-    FirmwareUpgradeDeviceStatus, FirmwareUpgradeJob, FirmwareUpgradeState, Rack, RackConfig,
-    RackFirmwareUpgradeState, RackMaintenanceState, RackPowerState, RackState, RackValidationState,
+    FirmwareUpgradeDeviceStatus, FirmwareUpgradeJob, FirmwareUpgradeState, NvosUpdateState,
+    NvosUpdateSwitchStatus, Rack, RackConfig, RackFirmwareUpgradeState, RackMaintenanceState,
+    RackPowerState, RackState, RackValidationState, ResolvedNvosArtifact,
 };
 use model::rack_type::{
     RackCapabilitiesSet, RackCapabilityCompute, RackCapabilityPowerShelf, RackCapabilitySwitch,
@@ -34,6 +36,7 @@ use serde_json::json;
 use crate::state_controller::db_write_batch::DbWriteBatch;
 use crate::state_controller::rack::context::RackStateHandlerContextObjects;
 use crate::state_controller::rack::handler::RackStateHandler;
+use crate::state_controller::rack::maintenance::apply_nvos_job_status_response;
 use crate::state_controller::state_handler::{
     StateHandler, StateHandlerContext, StateHandlerOutcome,
 };
@@ -112,7 +115,7 @@ fn single_capabilities() -> RackCapabilitiesSet {
     }
 }
 
-pub(crate) fn config_with_rack_profiles() -> crate::cfg::file::CarbideConfig {
+pub(crate) fn config_with_rack_types() -> crate::cfg::file::CarbideConfig {
     let mut config = get_config();
     config.rack_profiles = RackProfileConfig {
         rack_profiles: [
@@ -210,8 +213,10 @@ async fn create_single_compute_rack(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Single")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Single".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -245,8 +250,10 @@ async fn create_two_compute_rack(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Simple")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Simple".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -276,14 +283,44 @@ pub(crate) fn new_rack_id() -> RackId {
     RackId::new(uuid::Uuid::new_v4().to_string())
 }
 
-async fn create_expected_rack(pool: &sqlx::PgPool, rack_id: &RackId, rack_profile_id: &str) {
+async fn create_expected_rack(pool: &sqlx::PgPool, rack_id: &RackId, rack_type: &str) {
     let mut txn = pool.acquire().await.unwrap();
     let er = ExpectedRack {
         rack_id: rack_id.clone(),
-        rack_profile_id: RackProfileId::new(rack_profile_id),
+        rack_profile_id: RackProfileId::new(rack_type),
         ..Default::default()
     };
     db_expected_rack::create(&mut txn, &er).await.unwrap();
+}
+
+async fn create_default_nvos_rack_firmware(pool: &sqlx::PgPool, firmware_id: &str) {
+    let mut txn = pool.acquire().await.unwrap();
+    sqlx::query(
+        "INSERT INTO rack_firmware \
+         (id, rack_hardware_type, config, parsed_components, available, is_default) \
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, true, true)",
+    )
+    .bind(firmware_id)
+    .bind(RackHardwareType::any())
+    .bind(sqlx::types::Json(json!({ "Id": firmware_id })))
+    .bind(sqlx::types::Json(json!({
+        "devices": {},
+        "switch_system_images": {
+            "Switch Tray": {
+                "NVOS_prod": {
+                    "component": "NVOS",
+                    "package_name": "GB200NVL72_NVOS",
+                    "version": "25.02.2553",
+                    "image_filename": "nvos-amd64-25.02.2553.bin",
+                    "location_type": "HTTPS",
+                    "firmware_type": "prod"
+                }
+            }
+        }
+    })))
+    .execute(txn.as_mut())
+    .await
+    .unwrap();
 }
 
 pub(crate) fn new_machine_id(seed: u8) -> MachineId {
@@ -302,7 +339,7 @@ pub(crate) fn new_machine_id(seed: u8) -> MachineId {
 async fn test_expected_no_definition_stays_parked(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_rack_profiles();
+    let config = config_with_rack_types();
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
@@ -318,8 +355,10 @@ async fn test_expected_no_definition_stays_parked(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("NVL72")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("NVL72".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -348,6 +387,93 @@ async fn test_expected_no_definition_stays_parked(
     Ok(())
 }
 
+#[test]
+fn test_nvos_polling_updates_node_id_and_maps_running_to_in_progress() {
+    let mut switch = NvosUpdateSwitchStatus {
+        node_id: "old-node-id".into(),
+        mac: "00:11:22:33:44:55".into(),
+        bmc_ip: "10.0.0.10".into(),
+        nvos_ip: "192.168.10.10".into(),
+        status: "pending".into(),
+        job_id: Some("job-1".into()),
+        error_message: Some("stale error".into()),
+    };
+
+    apply_nvos_job_status_response(
+        &mut switch,
+        "job-1",
+        Ok(rms::GetSwitchSystemImageJobStatusResponse {
+            status: rms::ReturnCode::Success as i32,
+            state: "RUNNING".into(),
+            node_id: "new-node-id".into(),
+            ..Default::default()
+        }),
+    );
+
+    assert_eq!(switch.node_id, "new-node-id");
+    assert_eq!(switch.status, "in_progress");
+    assert_eq!(switch.error_message, None);
+}
+
+#[test]
+fn test_nvos_polling_maps_failed_state_and_uses_error_message() {
+    let mut switch = NvosUpdateSwitchStatus {
+        node_id: "node-id".into(),
+        mac: "00:11:22:33:44:55".into(),
+        bmc_ip: "10.0.0.10".into(),
+        nvos_ip: "192.168.10.10".into(),
+        status: "in_progress".into(),
+        job_id: Some("job-2".into()),
+        error_message: None,
+    };
+
+    apply_nvos_job_status_response(
+        &mut switch,
+        "job-2",
+        Ok(rms::GetSwitchSystemImageJobStatusResponse {
+            status: rms::ReturnCode::Success as i32,
+            state: "failed".into(),
+            error_message: "image install failed".into(),
+            ..Default::default()
+        }),
+    );
+
+    assert_eq!(switch.status, "failed");
+    assert_eq!(
+        switch.error_message.as_deref(),
+        Some("image install failed")
+    );
+}
+
+#[test]
+fn test_nvos_polling_unknown_state_preserves_status_and_sets_error() {
+    let mut switch = NvosUpdateSwitchStatus {
+        node_id: "node-id".into(),
+        mac: "00:11:22:33:44:55".into(),
+        bmc_ip: "10.0.0.10".into(),
+        nvos_ip: "192.168.10.10".into(),
+        status: "pending".into(),
+        job_id: Some("job-3".into()),
+        error_message: None,
+    };
+
+    apply_nvos_job_status_response(
+        &mut switch,
+        "job-3",
+        Ok(rms::GetSwitchSystemImageJobStatusResponse {
+            status: rms::ReturnCode::Success as i32,
+            state: "mystery".into(),
+            ..Default::default()
+        }),
+    );
+
+    assert_eq!(switch.status, "pending");
+    assert_eq!(
+        switch.error_message.as_deref(),
+        Some("Unknown RMS switch image job state mystery")
+    );
+}
+
 /// test_expected_incomplete_device_counts_stays verifies that a rack with a
 /// topology expecting more devices than currently exist stays in Created.
 #[crate::sqlx_test]
@@ -355,7 +481,7 @@ async fn test_expected_no_definition_stays_parked(
 async fn test_expected_incomplete_device_counts_stays(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_rack_profiles();
+    let config = config_with_rack_types();
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
@@ -373,8 +499,10 @@ async fn test_expected_incomplete_device_counts_stays(
     let mut rack = db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("NVL72")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("NVL72".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -408,7 +536,7 @@ async fn test_expected_incomplete_device_counts_stays(
 async fn test_expected_counts_match_but_not_linked_stays(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_rack_profiles();
+    let config = config_with_rack_types();
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
@@ -426,8 +554,10 @@ async fn test_expected_counts_match_but_not_linked_stays(
     let _rack = db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("NVL72")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("NVL72".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -466,7 +596,7 @@ async fn test_expected_counts_match_but_not_linked_stays(
 async fn test_expected_zero_topology_transitions_to_discovering(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_rack_profiles();
+    let config = config_with_rack_types();
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
@@ -479,12 +609,14 @@ async fn test_expected_zero_topology_transitions_to_discovering(
     let rack_id = new_rack_id();
     let mut txn = pool.acquire().await?;
 
-    // Create rack with a rack_profile_id expecting 2 compute, 0 switches, 0 PS.
+    // Create rack with a rack_type expecting 2 compute, 0 switches, 0 PS.
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -494,8 +626,10 @@ async fn test_expected_zero_topology_transitions_to_discovering(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -544,7 +678,7 @@ async fn test_expected_zero_topology_transitions_to_discovering(
 async fn test_expected_more_discovered_than_expected_transitions(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_rack_profiles();
+    let config = config_with_rack_types();
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
@@ -563,15 +697,25 @@ async fn test_expected_more_discovered_than_expected_transitions(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Single")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Single".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
 
     // Simulate more compute_trays discovered than expected_compute_trays.
 
-    db_rack::update(&mut txn, &rack_id, &RackConfig::default()).await?;
+    db_rack::update(
+        &mut txn,
+        &rack_id,
+        &RackConfig {
+            rack_type: Some("Single".to_string()),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let mut rack = get_db_rack(env.db_reader().as_mut(), &rack_id).await;
 
@@ -614,7 +758,7 @@ async fn test_expected_more_discovered_than_expected_transitions(
 async fn test_discovering_waits_for_compute_ready(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_rack_profiles();
+    let config = config_with_rack_types();
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
@@ -633,8 +777,10 @@ async fn test_discovering_waits_for_compute_ready(
     let mut rack = db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("NVL72")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("NVL72".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -667,7 +813,7 @@ async fn test_discovering_waits_for_compute_ready(
 async fn test_discovering_empty_rack_transitions_to_maintenance(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_rack_profiles();
+    let config = config_with_rack_types();
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
@@ -683,13 +829,18 @@ async fn test_discovering_empty_rack_transitions_to_maintenance(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
 
-    let cfg = RackConfig::default();
+    let cfg = RackConfig {
+        rack_type: Some("Empty".to_string()),
+        ..Default::default()
+    };
     db_rack::update(&mut txn, &rack_id, &cfg).await?;
 
     let mut rack = get_db_rack(env.db_reader().as_mut(), &rack_id).await;
@@ -737,8 +888,10 @@ async fn test_error_state_does_nothing(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -783,8 +936,10 @@ async fn test_maintenance_completed_transitions_to_validation(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -843,8 +998,10 @@ async fn test_ready_with_no_labels_stays_ready(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -888,7 +1045,7 @@ async fn test_firmware_upgrade_start_without_default_skips_to_configure_nmx_clus
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -960,7 +1117,7 @@ async fn test_firmware_upgrade_start_with_unavailable_default_skips_to_configure
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -1038,7 +1195,7 @@ async fn test_firmware_upgrade_start_transitions_to_wait_for_complete(
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -1177,7 +1334,7 @@ async fn test_firmware_upgrade_wait_for_complete_waits_while_jobs_running(
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -1265,7 +1422,7 @@ async fn test_firmware_upgrade_wait_for_complete_transitions_to_error_on_job_fai
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -1367,7 +1524,7 @@ async fn test_firmware_upgrade_wait_for_complete_waits_for_all_nodes_to_be_termi
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -1545,7 +1702,7 @@ async fn test_firmware_upgrade_wait_for_complete_retries_when_job_lookup_fails(
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -1630,7 +1787,7 @@ async fn test_firmware_upgrade_wait_for_complete_retries_on_transient_poll_error
     let env = create_test_env_with_overrides(
         pool.clone(),
         TestEnvOverrides {
-            config: Some(config_with_rack_profiles()),
+            config: Some(config_with_rack_types()),
             ..Default::default()
         },
     )
@@ -1701,6 +1858,88 @@ async fn test_firmware_upgrade_wait_for_complete_retries_on_transient_poll_error
     Ok(())
 }
 
+/// test_nvos_update_start_transitions_to_wait_for_complete verifies that
+/// Maintenance::NVOSUpdate(Start) transitions to WaitForComplete when a
+/// default NVOS-capable rack_firmware entry exists.
+#[crate::sqlx_test]
+async fn test_nvos_update_start_transitions_to_wait_for_complete(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let env = create_test_env_with_overrides(pool.clone(), TestEnvOverrides::default()).await;
+
+    let rack_id = new_rack_id();
+    let mut txn = pool.acquire().await?;
+    db_rack::create(
+        &mut txn,
+        &rack_id,
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
+        None,
+    )
+    .await?;
+    drop(txn);
+
+    create_default_nvos_rack_firmware(&pool, "fw-nvos-default").await;
+
+    let mut rack = get_db_rack(env.db_reader().as_mut(), &rack_id).await;
+
+    let handler_instance = RackStateHandler::default();
+    let mut services = env.state_handler_services();
+    let mut metrics = ();
+    let mut db_writes = DbWriteBatch::default();
+    let mut ctx = StateHandlerContext::<RackStateHandlerContextObjects> {
+        services: &mut services,
+        metrics: &mut metrics,
+        pending_db_writes: &mut db_writes,
+    };
+
+    let nvos_state = RackState::Maintenance {
+        maintenance_state: RackMaintenanceState::NVOSUpdate {
+            nvos_update: NvosUpdateState::Start {
+                artifact: ResolvedNvosArtifact {
+                    firmware_id: "fw-nvos-default".to_string(),
+                    image_filename: "nvos-amd64-25.02.2553.bin".to_string(),
+                    local_file_path: "/forge-boot-artifacts/blobs/internal/fw/rack_firmware/fw-nvos-default/nvos-amd64-25.02.2553.bin".to_string(),
+                    version: Some("25.02.2553".to_string()),
+                },
+            },
+        },
+    };
+    let outcome = handler_instance
+        .handle_object_state(&rack_id, &mut rack, &nvos_state, &mut ctx)
+        .await?;
+
+    assert!(
+        rack.nvos_update_job.is_some(),
+        "NVOSUpdate(Start) should populate rack.nvos_update_job"
+    );
+
+    match outcome {
+        StateHandlerOutcome::Transition { next_state, .. } => {
+            assert!(
+                matches!(
+                    next_state,
+                    RackState::Maintenance {
+                        maintenance_state: RackMaintenanceState::NVOSUpdate {
+                            nvos_update: NvosUpdateState::WaitForComplete,
+                        },
+                    }
+                ),
+                "NVOSUpdate(Start) should transition to WaitForComplete, got {:?}",
+                next_state
+            );
+        }
+        other => panic!(
+            "Expected Transition, got {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
+
+    Ok(())
+}
+
 /// test_configure_nmx_cluster_transitions_to_completed verifies that
 /// Maintenance::ConfigureNmxCluster transitions to Maintenance::Completed.
 #[crate::sqlx_test]
@@ -1714,8 +1953,10 @@ async fn test_configure_nmx_cluster_transitions_to_completed(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -1776,8 +2017,10 @@ async fn test_ready_topology_changed_transitions_to_discovering(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -1834,8 +2077,10 @@ async fn test_ready_reprovision_requested_transitions_to_maintenance(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
@@ -1892,8 +2137,10 @@ async fn test_validation_failed_transitions_to_error(
     db_rack::create(
         &mut txn,
         &rack_id,
-        Some(&RackProfileId::new("Empty")),
-        &RackConfig::default(),
+        &RackConfig {
+            rack_type: Some("Empty".to_string()),
+            ..Default::default()
+        },
         None,
     )
     .await?;
