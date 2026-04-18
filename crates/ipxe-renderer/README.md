@@ -29,9 +29,12 @@ This crate provides a flexible, template-based approach to generating iPXE boot 
 use carbide_ipxe_renderer::{
     IpxeScriptRenderer, DefaultIpxeScriptRenderer, IpxeScript, IpxeTemplateParameter
 };
+use uuid::Uuid;
 
-// Create renderer
-let renderer = DefaultIpxeScriptRenderer::new();
+// Create renderer. In production, pass the controller's installation ID so
+// that public template UUIDs are derived per-instance via UUID v5. In tests
+// pass `Uuid::nil()` to expose the raw static UUIDs from `templates.yaml`.
+let renderer = DefaultIpxeScriptRenderer::new(installation_id);
 
 // Define an iPXE OS
 let mut ipxeos = IpxeScript {

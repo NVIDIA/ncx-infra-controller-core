@@ -23,6 +23,7 @@ pub mod attestation;
 pub mod bmc_metadata;
 pub mod carbide_version;
 pub mod compute_allocation;
+pub mod controller_identity;
 pub mod db_read;
 pub mod desired_firmware;
 pub mod dhcp_entry;

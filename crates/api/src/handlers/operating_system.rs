@@ -50,8 +50,7 @@ fn validate_template_requirements(
         }
     }
 
-    let renderer = carbide_ipxe_renderer::DefaultIpxeScriptRenderer::new();
-
+    let renderer = carbide_ipxe_renderer::global();
     let ipxeos = rpc_to_ipxe_script(template_id, params, artifacts);
     let hash = renderer.hash(&ipxeos);
     let mut ipxeos_with_hash = ipxeos;
@@ -441,7 +440,7 @@ pub async fn update_operating_system(
         if needs_provisioning {
             Some(db::operating_system::OS_STATUS_PROVISIONING.to_string())
         } else {
-            None
+            Some(db::operating_system::OS_STATUS_READY.to_string())
         }
     } else {
         None

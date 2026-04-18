@@ -11,9 +11,11 @@
  */
 
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 /// iPXE OS definition with template-based rendering support
 #[derive(Debug, Clone)]
@@ -175,17 +177,26 @@ pub struct DefaultIpxeScriptRenderer {
 }
 
 impl DefaultIpxeScriptRenderer {
-    pub fn new() -> Self {
-        // Load templates from embedded YAML file at compile time
+    /// Create a renderer whose public template UUIDs are derived per-instance
+    /// from the provided `installation_id`.
+    /// Passing `Uuid::nil()` disables derivation entirely (for testing purpose).
+    pub fn new(installation_id: Uuid) -> Self {
         const TEMPLATES_YAML: &str = include_str!("../templates.yaml");
 
         let template_collection: TemplateCollection = serde_yaml::from_str(TEMPLATES_YAML)
             .expect("Failed to parse templates.yaml - this is a compile-time error");
 
+        let derive = !installation_id.is_nil();
+
         let templates = template_collection
             .templates
             .into_iter()
-            .map(|t| (t.name.clone(), t))
+            .map(|mut t| {
+                if derive {
+                    t.id = derive_public_template_id(installation_id, &t.id, &t.name);
+                }
+                (t.name.clone(), t)
+            })
             .collect();
 
         Self { templates }
@@ -196,10 +207,76 @@ impl DefaultIpxeScriptRenderer {
     }
 }
 
-impl Default for DefaultIpxeScriptRenderer {
-    fn default() -> Self {
-        Self::new()
+/// Process-wide shared renderer, populated at startup by [`install_global`].
+///
+/// Stored as `(installation_id, renderer)` so that a repeated install (e.g.
+/// integration tests spinning up `start_api` multiple times within the same
+/// process) can distinguish a benign re-install with the same ID from a
+/// genuine mismatch worth flagging.
+static GLOBAL_RENDERER: OnceLock<(Uuid, Arc<DefaultIpxeScriptRenderer>)> = OnceLock::new();
+
+/// Install the process-wide iPXE renderer with the given `installation_id`.
+///
+/// Normally called exactly once, early in startup, before any handler that
+/// needs to render or look up templates.
+///
+/// Idempotent on repeated calls: the first call wins. This allows integration
+/// tests that exercise `start_api` multiple times within a single test binary
+/// to coexist without panicking. A second call with a **different**
+/// `installation_id` logs a warning — in production that would indicate a
+/// real configuration bug; in integration tests each test typically has its
+/// own freshly-migrated database, so mismatches are expected.
+///
+/// In unit tests that don't go through `start_api`, don't call this —
+/// [`global`] will lazily create a renderer with `Uuid::nil()` (static YAML
+/// UUIDs unchanged) on first access.
+pub fn install_global(installation_id: Uuid) {
+    let renderer = Arc::new(DefaultIpxeScriptRenderer::new(installation_id));
+    if let Err((existing_id, _)) = GLOBAL_RENDERER.set((installation_id, renderer))
+        && existing_id != installation_id
+    {
+        tracing::warn!(
+            existing_id = %existing_id,
+            new_id = %installation_id,
+            "carbide_ipxe_renderer::install_global called a second time with a different \
+             installation_id; keeping the first installation"
+        );
     }
+}
+
+/// Return the process-wide iPXE renderer.
+///
+/// In production, [`install_global`] is called during startup with the
+/// controller's installation ID, so every caller receives a renderer whose
+/// public template UUIDs are derived per-instance via UUID v5.
+///
+/// In unit tests that don't call `install_global`, the first call lazily
+/// creates a renderer with `Uuid::nil()`, exposing the raw static UUIDs from
+/// `templates.yaml`. All subsequent calls return the same instance.
+pub fn global() -> Arc<DefaultIpxeScriptRenderer> {
+    GLOBAL_RENDERER
+        .get_or_init(|| {
+            (
+                Uuid::nil(),
+                Arc::new(DefaultIpxeScriptRenderer::new(Uuid::nil())),
+            )
+        })
+        .1
+        .clone()
+}
+
+/// Derive the per-instance public UUID for a template.
+///
+/// `static_id` is expected to be a valid UUID (as shipped in `templates.yaml`).
+/// If it fails to parse we fold in the template name instead to preserve
+/// uniqueness across templates; this is purely defensive — `templates.yaml`
+/// is validated at build time.
+fn derive_public_template_id(installation_id: Uuid, static_id: &str, name: &str) -> String {
+    let name_bytes: Vec<u8> = match Uuid::parse_str(static_id) {
+        Ok(parsed) => parsed.as_bytes().to_vec(),
+        Err(_) => format!("{static_id}::{name}").into_bytes(),
+    };
+    Uuid::new_v5(&installation_id, &name_bytes).to_string()
 }
 
 /// Resolve the effective URL for an artifact respecting cache_strategy:
@@ -650,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_hash_computation() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Compute hash
@@ -672,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_reserved_parameter_validation() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Add a reserved parameter
@@ -693,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_required_parameter_validation() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Remove required parameter
@@ -711,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_required_artifact_validation() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = IpxeScript {
             name: "Ubuntu 22.04".to_string(),
             description: Some("Ubuntu autoinstall".to_string()),
@@ -771,7 +848,7 @@ mod tests {
 
     #[test]
     fn test_render_qcow_template() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Update hash
@@ -799,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_render_with_extra_params() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Add extra parameters
@@ -836,7 +913,7 @@ mod tests {
 
     #[test]
     fn test_render_ubuntu_autoinstall() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = IpxeScript {
             name: "Ubuntu 22.04".to_string(),
             description: Some("Ubuntu autoinstall".to_string()),
@@ -901,7 +978,7 @@ mod tests {
 
     #[test]
     fn test_render_with_artifacts() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = IpxeScript {
             name: "Ubuntu with artifacts".to_string(),
             description: Some("Ubuntu with cached artifacts".to_string()),
@@ -966,7 +1043,7 @@ mod tests {
 
     #[test]
     fn test_fabricate_cached_urls() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let ipxeos = IpxeScript {
             name: "Test with artifacts".to_string(),
             description: Some("Test".to_string()),
@@ -1026,7 +1103,7 @@ mod tests {
 
     #[test]
     fn test_list_templates() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let templates = renderer.list_templates();
 
         assert!(templates.contains(&"qcow-image".to_string()));
@@ -1046,7 +1123,7 @@ mod tests {
 
     #[test]
     fn test_get_template_by_name() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let template = renderer.get_template_by_name("qcow-image");
         assert!(template.is_some());
@@ -1058,7 +1135,7 @@ mod tests {
 
     #[test]
     fn test_get_template_by_id() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let template = renderer.get_template_by_id("ea756ddd-add3-5e42-a202-44bfc2d5aac2");
         assert!(template.is_some());
@@ -1070,7 +1147,7 @@ mod tests {
 
     #[test]
     fn test_missing_reserved_parameter() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
         ipxeos.hash = renderer.hash(&ipxeos);
 
@@ -1089,7 +1166,7 @@ mod tests {
 
     #[test]
     fn test_unexpected_reserved_parameter() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
         ipxeos.hash = renderer.hash(&ipxeos);
 
@@ -1122,7 +1199,7 @@ mod tests {
 
     #[test]
     fn test_unreplaced_placeholders() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
         // Remove the required parameter to cause unreplaced placeholder
         ipxeos.parameters.clear();
@@ -1152,7 +1229,7 @@ mod tests {
 
     #[test]
     fn test_extra_parameter_name_reserved() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Try to use "extra" as a parameter name (should be rejected)
@@ -1187,7 +1264,7 @@ mod tests {
 
     #[test]
     fn test_extra_artifact_name_reserved() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Try to use "extra" as an artifact name (should be rejected)
@@ -1228,7 +1305,7 @@ mod tests {
     #[test]
     fn test_extra_case_insensitive_rejected() {
         // All case variations of "extra" should be rejected (case-insensitive)
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // "Extra" (capitalized) should also be rejected (case-insensitive)
@@ -1264,7 +1341,7 @@ mod tests {
     #[test]
     fn test_case_preserved_in_extra() {
         // Original case should be preserved in {{extra}} for non-reserved parameters
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Add parameters with mixed case (not "extra")
@@ -1304,7 +1381,7 @@ mod tests {
     #[test]
     fn test_case_insensitive_parameter_matching() {
         // Parameter names should match case-insensitively
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos = IpxeScript {
             name: "Test".to_string(),
@@ -1346,7 +1423,7 @@ mod tests {
     #[test]
     fn test_case_insensitive_hash_equivalence() {
         // Different cases of same parameter name should produce same hash
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos1 = IpxeScript {
             name: "Test".to_string(),
@@ -1385,7 +1462,7 @@ mod tests {
     fn test_parameter_and_artifact_same_name_in_required() {
         // If required_params has "foo" and we have both parameter and artifact named "foo",
         // parameter should be consumed first (artifacts only consumed by required_artifacts)
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos = IpxeScript {
             name: "Test".to_string(),
@@ -1433,7 +1510,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_parameters_occurrence_based() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Add duplicate parameter - first consumed by required_params, second goes to {{extra}}
@@ -1467,7 +1544,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_parameters_in_hash() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos1 = IpxeScript {
             name: "Test".to_string(),
@@ -1497,7 +1574,7 @@ mod tests {
 
     #[test]
     fn test_hash_parameter_order_determinism() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos1 = IpxeScript {
             name: "Test".to_string(),
@@ -1554,7 +1631,7 @@ mod tests {
 
     #[test]
     fn test_hash_artifact_order_determinism() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos1 = IpxeScript {
             name: "Test".to_string(),
@@ -1629,7 +1706,7 @@ mod tests {
 
     #[test]
     fn test_hash_excludes_cache_strategy() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos1 = IpxeScript {
             name: "Test".to_string(),
@@ -1664,7 +1741,7 @@ mod tests {
 
     #[test]
     fn test_hash_excludes_cached_url() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos1 = IpxeScript {
             name: "Test".to_string(),
@@ -1699,7 +1776,7 @@ mod tests {
 
     #[test]
     fn test_hash_repeatability() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos = IpxeScript {
             name: "Test".to_string(),
@@ -1739,7 +1816,7 @@ mod tests {
 
     #[test]
     fn test_double_space_cleanup() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Add empty optional parameters that would create double spaces
@@ -1775,7 +1852,7 @@ mod tests {
 
     #[test]
     fn test_empty_optional_parameters_not_in_extra() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = create_test_ipxeos();
 
         // Add empty optional parameter
@@ -1814,7 +1891,7 @@ mod tests {
 
     #[test]
     fn test_fabricate_cached_urls_comprehensive() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos = IpxeScript {
             name: "Test".to_string(),
@@ -1896,7 +1973,7 @@ mod tests {
 
     #[test]
     fn test_fabricate_cached_urls_deterministic() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         let ipxeos = IpxeScript {
             name: "Test".to_string(),
@@ -1931,7 +2008,7 @@ mod tests {
 
     #[test]
     fn test_render_whoami_static_template() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
 
         // Get the whoami template
         let template = renderer
@@ -1985,7 +2062,7 @@ mod tests {
 
     #[test]
     fn test_render_artifact_remote_only_ignores_cached_url() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = IpxeScript {
             name: "RemoteOnly test".to_string(),
             description: None,
@@ -2052,7 +2129,7 @@ mod tests {
 
     #[test]
     fn test_render_artifact_local_only_uses_site_url() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = IpxeScript {
             name: "LocalOnly test".to_string(),
             description: None,
@@ -2115,7 +2192,7 @@ mod tests {
 
     #[test]
     fn test_render_artifact_cached_only_fails_without_cached_url() {
-        let renderer = DefaultIpxeScriptRenderer::new();
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
         let mut ipxeos = IpxeScript {
             name: "CachedOnly missing test".to_string(),
             description: None,
@@ -2172,5 +2249,125 @@ mod tests {
             "CachedOnly without cached_url should fail: {:?}",
             result
         );
+    }
+
+    // --- UUID v5 per-instance derivation ---
+
+    /// Static UUID of the `qcow-image` template in templates.yaml
+    const STATIC_QCOW_ID: &str = "ea756ddd-add3-5e42-a202-44bfc2d5aac2";
+
+    #[test]
+    fn test_new_with_nil_installation_id_preserves_static_uuids() {
+        let renderer = DefaultIpxeScriptRenderer::new(Uuid::nil());
+        let qcow = renderer.get_template_by_name("qcow-image").unwrap();
+        assert_eq!(qcow.id, STATIC_QCOW_ID);
+        assert!(renderer.get_template_by_id(STATIC_QCOW_ID).is_some());
+    }
+
+    #[test]
+    fn test_different_installation_ids_derive_different_uuids() {
+        let install_a = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        let install_b = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+
+        let r_a = DefaultIpxeScriptRenderer::new(install_a);
+        let r_b = DefaultIpxeScriptRenderer::new(install_b);
+
+        let a_id = r_a.get_template_by_name("qcow-image").unwrap().id.clone();
+        let b_id = r_b.get_template_by_name("qcow-image").unwrap().id.clone();
+
+        // Different installations produce different derived UUIDs for the same template.
+        assert_ne!(a_id, b_id);
+
+        // Derived UUIDs MUST differ from the static YAML UUID.
+        assert_ne!(a_id, STATIC_QCOW_ID);
+        assert_ne!(b_id, STATIC_QCOW_ID);
+
+        // And they are valid UUIDs.
+        Uuid::parse_str(&a_id).unwrap();
+        Uuid::parse_str(&b_id).unwrap();
+    }
+
+    #[test]
+    fn test_new_is_deterministic_for_same_installation_id() {
+        let install = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").unwrap();
+
+        let r1 = DefaultIpxeScriptRenderer::new(install);
+        let r2 = DefaultIpxeScriptRenderer::new(install);
+
+        // Every template's derived id is identical across constructions.
+        for name in r1.list_templates() {
+            let id1 = &r1.get_template_by_name(&name).unwrap().id;
+            let id2 = &r2.get_template_by_name(&name).unwrap().id;
+            assert_eq!(id1, id2, "template {} drifted between renderers", name);
+        }
+    }
+
+    #[test]
+    fn test_lookup_by_derived_id() {
+        let install = Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap();
+        let renderer = DefaultIpxeScriptRenderer::new(install);
+
+        let qcow = renderer.get_template_by_name("qcow-image").unwrap();
+        let derived_id = qcow.id.clone();
+
+        // Lookup by the derived id succeeds.
+        let by_id = renderer.get_template_by_id(&derived_id).unwrap();
+        assert_eq!(by_id.name, "qcow-image");
+
+        // The original static id is no longer a valid lookup key.
+        assert!(renderer.get_template_by_id(STATIC_QCOW_ID).is_none());
+    }
+
+    #[test]
+    fn test_all_templates_rewritten_and_unique() {
+        let install = Uuid::parse_str("44444444-4444-4444-4444-444444444444").unwrap();
+        let renderer = DefaultIpxeScriptRenderer::new(install);
+
+        let mut derived_ids: Vec<String> = renderer
+            .list_templates()
+            .iter()
+            .map(|n| renderer.get_template_by_name(n).unwrap().id.clone())
+            .collect();
+        derived_ids.sort();
+        let total = derived_ids.len();
+        derived_ids.dedup();
+        assert_eq!(
+            derived_ids.len(),
+            total,
+            "derived UUIDs must be unique across templates"
+        );
+        assert!(derived_ids.iter().all(|s| Uuid::parse_str(s).is_ok()));
+    }
+
+    #[test]
+    fn test_global_defaults_to_nil_when_not_installed() {
+        // In test processes that never call `install_global`, `global()` must
+        // return a renderer whose template UUIDs match `templates.yaml` as-is.
+        //
+        // NOTE: this is the only test in this crate that touches
+        // `GLOBAL_RENDERER` / `install_global`. Keep it that way — adding
+        // another test that calls `install_global` would race with this one
+        // since the `OnceLock` is per-process. `install_global`'s idempotent
+        // behavior is covered end-to-end by the `carbide-api-integration-tests`
+        // crate, which spins up `start_api` multiple times per process.
+        let renderer = global();
+        let qcow = renderer.get_template_by_name("qcow-image").unwrap();
+        assert_eq!(qcow.id, STATIC_QCOW_ID);
+        // Subsequent calls return the same Arc'd instance.
+        assert!(Arc::ptr_eq(&renderer, &global()));
+    }
+
+    #[test]
+    fn test_derive_public_template_id_matches_rfc4122_v5() {
+        let install = Uuid::parse_str("55555555-5555-5555-5555-555555555555").unwrap();
+        let static_id = STATIC_QCOW_ID;
+        let parsed = Uuid::parse_str(static_id).unwrap();
+
+        let got = derive_public_template_id(install, static_id, "qcow-image");
+        let expected = Uuid::new_v5(&install, parsed.as_bytes()).to_string();
+
+        assert_eq!(got, expected);
+        // Version nibble (13th hex char) must be '5' for UUID v5.
+        assert_eq!(&got[14..15], "5");
     }
 }
