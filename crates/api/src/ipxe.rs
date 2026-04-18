@@ -16,8 +16,8 @@
  */
 use ::rpc::forge as rpc;
 use carbide_ipxe_renderer::{
-    DefaultIpxeScriptRenderer, IpxeScript, IpxeScriptRenderer, IpxeTemplateArtifact,
-    IpxeTemplateArtifactCacheStrategy, IpxeTemplateParameter,
+    IpxeScript, IpxeScriptRenderer, IpxeTemplateArtifact, IpxeTemplateArtifactCacheStrategy,
+    IpxeTemplateParameter,
 };
 use carbide_uuid::machine::{MachineId, MachineInterfaceId, MachineType};
 use db::{self};
@@ -195,8 +195,7 @@ impl PxeInstructions {
         base_url: &str,
         console: &str,
     ) -> Result<String, CarbideError> {
-        let renderer = DefaultIpxeScriptRenderer::new();
-
+        let renderer = carbide_ipxe_renderer::global();
         let mut reserved_params = Vec::new();
 
         if let Some(template) = renderer.get_template_by_id(&ipxeos.ipxe_template_id) {

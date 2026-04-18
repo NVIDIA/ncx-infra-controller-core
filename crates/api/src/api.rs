@@ -3207,7 +3207,7 @@ impl Forge for Api {
         let id = req
             .id
             .ok_or_else(|| Status::invalid_argument("id is required"))?;
-        let renderer = carbide_ipxe_renderer::DefaultIpxeScriptRenderer::new();
+        let renderer = carbide_ipxe_renderer::global();
 
         match renderer.get_template_by_id(&id.to_string()) {
             Some(template) => Ok(tonic::Response::new(::rpc::forge::IpxeTemplate {
@@ -3233,7 +3233,7 @@ impl Forge for Api {
     ) -> Result<tonic::Response<::rpc::forge::IpxeTemplateList>, Status> {
         use carbide_ipxe_renderer::IpxeScriptRenderer;
 
-        let renderer = carbide_ipxe_renderer::DefaultIpxeScriptRenderer::new();
+        let renderer = carbide_ipxe_renderer::global();
         let template_names = renderer.list_templates();
 
         let templates = template_names

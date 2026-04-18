@@ -616,7 +616,13 @@ pub async fn initialize_and_start_controllers(
         )
         .await?;
 
+        let installation_id = db::controller_identity::installation_id(txn.as_pgconn()).await?;
+
         txn.commit().await?;
+
+        // We use the "installation id" to derive per-instance public UUIDs for the compile-time
+        // iPXE templates (see carbide_ipxe_renderer::install_global).
+        carbide_ipxe_renderer::install_global(installation_id);
     }
 
     if let Some(domain_name) = &carbide_config.initial_domain_name
