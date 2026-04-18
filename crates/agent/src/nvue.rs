@@ -1919,4 +1919,42 @@ mod tests {
             include_str!("../templates/tests/nvue_build_fnn_dual_stack.yaml.expected"),
         );
     }
+
+    /// `serde_yaml::Value::Null` indicates a YAML key with no value (i.e. a
+    /// bare `key:` followed by nothing). In cases like this, YAML parsing fails,
+    /// and NVUE subsequently rejects with something like `Error: 'set' operation
+    /// values must not be 'null'`.
+    /// This helper exists so we can check for empty leaf renderings in general for
+    /// any tests that would like to check for such a situation.
+    fn has_null_leaf(v: &serde_yaml::Value) -> bool {
+        match v {
+            serde_yaml::Value::Null => true,
+            serde_yaml::Value::Mapping(m) => m.values().any(has_null_leaf),
+            serde_yaml::Value::Sequence(s) => s.iter().any(has_null_leaf),
+            _ => false,
+        }
+    }
+
+    /// When a DPU has no tenant VPCs assigned, the rendered FNN YAML must contain
+    /// no null config leaves (like a `list:` with no entries, or `from-vrf:` with
+    /// no subsequent config, etc).
+    #[test]
+    fn test_build_fnn_with_no_vpcs_emits_no_yaml_nulls() {
+        let mut conf = minimal_nvue_config();
+        conf.is_fnn = true;
+        conf.vpc_virtualization_type = VpcVirtualizationType::Fnn;
+        // For this one, we'll intentionally leave ct_port_configs / ct_access_vlans empty
+        // to ensure $tenant.Vpcs is empty in the template, and that route-import
+        // blocks that would otherwise have an empty VPC VRF list are excluded.
+        assert!(conf.ct_port_configs.is_empty());
+
+        let output = build(conf).expect("build should succeed with empty ct_port_configs");
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&output).expect("rendered YAML must parse");
+
+        assert!(
+            !has_null_leaf(&parsed),
+            "rendered YAML contains a null leaf:\n\n{output}"
+        );
+    }
 }
