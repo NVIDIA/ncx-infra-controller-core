@@ -28,7 +28,8 @@ use std::path::PathBuf;
 
 use forge_tls::client_config::ClientCert;
 use rpc::forge_tls_client::{ApiConfig, ForgeClientConfig};
-use tokio::io::AsyncWriteExt;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio_util::sync::CancellationToken;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -79,53 +80,54 @@ async fn main() -> Result<(), error::RvsError> {
 
     // Build NICC client from config
     let client_cert = ClientCert {
-        cert_path: cfg.tls.identity_pemfile_path.clone(),
-        key_path: cfg.tls.identity_keyfile_path.clone(),
+        cert_path: cfg.tls.identity_pemfile_path,
+        key_path: cfg.tls.identity_keyfile_path,
     };
-    let client_config = ForgeClientConfig::new(cfg.tls.root_cafile_path.clone(), Some(client_cert));
+    let client_config = ForgeClientConfig::new(cfg.tls.root_cafile_path, Some(client_cert));
     let api_config = ApiConfig::new(&cfg.nicc.url, &client_config);
     let nicc = NiccClient::new(&api_config);
 
-    // Liveness probe server
+    // TODO[#416]: re-introduce a liveness/health probe (bound to
+    // `cfg.metrics_endpoint`) once RVS runs as a long-lived service with
+    // graceful shutdown and real health checks. For now, "alive" just means
+    // the process is running -- the current stub probe would only echo 200
+    // and buys nothing.
 
-    let listen_addr = cfg.metrics_endpoint.to_string();
-    tracing::info!(addr = %listen_addr, "starting liveness HTTP server");
+    let cancel_token = CancellationToken::new();
+    let validation_cancel_token = cancel_token.clone();
 
-    let listener = tokio::net::TcpListener::bind(cfg.metrics_endpoint).await?;
+    tokio::spawn(async move {
+        loop {
+            let Ok(mut sigint) = signal(SignalKind::interrupt()) else {
+                break;
+            };
+            let Ok(mut sigterm) = signal(SignalKind::terminate()) else {
+                break;
+            };
+            // Wait for SIGINT or SIGTERM
+            let received_signal = tokio::select! {
+                _ = sigint.recv() => "SIGINT",
+                _ = sigterm.recv() => "SIGTERM",
+            };
 
-    // Run validation and liveness concurrently; a hard error from validation
-    // exits the process.
-    tokio::select! {
-        result = run_validation(&nicc, os_uri, cfg.poll_interval_secs) => result?,
-        () = serve_liveness(listener) => {},
-    }
-
-    Ok(())
-}
-
-async fn serve_liveness(listener: tokio::net::TcpListener) {
-    loop {
-        match listener.accept().await {
-            Ok((mut stream, _addr)) => {
-                tokio::spawn(async move {
-                    // TODO[#416]: proper responses instead of this
-                    let mut buf = [0u8; 1024];
-                    let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
-                    let body = "carbide-rvs: alive\n";
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
-                    let _ = stream.write_all(response.as_bytes()).await;
-                });
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "liveness: accept failed, retrying");
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if cancel_token.is_cancelled() {
+                std::process::exit(130);
+            } else {
+                eprintln!(
+                    "{received_signal} received, shutting down gracefully. Send {received_signal} again to exit."
+                );
+                cancel_token.cancel();
             }
         }
-    }
+    });
+
+    run_validation(
+        &nicc,
+        os_uri,
+        cfg.poll_interval_secs,
+        validation_cancel_token,
+    )
+    .await
 }
 
 /// Parse `--config <path>` from argv. Returns `None` if the flag is absent.
@@ -147,6 +149,7 @@ async fn run_validation(
     nicc: &NiccClient,
     os_uri: &str,
     poll_interval_secs: u64,
+    cancel_token: CancellationToken,
 ) -> Result<(), error::RvsError> {
     let interval = std::time::Duration::from_secs(poll_interval_secs);
     loop {
@@ -156,6 +159,12 @@ async fn run_validation(
             validation::submit_report(report).await?;
         }
         tracing::info!(poll_interval_secs, "validation: cycle complete, sleeping");
-        tokio::time::sleep(interval).await;
+        if cancel_token
+            .run_until_cancelled(tokio::time::sleep(interval))
+            .await
+            .is_none()
+        {
+            break Ok(());
+        }
     }
 }

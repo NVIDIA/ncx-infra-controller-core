@@ -41,13 +41,13 @@ fn prepare_run_id(trays: &HashMap<String, Tray>) -> RunIdPlan {
 }
 
 /// Return the shared run ID if every tray already carries the same `rv.run-id`.
-fn existing_run_id(trays: &HashMap<String, Tray>) -> Option<String> {
+fn existing_run_id(trays: &HashMap<String, Tray>) -> Option<&String> {
     // Every tray must carry `rv.run-id` -- a partial match would leave the
     // label-less trays drifting while the rest reuse the shared ID.
     let mut run_ids = trays.values().map(|t| t.rv_labels.get("rv.run-id"));
     let first = run_ids.next().flatten()?;
     if run_ids.all(|id| id == Some(first)) {
-        Some(first.clone())
+        Some(first)
     } else {
         None
     }
@@ -92,7 +92,7 @@ pub async fn plan(
 async fn assign_run_id(trays: &HashMap<String, Tray>, nicc: &NiccClient) -> Result<(), RvsError> {
     let plan = prepare_run_id(trays);
     for (tray_id, labels) in plan.updates {
-        nicc.update_rv_labels(&tray_id, &labels).await?;
+        nicc.update_rv_labels(&tray_id, labels).await?;
     }
     Ok(())
 }

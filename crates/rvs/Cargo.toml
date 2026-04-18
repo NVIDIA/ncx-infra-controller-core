@@ -35,6 +35,7 @@ uuid = { workspace = true, features = ["v4"] }
 logfmt = { path = "../logfmt" }
 serde = { features = ["derive"], workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
 tonic = { workspace = true }
