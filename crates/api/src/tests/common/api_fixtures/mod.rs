@@ -1928,6 +1928,7 @@ fn test_static_credential_snapshot() -> CredentialSnapshot {
     use std::collections::HashMap;
 
     use base64::Engine;
+
     let test_key_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
     let mut encryption_keys = HashMap::new();
     encryption_keys.insert("test".to_string(), test_key_b64);

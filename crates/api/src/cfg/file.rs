@@ -48,7 +48,7 @@ use model::network_security_group::NetworkSecurityGroupRule;
 use model::network_segment::NetworkDefinition;
 use model::resource_pool::define::ResourcePoolDef;
 use model::site_explorer::{EndpointExplorationReport, ExploredEndpoint};
-use model::tenant::TENANT_IDENTITY_SIGNING_JWT_ALG;
+use model::tenant::identity_config::SigningAlgorithm;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utils::HostPortPair;
@@ -717,12 +717,12 @@ pub struct DpfServiceConfig {
 /// Loaded from `[machine_identity]` section in config.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MachineIdentityConfig {
-    /// Master switch. If false, SetIdentityConfiguration and SignMachineIdentity return 503.
+    /// Master switch. If false, SetTenantIdentityConfiguration and SignMachineIdentity return 503.
     #[serde(default = "machine_identity_default_enabled")]
     pub enabled: bool,
     /// Signing algorithm for per-org keys (e.g. ES256).
     #[serde(default = "machine_identity_default_algorithm")]
-    pub algorithm: String,
+    pub algorithm: SigningAlgorithm,
     /// Min token TTL permitted in seconds.
     #[serde(default = "machine_identity_default_token_ttl_min_sec")]
     pub token_ttl_min_sec: u32,
@@ -748,8 +748,8 @@ pub struct MachineIdentityConfig {
 fn machine_identity_default_enabled() -> bool {
     false
 }
-fn machine_identity_default_algorithm() -> String {
-    TENANT_IDENTITY_SIGNING_JWT_ALG.to_string()
+fn machine_identity_default_algorithm() -> SigningAlgorithm {
+    SigningAlgorithm::Es256
 }
 fn machine_identity_default_token_ttl_min_sec() -> u32 {
     60
@@ -779,10 +779,16 @@ impl From<MachineIdentityConfig> for model::tenant::IdentityConfigValidationBoun
             token_ttl_min_sec: mi.token_ttl_min_sec,
             token_ttl_max_sec: mi.token_ttl_max_sec,
             algorithm: mi.algorithm,
-            encryption_key_id: mi.current_encryption_key_id.expect(
-                "current_encryption_key_id is required when machine identity is enabled; \
-                 statup validation in parse_carbide_config failed",
-            ),
+            encryption_key_id: mi
+                .current_encryption_key_id
+                .expect(
+                    "current_encryption_key_id is required when machine identity is enabled; \
+                     startup validation in parse_carbide_config failed",
+                )
+                .try_into()
+                .expect(
+                    "current_encryption_key_id must be non-empty when machine identity is enabled",
+                ),
             trust_domain_allowlist: mi.trust_domain_allowlist,
         }
     }
