@@ -779,10 +779,16 @@ impl From<MachineIdentityConfig> for model::tenant::IdentityConfigValidationBoun
             token_ttl_min_sec: mi.token_ttl_min_sec,
             token_ttl_max_sec: mi.token_ttl_max_sec,
             algorithm: mi.algorithm,
-            encryption_key_id: mi.current_encryption_key_id.expect(
-                "current_encryption_key_id is required when machine identity is enabled; \
-                 startup validation in parse_carbide_config failed",
-            ),
+            encryption_key_id: mi
+                .current_encryption_key_id
+                .expect(
+                    "current_encryption_key_id is required when machine identity is enabled; \
+                     startup validation in parse_carbide_config failed",
+                )
+                .try_into()
+                .expect(
+                    "current_encryption_key_id must be non-empty when machine identity is enabled",
+                ),
             trust_domain_allowlist: mi.trust_domain_allowlist,
         }
     }

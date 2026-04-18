@@ -33,11 +33,18 @@ use sqlx::{FromRow, Row};
 
 use crate::metadata::Metadata;
 
-mod tenant_identity_policy;
+mod identity_config_policy;
 
 pub mod identity_config;
 
-pub use tenant_identity_policy::{
+pub use identity_config::{
+    EncryptedSigningPrivateKey, EncryptedTokenDelegationAuthConfig, EncryptionKeyId,
+    EncryptionKeyIdTag, EnvelopeCiphertext, InvalidIssuer, InvalidNonEmptyStr, Issuer, KeyId,
+    NonEmptyStr, SigningPublicKeyPem, TenantIdentitySigningKeyIdTag,
+    TenantSigningPrivateKeyCiphertextTag, TenantSigningPublicKeyPemTag,
+    TokenDelegationEncryptedAuthConfigTag,
+};
+pub use identity_config_policy::{
     validate_token_endpoint_domain_allowlist_patterns, validate_trust_domain_allowlist_patterns,
 };
 
@@ -470,7 +477,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TenantOrganizationId {
 #[derive(Debug, sqlx::FromRow)]
 pub struct TenantIdentityConfig {
     pub organization_id: TenantOrganizationId,
-    pub issuer: String,
+    pub issuer: Issuer,
     pub default_audience: String,
     pub allowed_audiences: Json<Vec<String>>,
     pub token_ttl_sec: i32,
@@ -478,18 +485,18 @@ pub struct TenantIdentityConfig {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub encrypted_signing_key: String,
-    pub signing_key_public: String,
-    pub key_id: String,
+    pub encrypted_signing_key: EncryptedSigningPrivateKey,
+    pub signing_key_public: SigningPublicKeyPem,
+    pub key_id: KeyId,
     pub algorithm: identity_config::SigningAlgorithm,
-    pub encryption_key_id: String,
+    pub encryption_key_id: EncryptionKeyId,
     // Token delegation (optional)
     pub token_endpoint: Option<String>,
     pub auth_method: Option<TokenDelegationAuthMethod>,
     /// Token delegation auth method secrets, **encrypted at rest**: standard base64 of JSON envelope v1
     /// (`key_encryption::encrypt`) over JSON (e.g. client_id and client_secret). Loaded from DB as
     /// ciphertext only; plaintext for gRPC mapping lives on [`TenantIdentityConfigDecrypted::auth_method_config`].
-    pub encrypted_auth_method_config: Option<String>,
+    pub encrypted_auth_method_config: Option<EncryptedTokenDelegationAuthConfig>,
     pub subject_token_audience: Option<String>,
     pub token_delegation_created_at: Option<DateTime<Utc>>,
 }
@@ -508,16 +515,16 @@ pub struct TenantIdentityConfigDecrypted {
 /// Caller generates the key pair, encrypts the private key, and computes key_id = hex(sha256(public_key)).
 #[derive(Clone, Debug)]
 pub struct SigningKeyMaterial {
-    pub key_id: String,
-    pub encrypted_signing_key: String,
-    pub signing_key_public: String,
+    pub key_id: KeyId,
+    pub encrypted_signing_key: EncryptedSigningPrivateKey,
+    pub signing_key_public: SigningPublicKeyPem,
 }
 
 /// Settable fields for tenant identity config (SPIFFE JWT-SVID).
 /// Used as input to set identity configuration.
 #[derive(Debug, Clone)]
 pub struct IdentityConfig {
-    pub issuer: String,
+    pub issuer: Issuer,
     pub default_audience: String,
     pub allowed_audiences: Vec<String>,
     pub token_ttl_sec: u32,
@@ -525,7 +532,7 @@ pub struct IdentityConfig {
     pub enabled: bool,
     pub rotate_key: bool,
     pub algorithm: identity_config::SigningAlgorithm,
-    pub encryption_key_id: String,
+    pub encryption_key_id: EncryptionKeyId,
 }
 
 /// Validation bounds for IdentityConfig. Passed from site config (machine_identity).
@@ -534,7 +541,7 @@ pub struct IdentityConfigValidationBounds {
     pub token_ttl_min_sec: u32,
     pub token_ttl_max_sec: u32,
     pub algorithm: identity_config::SigningAlgorithm,
-    pub encryption_key_id: String,
+    pub encryption_key_id: EncryptionKeyId,
     /// Site policy: JWT issuer trust domain must match at least one entry. Empty = no extra check.
     pub trust_domain_allowlist: Vec<String>,
 }
@@ -551,25 +558,19 @@ impl IdentityConfig {
         value: rpc_forge::TenantIdentityConfig,
         bounds: &IdentityConfigValidationBounds,
     ) -> Result<Self, IdentityConfigValidationError> {
-        if value.issuer.is_empty() {
-            return Err(IdentityConfigValidationError(
-                "issuer is required".to_string(),
-            ));
-        }
         if value.default_audience.is_empty() {
             return Err(IdentityConfigValidationError(
                 "default_audience is required".to_string(),
             ));
         }
-        let (issuer, issuer_td) =
-            tenant_identity_policy::normalize_issuer_and_trust_domain(&value.issuer)
-                .map_err(IdentityConfigValidationError)?;
-        tenant_identity_policy::trust_domain_matches_allowlist(
+        let (issuer, issuer_td) = identity_config::Issuer::parse(&value.issuer)
+            .map_err(|e| IdentityConfigValidationError(e.0))?;
+        identity_config_policy::trust_domain_matches_allowlist(
             &issuer_td,
             &bounds.trust_domain_allowlist,
         )
         .map_err(IdentityConfigValidationError)?;
-        let subject_prefix = tenant_identity_policy::resolve_subject_prefix(
+        let subject_prefix = identity_config_policy::resolve_subject_prefix(
             &issuer_td,
             value.subject_prefix.as_deref(),
         )
@@ -723,9 +724,9 @@ impl TokenDelegation {
         }
         if !bounds.token_endpoint_domain_allowlist.is_empty() {
             let host =
-                tenant_identity_policy::registered_host_for_token_endpoint(&value.token_endpoint)
+                identity_config_policy::registered_host_for_token_endpoint(&value.token_endpoint)
                     .map_err(TokenDelegationValidationError)?;
-            tenant_identity_policy::token_endpoint_domain_matches_allowlist(
+            identity_config_policy::token_endpoint_domain_matches_allowlist(
                 &host,
                 &bounds.token_endpoint_domain_allowlist,
             )
@@ -1038,11 +1039,11 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test-master".to_string(),
+            encryption_key_id: "test-master".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let config = IdentityConfig::try_from_proto(proto, &bounds).unwrap();
-        assert_eq!(config.issuer, "https://issuer.example.com");
+        assert_eq!(config.issuer.as_str(), "https://issuer.example.com");
         assert_eq!(config.default_audience, "api");
         assert_eq!(config.allowed_audiences, vec!["api", "other"]);
         assert_eq!(config.token_ttl_sec, 3600);
@@ -1050,7 +1051,7 @@ mod tests {
         assert!(config.enabled);
         assert!(!config.rotate_key);
         assert_eq!(config.algorithm, identity_config::SigningAlgorithm::Es256);
-        assert_eq!(config.encryption_key_id, "test-master");
+        assert_eq!(config.encryption_key_id.as_str(), "test-master");
     }
 
     #[test]
@@ -1068,11 +1069,11 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test-master".to_string(),
+            encryption_key_id: "test-master".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let config = IdentityConfig::try_from_proto(proto, &bounds).unwrap();
-        assert_eq!(config.issuer, "https://issuer.example.com/wl");
+        assert_eq!(config.issuer.as_str(), "https://issuer.example.com/wl");
         assert_eq!(config.subject_prefix, "spiffe://issuer.example.com");
     }
 
@@ -1106,7 +1107,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1128,7 +1129,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1150,7 +1151,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let config = IdentityConfig::try_from_proto(proto, &bounds).unwrap();
@@ -1175,7 +1176,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let config = IdentityConfig::try_from_proto(proto, &bounds).unwrap();
@@ -1197,7 +1198,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1219,7 +1220,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1241,7 +1242,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1263,7 +1264,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1285,7 +1286,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec![],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1307,7 +1308,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec!["login.example.com".to_string()],
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();
@@ -1330,7 +1331,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: vec!["**.login.example.com".to_string()],
         };
         let config = IdentityConfig::try_from_proto(proto, &bounds).unwrap();
@@ -1361,11 +1362,11 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: allowlist,
         };
         let config = IdentityConfig::try_from_proto(proto, &bounds).unwrap();
-        assert_eq!(config.issuer, "https://idp.other.example/oidc");
+        assert_eq!(config.issuer.as_str(), "https://idp.other.example/oidc");
         assert_eq!(config.subject_prefix, "spiffe://idp.other.example");
     }
 
@@ -1388,7 +1389,7 @@ mod tests {
             token_ttl_min_sec: 60,
             token_ttl_max_sec: 86400,
             algorithm: identity_config::SigningAlgorithm::Es256,
-            encryption_key_id: "test".to_string(),
+            encryption_key_id: "test".parse().unwrap(),
             trust_domain_allowlist: allowlist,
         };
         let err = IdentityConfig::try_from_proto(proto, &bounds).unwrap_err();

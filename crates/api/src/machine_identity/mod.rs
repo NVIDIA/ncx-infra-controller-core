@@ -75,11 +75,11 @@ pub struct Es256Signer {
 }
 
 impl Es256Signer {
-    /// Builds an ES256 signer from PEM-encoded EC P-256 private key and key id.
-    pub fn new(key: &[u8], key_id: impl Into<String>) -> Result<Self, SignError> {
+    /// Builds an ES256 signer from PEM-encoded EC P-256 private key and key id (`kid`).
+    pub fn new(key: &[u8], key_id: impl AsRef<str>) -> Result<Self, SignError> {
         let encoding_key = EncodingKey::from_ec_pem(key).map_err(SignError::Encode)?;
         Ok(Self {
-            key_id: key_id.into(),
+            key_id: key_id.as_ref().to_string(),
             encoding_key,
         })
     }

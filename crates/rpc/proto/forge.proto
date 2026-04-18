@@ -1029,8 +1029,7 @@ message OpenIdConfiguration {
   // OAuth-style access token (JWT bearer) only; no OIDC `id_token` is issued.
   repeated string response_types_supported = 3;
   repeated string subject_types_supported = 4;
-  // Always empty: OIDC ID tokens are not supported. Verifiers use `jwks_uri` / `spiffe_jwks_uri`
-  // and GetJWKS `jwks` (`keys[].alg`) for machine-identity JWT bearer signature verification.
+  // Verifiers use `jwks_uri` / `spiffe_jwks_uri` and the GetJWKS `jwks` JSON (`keys[].alg`) for JWT verification.
   repeated string id_token_signing_alg_values_supported = 5;
   // SPIFFE trust-domain style JWKS URL: `{issuer}/.well-known/spiffe/jwks.json` (GetJWKS with Spiffe kind).
   string spiffe_jwks_uri = 7;

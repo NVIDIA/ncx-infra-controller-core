@@ -32,9 +32,10 @@ use db::{WithTransaction, tenant, tenant_identity_config};
 use forge_secrets::credentials::CredentialReader;
 use forge_secrets::key_encryption;
 use model::tenant::{
-    IdentityConfig, IdentityConfigValidationError, InvalidTenantOrg, SigningKeyMaterial,
-    TenantIdentityConfig, TenantIdentityConfigDecrypted, TenantOrganizationId, TokenDelegation,
-    TokenDelegationValidationBounds, TokenDelegationValidationError,
+    EncryptedSigningPrivateKey, EncryptedTokenDelegationAuthConfig, IdentityConfig,
+    IdentityConfigValidationError, InvalidNonEmptyStr, InvalidTenantOrg, KeyId, SigningKeyMaterial,
+    SigningPublicKeyPem, TenantIdentityConfig, TenantIdentityConfigDecrypted, TenantOrganizationId,
+    TokenDelegation, TokenDelegationValidationBounds, TokenDelegationValidationError,
 };
 use tonic::{Request, Response, Status};
 
@@ -54,7 +55,7 @@ async fn tenant_identity_with_decrypted_token_delegation(
     let auth_method_config = decrypt_token_delegation_encrypted_blob(
         credentials,
         &cfg.encryption_key_id,
-        cfg.encrypted_auth_method_config.as_deref(),
+        cfg.encrypted_auth_method_config.as_ref(),
     )
     .await
     .inspect_err(|e| {
@@ -137,7 +138,7 @@ pub(crate) async fn get_configuration(
         organization_id: org_id_str,
         config: Some(ProtoTenantIdentityConfig {
             enabled: cfg.enabled,
-            issuer: cfg.issuer.clone(),
+            issuer: cfg.issuer.as_str().to_string(),
             default_audience: cfg.default_audience.clone(),
             allowed_audiences: cfg.allowed_audiences.0.clone(),
             token_ttl_sec: cfg.token_ttl_sec as u32,
@@ -146,7 +147,7 @@ pub(crate) async fn get_configuration(
         }),
         created_at: Some(Timestamp::from(cfg.created_at)),
         updated_at: Some(Timestamp::from(cfg.updated_at)),
-        key_id: cfg.key_id,
+        key_id: cfg.key_id.as_str().to_string(),
     }))
 }
 
@@ -250,14 +251,24 @@ pub(crate) async fn set_configuration(
             .await?;
             let (private_pem, public_pem) = key_encryption::generate_es256_key_pair()
                 .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
-            let key_id = key_encryption::key_id_from_public_key(&public_pem);
-            let encrypted_signing_key =
-                key_encryption::encrypt(&private_pem, &encryption_key, &config.encryption_key_id)
-                    .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+            let key_id: KeyId = key_encryption::key_id_from_public_key(&public_pem)
+                .try_into()
+                .map_err(|e: InvalidNonEmptyStr| CarbideError::InvalidArgument(e.to_string()))?;
+            let encrypted_signing_key: EncryptedSigningPrivateKey = key_encryption::encrypt(
+                &private_pem,
+                &encryption_key,
+                config.encryption_key_id.as_str(),
+            )
+            .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
+            .try_into()
+            .map_err(|e: InvalidNonEmptyStr| CarbideError::InvalidArgument(e.to_string()))?;
+            let signing_key_public: SigningPublicKeyPem = public_pem
+                .try_into()
+                .map_err(|e: InvalidNonEmptyStr| CarbideError::InvalidArgument(e.to_string()))?;
             Some(SigningKeyMaterial {
                 key_id,
                 encrypted_signing_key,
-                signing_key_public: public_pem,
+                signing_key_public,
             })
         }
         (Some(_), false) => None,
@@ -285,7 +296,7 @@ pub(crate) async fn set_configuration(
         organization_id: org_id_str,
         config: Some(ProtoTenantIdentityConfig {
             enabled: cfg.enabled,
-            issuer: cfg.issuer.clone(),
+            issuer: cfg.issuer.as_str().to_string(),
             default_audience: cfg.default_audience.clone(),
             allowed_audiences: cfg.allowed_audiences.0.clone(),
             token_ttl_sec: cfg.token_ttl_sec as u32,
@@ -294,7 +305,7 @@ pub(crate) async fn set_configuration(
         }),
         created_at: Some(Timestamp::from(cfg.created_at)),
         updated_at: Some(Timestamp::from(cfg.updated_at)),
-        key_id: cfg.key_id,
+        key_id: cfg.key_id.as_str().to_string(),
     }))
 }
 
@@ -405,12 +416,14 @@ pub(crate) async fn set_token_delegation(
     let secret =
         machine_identity_encryption_secret(&api.credential_manager, &id_row.encryption_key_id)
             .await?;
-    let encrypted_blob = key_encryption::encrypt(
+    let encrypted_blob: EncryptedTokenDelegationAuthConfig = key_encryption::encrypt(
         plaintext_json.as_bytes(),
         &secret,
-        &id_row.encryption_key_id,
+        id_row.encryption_key_id.as_str(),
     )
-    .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?;
+    .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
+    .try_into()
+    .map_err(|e: InvalidNonEmptyStr| CarbideError::InvalidArgument(e.to_string()))?;
 
     let cfg = api
         .database_connection

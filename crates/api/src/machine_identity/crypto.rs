@@ -22,17 +22,19 @@
 use ::rpc::forge::ClientSecretBasic;
 use forge_secrets::credentials::{CredentialKey, CredentialReader, Credentials};
 use forge_secrets::key_encryption;
-use model::tenant::TokenDelegationAuthMethod;
+use model::tenant::{
+    EncryptedTokenDelegationAuthConfig, EncryptionKeyId, TokenDelegationAuthMethod,
+};
 use tonic::Status;
 
 use crate::CarbideError;
 
 pub(crate) async fn machine_identity_encryption_secret(
     credentials: &dyn CredentialReader,
-    encryption_key_id: &str,
+    encryption_key_id: &EncryptionKeyId,
 ) -> Result<key_encryption::Aes256Key, Status> {
     let cred_key = CredentialKey::MachineIdentityEncryptionKey {
-        key_id: encryption_key_id.to_string(),
+        key_id: encryption_key_id.as_str().to_string(),
     };
     let creds = credentials
         .get_credentials(&cred_key)
@@ -40,7 +42,8 @@ pub(crate) async fn machine_identity_encryption_secret(
         .map_err(|e| CarbideError::InvalidArgument(e.to_string()))?
         .ok_or_else(|| {
             CarbideError::InvalidArgument(format!(
-                "encryption key '{encryption_key_id}' not found in secrets (machine_identity.encryption_keys)"
+                "encryption key '{}' not found in secrets (machine_identity.encryption_keys)",
+                encryption_key_id.as_str()
             ))
         })?;
     let stored = match &creds {
@@ -53,17 +56,17 @@ pub(crate) async fn machine_identity_encryption_secret(
 /// Decrypts `encrypted_auth_method_config` when set, otherwise `None`.
 pub(crate) async fn decrypt_token_delegation_encrypted_blob(
     credentials: &dyn CredentialReader,
-    encryption_key_id: &str,
-    encrypted_auth_method_config: Option<&str>,
+    encryption_key_id: &EncryptionKeyId,
+    encrypted_auth_method_config: Option<&EncryptedTokenDelegationAuthConfig>,
 ) -> Result<Option<String>, Status> {
     let Some(enc) = encrypted_auth_method_config else {
         return Ok(None);
     };
-    if enc.is_empty() {
+    if enc.as_str().is_empty() {
         return Ok(None);
     }
     let aes = machine_identity_encryption_secret(credentials, encryption_key_id).await?;
-    let plain = key_encryption::decrypt(enc, &aes).map_err(|e| {
+    let plain = key_encryption::decrypt(enc.as_str(), &aes).map_err(|e| {
         CarbideError::internal(format!(
             "stored token delegation configuration could not be decrypted: {e}"
         ))
