@@ -111,6 +111,7 @@ pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseR
         controller_state_outcome: None,
         switch_reprovisioning_requested: None,
         firmware_upgrade_status: None,
+        fabric_manager_status: None,
         metadata,
         version,
         rack_id: new_switch.rack_id.clone(),
@@ -298,6 +299,20 @@ pub async fn update_firmware_upgrade_status(
     Ok(())
 }
 
+pub async fn update_fabric_manager_status(
+    txn: &mut PgConnection,
+    switch_id: SwitchId,
+    status: Option<&str>,
+) -> DatabaseResult<()> {
+    let query = "UPDATE switches SET fabric_manager_status = $1 WHERE id = $2 RETURNING id";
+    sqlx::query_as::<_, SwitchId>(query)
+        .bind(status)
+        .bind(switch_id)
+        .fetch_optional(txn)
+        .await
+        .map_err(|e| DatabaseError::new("update_fabric_manager_status", e))?;
+    Ok(())
+}
 pub async fn update_slot_and_tray(
     txn: &mut PgConnection,
     switch_id: &SwitchId,
