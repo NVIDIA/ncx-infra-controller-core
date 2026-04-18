@@ -15,18 +15,8 @@
  * limitations under the License.
  */
 
-pub mod args;
-pub mod cmd;
+mod periodic;
+mod sse;
 
-use ::rpc::admin_cli::CarbideCliResult;
-pub use args::Args;
-
-use crate::cfg::run::Run;
-use crate::cfg::runtime::RuntimeContext;
-
-impl Run for Args {
-    async fn run(self, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
-        cmd::handle_override(self, ctx.config.format, &ctx.api_client).await?;
-        Ok(())
-    }
-}
+pub use periodic::{LogsCollector, LogsCollectorConfig};
+pub use sse::{SseLogCollector, SseLogCollectorConfig};

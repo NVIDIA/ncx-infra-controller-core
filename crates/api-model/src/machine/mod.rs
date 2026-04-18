@@ -251,6 +251,22 @@ impl ManagedHostStateSnapshot {
     /// failed to load". Those sites intentionally inspect both fields and
     /// should NOT be rewritten to use this helper alone. Maybe we can enhance
     /// that later, but for now this keeps it simple.
+    ///
+    /// NOTE(chet): When called from state-controller handlers (anything reached
+    /// via `MachineStateHandler::handle_object_state`), there is an upstream
+    /// guard that short-circuits with an error if topology reports DPUs but
+    /// `dpu_snapshots` is empty -- i.e. the DPU snapshots failed to load.
+    /// That guard runs before the `ManagedHostState` dispatch, so by the time
+    /// a state handler asks `is_zero_dpu()`, the potential bug of "topology
+    /// has DPUs, but snapshots are empty, so we think it's zero DPU" has
+    /// already been filtered out. A `true` return in that context means
+    /// genuinely zero-DPU (both topology and snapshots agree).
+    ///
+    /// Now, callers OUTSIDE the state-controller path DON'T get that upstream
+    /// guard; if you need the stronger guarantee there, you'll need to
+    /// check both:
+    /// `self.dpu_snapshots.is_empty()` and
+    /// `self.host_snapshot.associated_dpu_machine_ids().is_empty()`.
     pub fn is_zero_dpu(&self) -> bool {
         self.dpu_snapshots.is_empty()
     }

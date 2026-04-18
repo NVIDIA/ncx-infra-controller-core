@@ -21,6 +21,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
+use carbide_ipmi::IPMITool;
+use carbide_redfish::libredfish::RedfishClientPool;
+use carbide_redfish::nv_redfish::NvRedfishClientPool;
 use db::machine::update_dpu_asns;
 use db::resource_pool::DefineResourcePoolError;
 use db::{Transaction, work_lock_manager};
@@ -57,7 +60,6 @@ use crate::firmware_downloader::FirmwareDownloader;
 use crate::handlers::machine_validation::apply_config_on_startup;
 use crate::ib::{self, IBFabricManager};
 use crate::ib_fabric_monitor::IbFabricMonitor;
-use crate::ipmitool::{IPMITool, IPMIToolHttpImpl, IPMIToolImpl, IPMIToolTestImpl};
 use crate::listener::ApiListenMode;
 use crate::logging::log_limiter::LogLimiter;
 use crate::logging::service_health_metrics::{
@@ -67,11 +69,9 @@ use crate::logging::sqlx_query_tracing::SQLX_STATEMENTS_LOG_LEVEL;
 use crate::machine_update_manager::MachineUpdateManager;
 use crate::measured_boot::metrics_collector::MeasuredBootMetricsCollector;
 use crate::mqtt_state_change_hook::hook::MqttStateChangeHook;
-use crate::nv_redfish::NvRedfishClientPool;
 use crate::nvl_partition_monitor::NvlPartitionMonitor;
 use crate::nvlink::{NmxmClientPool, NmxmClientPoolImpl};
 use crate::preingestion_manager::PreingestionManager;
-use crate::redfish::RedfishClientPool;
 use crate::scout_stream::ConnectionRegistry;
 use crate::site_explorer::{BmcEndpointExplorer, SiteExplorer};
 use crate::state_controller::common_services::CommonStateHandlerServices;
@@ -193,18 +193,15 @@ pub fn create_ipmi_tool(
     match carbide_config.dpu_ipmi_tool_impl.as_deref() {
         Some("test") => {
             tracing::info!("Disabling ipmitool");
-            Arc::new(IPMIToolTestImpl {})
+            carbide_ipmi::test_support()
         }
         Some("bmc-mock") => {
             tracing::info!("Using HTTP IPMI transport via bmc_proxy");
-            Arc::new(IPMIToolHttpImpl::new(bmc_proxy))
+            carbide_ipmi::bmc_mock(bmc_proxy)
         }
         _ => {
             tracing::info!("Using lanplus IPMI transport (/usr/bin/ipmitool)");
-            Arc::new(IPMIToolImpl::new(
-                credential_reader,
-                &carbide_config.dpu_ipmi_reboot_attempts,
-            ))
+            carbide_ipmi::tool(credential_reader, carbide_config.dpu_ipmi_reboot_attempts)
         }
     }
 }
