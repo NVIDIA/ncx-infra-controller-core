@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use carbide_uuid::machine::MachineId;
 use uuid::Uuid;
 
 use super::{Report, ValidationJob};
@@ -11,14 +12,14 @@ use crate::rack::Tray;
 /// Label writes needed to apply for machines.
 struct RunIdPlan {
     /// Per-tray label maps to write. Empty when the run ID was reused as-is.
-    updates: Vec<(String, HashMap<String, String>)>,
+    updates: Vec<(MachineId, HashMap<String, String>)>,
 }
 
 /// Determine the run ID for this set of trays and compute any label updates.
 ///
 /// Reuses the existing `rv.run-id` if all trays share the same value.
 /// Otherwise generates a fresh UUID and prepares updated labels for every tray.
-fn prepare_run_id(trays: &HashMap<String, Tray>) -> RunIdPlan {
+fn prepare_run_id(trays: &HashMap<MachineId, Tray>) -> RunIdPlan {
     match existing_run_id(trays) {
         Some(_) => RunIdPlan {
             // We don't really need an old ID - let's just say to a client
@@ -32,7 +33,7 @@ fn prepare_run_id(trays: &HashMap<String, Tray>) -> RunIdPlan {
                 .map(|(tray_id, tray)| {
                     let mut labels = tray.rv_labels.clone();
                     labels.insert("rv.run-id".to_string(), id.clone());
-                    (tray_id.clone(), labels)
+                    (*tray_id, labels)
                 })
                 .collect();
             RunIdPlan { updates }
@@ -41,7 +42,7 @@ fn prepare_run_id(trays: &HashMap<String, Tray>) -> RunIdPlan {
 }
 
 /// Return the shared run ID if every tray already carries the same `rv.run-id`.
-fn existing_run_id(trays: &HashMap<String, Tray>) -> Option<&String> {
+fn existing_run_id(trays: &HashMap<MachineId, Tray>) -> Option<&String> {
     // Every tray must carry `rv.run-id` -- a partial match would leave the
     // label-less trays drifting while the rest reuse the shared ID.
     let mut run_ids = trays.values().map(|t| t.rv_labels.get("rv.run-id"));
@@ -58,9 +59,9 @@ fn existing_run_id(trays: &HashMap<String, Tray>) -> Option<&String> {
 /// `Partitions::exclude_completed` prunes all-passed partitions from
 /// `nvl`/`ib` but leaves the underlying trays in `all`. Re-queuing those
 /// completed trays is what we want to avoid.
-fn retained_trays(partitions: Partitions) -> HashMap<String, Tray> {
+fn retained_trays(partitions: Partitions) -> HashMap<MachineId, Tray> {
     let Partitions { nvl, ib, all } = partitions;
-    let retained_ids: std::collections::HashSet<String> = nvl
+    let retained_ids: std::collections::HashSet<MachineId> = nvl
         .into_values()
         .chain(ib.into_values())
         .flatten()
@@ -89,7 +90,10 @@ pub async fn plan(
 }
 
 /// Ensure every tray carries a consistent `rv.run-id`, writing it if absent.
-async fn assign_run_id(trays: &HashMap<String, Tray>, nicc: &NiccClient) -> Result<(), RvsError> {
+async fn assign_run_id(
+    trays: &HashMap<MachineId, Tray>,
+    nicc: &NiccClient,
+) -> Result<(), RvsError> {
     let plan = prepare_run_id(trays);
     for (tray_id, labels) in plan.updates {
         nicc.update_rv_labels(&tray_id, labels).await?;
@@ -102,7 +106,7 @@ async fn assign_run_id(trays: &HashMap<String, Tray>, nicc: &NiccClient) -> Resu
 /// TODO[#416]: stub - wire in nicc.allocate_machine_instance per tray and collect
 /// instance IDs for boot tracking. ValidationJob will carry them once expanded.
 async fn allocate_instances(
-    _trays: &HashMap<String, Tray>,
+    _trays: &HashMap<MachineId, Tray>,
     _os_uri: &str,
     _nicc: &NiccClient,
 ) -> Result<(), RvsError> {
@@ -114,7 +118,10 @@ async fn allocate_instances(
 ///
 /// TODO[#416]: stub - wire in polling loop with exponential backoff and timeout once
 /// allocate_instances populates instance IDs on ValidationJob.
-async fn wait_for_boot(_trays: &HashMap<String, Tray>, _nicc: &NiccClient) -> Result<(), RvsError> {
+async fn wait_for_boot(
+    _trays: &HashMap<MachineId, Tray>,
+    _nicc: &NiccClient,
+) -> Result<(), RvsError> {
     let () = std::future::ready(()).await; // phantom await: keeps async sig for future wiring
     Ok(())
 }
@@ -138,8 +145,14 @@ pub async fn submit_report(report: Report) -> Result<(), RvsError> {
 
 #[cfg(test)]
 mod tests {
+    use carbide_uuid::machine::{MachineIdSource, MachineType};
+
     use super::*;
     use crate::partitions::{IbNode, NvlNode};
+
+    fn mid(seed: u8) -> MachineId {
+        MachineId::new(MachineIdSource::Tpm, [seed; 32], MachineType::Host)
+    }
 
     fn tray(rv_labels: &[(&str, &str)]) -> Tray {
         Tray::new(
@@ -154,18 +167,18 @@ mod tests {
         )
     }
 
-    fn trays(entries: &[(&str, &[(&str, &str)])]) -> HashMap<String, Tray> {
+    fn trays(entries: &[(MachineId, &[(&str, &str)])]) -> HashMap<MachineId, Tray> {
         entries
             .iter()
-            .map(|(id, labels)| (id.to_string(), tray(labels)))
+            .map(|(id, labels)| (*id, tray(labels)))
             .collect()
     }
 
     #[test]
     fn test_prepare_run_id_reuses_existing() {
         let t = trays(&[
-            ("m1", &[("rv.run-id", "run-abc")]),
-            ("m2", &[("rv.run-id", "run-abc")]),
+            (mid(1), &[("rv.run-id", "run-abc")]),
+            (mid(2), &[("rv.run-id", "run-abc")]),
         ]);
         let plan = prepare_run_id(&t);
         assert!(plan.updates.is_empty());
@@ -173,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_prepare_run_id_assigns_new_when_missing() {
-        let t = trays(&[("m1", &[]), ("m2", &[])]);
+        let t = trays(&[(mid(1), &[]), (mid(2), &[])]);
         let plan = prepare_run_id(&t);
         assert_eq!(plan.updates.len(), 2);
         for (_, labels) in &plan.updates {
@@ -185,8 +198,8 @@ mod tests {
     fn test_prepare_run_id_assigns_new_when_mixed() {
         // Trays disagree on run-id - treat as missing, assign fresh.
         let t = trays(&[
-            ("m1", &[("rv.run-id", "run-abc")]),
-            ("m2", &[("rv.run-id", "run-xyz")]),
+            (mid(1), &[("rv.run-id", "run-abc")]),
+            (mid(2), &[("rv.run-id", "run-xyz")]),
         ]);
         let plan = prepare_run_id(&t);
         assert_eq!(plan.updates.len(), 2);
@@ -199,7 +212,7 @@ mod tests {
     fn test_prepare_run_id_assigns_new_when_partially_missing() {
         // One tray carries run-id, another doesn't -- must not be treated as
         // shared, otherwise the label-less tray never gets written.
-        let t = trays(&[("m1", &[("rv.run-id", "run-abc")]), ("m2", &[])]);
+        let t = trays(&[(mid(1), &[("rv.run-id", "run-abc")]), (mid(2), &[])]);
         let plan = prepare_run_id(&t);
         assert_eq!(plan.updates.len(), 2);
         for (_, labels) in &plan.updates {
@@ -209,9 +222,10 @@ mod tests {
 
     #[test]
     fn test_prepare_run_id_preserves_other_labels() {
-        let t = trays(&[("m1", &[("rv.st", "pass")])]);
+        let m1 = mid(1);
+        let t = trays(&[(m1, &[("rv.st", "pass")])]);
         let plan = prepare_run_id(&t);
-        let (_, labels) = plan.updates.iter().find(|(id, _)| id == "m1").unwrap();
+        let (_, labels) = plan.updates.iter().find(|(id, _)| id == &m1).unwrap();
         assert_eq!(labels["rv.st"], "pass");
         assert!(!labels["rv.run-id"].is_empty());
     }
@@ -223,15 +237,19 @@ mod tests {
         assert!(plan.updates.is_empty());
     }
 
-    fn partitions(nvl: &[(&str, &[&str])], ib: &[(&str, &[&str])], all: &[&str]) -> Partitions {
+    fn partitions(
+        nvl: &[(&str, &[MachineId])],
+        ib: &[(&str, &[MachineId])],
+        all: &[MachineId],
+    ) -> Partitions {
         Partitions::new(
             nvl.iter()
-                .map(|(k, ids)| (k.to_string(), ids.iter().map(|s| s.to_string()).collect()))
+                .map(|(k, ids)| (k.to_string(), ids.to_vec()))
                 .collect(),
             ib.iter()
-                .map(|(k, ids)| (k.to_string(), ids.iter().map(|s| s.to_string()).collect()))
+                .map(|(k, ids)| (k.to_string(), ids.to_vec()))
                 .collect(),
-            all.iter().map(|id| (id.to_string(), tray(&[]))).collect(),
+            all.iter().map(|id| (*id, tray(&[]))).collect(),
         )
     }
 
@@ -239,24 +257,28 @@ mod tests {
     fn test_retained_trays_drops_trays_from_excluded_partitions() {
         // m1/m2 are in no retained partition (their partition was all-passed
         // and dropped); m3/m4 are still referenced.
-        let p = partitions(&[("nvl-b", &["m3", "m4"])], &[], &["m1", "m2", "m3", "m4"]);
+        let (m1, m2, m3, m4) = (mid(1), mid(2), mid(3), mid(4));
+        let p = partitions(&[("nvl-b", &[m3, m4])], &[], &[m1, m2, m3, m4]);
         let kept = retained_trays(p);
-        let mut ids: Vec<_> = kept.keys().cloned().collect();
+        let mut ids: Vec<_> = kept.keys().copied().collect();
         ids.sort();
-        assert_eq!(ids, vec!["m3", "m4"]);
+        let mut expected = vec![m3, m4];
+        expected.sort();
+        assert_eq!(ids, expected);
     }
 
     #[test]
     fn test_retained_trays_drops_orphans() {
         // m1 is in `all` but no partition references it.
-        let p = partitions(&[], &[], &["m1"]);
+        let p = partitions(&[], &[], &[mid(1)]);
         assert!(retained_trays(p).is_empty());
     }
 
     #[test]
     fn test_retained_trays_keeps_trays_in_any_partition() {
         // m1 is only in ib, m2 only in nvl -- both should survive.
-        let p = partitions(&[("nvl-a", &["m2"])], &[("ib-a", &["m1"])], &["m1", "m2"]);
+        let (m1, m2) = (mid(1), mid(2));
+        let p = partitions(&[("nvl-a", &[m2])], &[("ib-a", &[m1])], &[m1, m2]);
         let kept = retained_trays(p);
         assert_eq!(kept.len(), 2);
     }

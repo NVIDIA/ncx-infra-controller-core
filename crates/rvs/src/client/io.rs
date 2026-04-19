@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use carbide_uuid::machine::MachineId;
 use rpc::forge::{
     GetRackRequest, Instance, InstanceAllocationRequest, InstanceConfig, Label,
     MachineMetadataUpdateRequest, MachinesByIdsRequest, Metadata,
@@ -33,13 +34,13 @@ impl NiccClient {
     /// Update `rv.*` labels on a machine, preserving all non-`rv.*` labels.
     pub async fn update_rv_labels(
         &self,
-        tray_id: &str,
+        tray_id: &MachineId,
         updates: HashMap<String, String>,
     ) -> Result<(), RvsError> {
         let response = self
             .inner
             .find_machines_by_ids(MachinesByIdsRequest {
-                machine_ids: vec![tray_id.parse().map_err(RvsError::from)?],
+                machine_ids: vec![*tray_id],
                 include_history: false,
             })
             .await?;
@@ -57,7 +58,7 @@ impl NiccClient {
 
         self.inner
             .update_machine_metadata(MachineMetadataUpdateRequest {
-                machine_id: Some(tray_id.parse()?),
+                machine_id: Some(*tray_id),
                 if_version_match: None,
                 metadata: Some(Metadata {
                     name: String::new(),

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 mod ib;
 mod nvl;
 
+use carbide_uuid::machine::MachineId;
 pub use ib::IbNode;
 pub use nvl::NvlNode;
 
@@ -18,11 +19,11 @@ use crate::rack::{Racks, Tray};
 #[derive(Debug)]
 pub struct Partitions {
     /// NVL domain UUID -> tray IDs in that domain (across all racks).
-    pub nvl: HashMap<String, Vec<String>>,
+    pub nvl: HashMap<String, Vec<MachineId>>,
     /// IB fabric ID -> tray IDs on that fabric (across all racks).
-    pub ib: HashMap<String, Vec<String>>,
+    pub ib: HashMap<String, Vec<MachineId>>,
     /// Tray ID -> resolved tray (carries rack_id for provenance).
-    pub all: HashMap<String, Tray>,
+    pub all: HashMap<MachineId, Tray>,
 }
 
 impl Partitions {
@@ -39,7 +40,7 @@ impl Partitions {
     /// Drop partitions where every tray already has `rv.st == "pass"`.
     fn exclude_completed(&mut self) {
         let all = &self.all;
-        let all_passed = |ids: &Vec<String>| {
+        let all_passed = |ids: &Vec<MachineId>| {
             !ids.is_empty()
                 && ids.iter().all(|id| {
                     all.get(id)
@@ -54,9 +55,9 @@ impl Partitions {
 
     /// Construct from pre-built partition maps and tray lookup.
     pub fn new(
-        nvl: HashMap<String, Vec<String>>,
-        ib: HashMap<String, Vec<String>>,
-        all: HashMap<String, Tray>,
+        nvl: HashMap<String, Vec<MachineId>>,
+        ib: HashMap<String, Vec<MachineId>>,
+        all: HashMap<MachineId, Tray>,
     ) -> Self {
         Self { nvl, ib, all }
     }
@@ -71,9 +72,9 @@ impl TryFrom<Racks> for Partitions {
     type Error = RvsError;
 
     fn try_from(racks: Racks) -> Result<Self, Self::Error> {
-        let mut nvl: HashMap<String, Vec<String>> = HashMap::new();
-        let mut ib: HashMap<String, Vec<String>> = HashMap::new();
-        let mut all: HashMap<String, Tray> = HashMap::new();
+        let mut nvl: HashMap<String, Vec<MachineId>> = HashMap::new();
+        let mut ib: HashMap<String, Vec<MachineId>> = HashMap::new();
+        let mut all: HashMap<MachineId, Tray> = HashMap::new();
 
         for fetched in racks.inner {
             for tray in fetched.trays {
@@ -82,14 +83,12 @@ impl TryFrom<Racks> for Partitions {
                 {
                     nvl.entry(domain_uuid.to_string())
                         .or_default()
-                        .push(tray.id.clone());
+                        .push(tray.id);
                 }
 
                 if let Some(ref ib_data) = tray.ib {
                     for fabric_id in &ib_data.fabric_ids {
-                        ib.entry(fabric_id.clone())
-                            .or_default()
-                            .push(tray.id.clone());
+                        ib.entry(fabric_id.clone()).or_default().push(tray.id);
                     }
                 }
 
@@ -132,6 +131,7 @@ fn is_validation_state(state: &str) -> bool {
 mod tests {
     use std::str::FromStr;
 
+    use carbide_uuid::machine::{MachineIdSource, MachineType};
     use carbide_uuid::nvlink::NvLinkDomainId;
 
     use super::*;
@@ -143,8 +143,14 @@ mod tests {
     const DOMAIN_B: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     const DOMAIN_X: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 
+    /// Build a deterministic `MachineId` keyed on `seed` -- used as a stand-in
+    /// for real hardware IDs in tests.
+    fn mid(seed: u8) -> MachineId {
+        MachineId::new(MachineIdSource::Tpm, [seed; 32], MachineType::Host)
+    }
+
     /// Test helper -- build a TrayData with optional NVL/IB fields.
-    fn tray(id: &str, domain: Option<&str>, gpus: u32, ib_fabrics: &[&str]) -> TrayData {
+    fn tray(id: MachineId, domain: Option<&str>, gpus: u32, ib_fabrics: &[&str]) -> TrayData {
         let nvl = if domain.is_some() || gpus > 0 {
             Some(TrayNvlData {
                 domain_uuid: domain.map(|d| NvLinkDomainId::from_str(d).unwrap()),
@@ -165,7 +171,7 @@ mod tests {
         };
 
         TrayData {
-            id: id.to_string(),
+            id,
             rv_labels: HashMap::new(),
             nvl,
             ib,
@@ -179,13 +185,14 @@ mod tests {
 
     #[test]
     fn test_single_rack_partitions() {
+        let (m1, m2, m3) = (mid(1), mid(2), mid(3));
         let fetched = vec![rack(
             "rack-1",
             "Validation(Pending)",
             vec![
-                tray("m1", Some(DOMAIN_A), 4, &["fabric-1"]),
-                tray("m2", Some(DOMAIN_A), 4, &["fabric-1"]),
-                tray("m3", Some(DOMAIN_B), 4, &["fabric-1", "fabric-2"]),
+                tray(m1, Some(DOMAIN_A), 4, &["fabric-1"]),
+                tray(m2, Some(DOMAIN_A), 4, &["fabric-1"]),
+                tray(m3, Some(DOMAIN_B), 4, &["fabric-1", "fabric-2"]),
             ],
         )];
 
@@ -201,35 +208,36 @@ mod tests {
         );
         // NVL grouping
         assert_eq!(p.nvl.len(), 2);
-        assert_eq!(p.nvl[DOMAIN_A], vec!["m1", "m2"]);
-        assert_eq!(p.nvl[DOMAIN_B], vec!["m3"]);
+        assert_eq!(p.nvl[DOMAIN_A], vec![m1, m2]);
+        assert_eq!(p.nvl[DOMAIN_B], vec![m3]);
         // IB grouping -- m3 appears in both fabrics
         assert_eq!(p.ib.len(), 2);
-        assert_eq!(p.ib["fabric-1"], vec!["m1", "m2", "m3"]);
-        assert_eq!(p.ib["fabric-2"], vec!["m3"]);
+        assert_eq!(p.ib["fabric-1"], vec![m1, m2, m3]);
+        assert_eq!(p.ib["fabric-2"], vec![m3]);
     }
 
     #[test]
     fn test_cross_rack_domain_merging() {
         // DOMAIN_X and fabric-x each span both racks; racks carry different states.
+        let (m1, m2) = (mid(1), mid(2));
         let fetched = vec![
             rack(
                 "rack-1",
                 "Validation(Pending)",
-                vec![tray("m1", Some(DOMAIN_X), 4, &["fabric-x"])],
+                vec![tray(m1, Some(DOMAIN_X), 4, &["fabric-x"])],
             ),
             rack(
                 "rack-2",
                 "Validation(Pending)",
-                vec![tray("m2", Some(DOMAIN_X), 4, &["fabric-x"])],
+                vec![tray(m2, Some(DOMAIN_X), 4, &["fabric-x"])],
             ),
         ];
 
         let p = Partitions::try_from(Racks { inner: fetched }).unwrap();
 
         assert_eq!(p.all.len(), 2);
-        assert_eq!(p.all["m1"].rack_id, "rack-1");
-        assert_eq!(p.all["m2"].rack_id, "rack-2");
+        assert_eq!(p.all[&m1].rack_id, "rack-1");
+        assert_eq!(p.all[&m2].rack_id, "rack-2");
         assert!(
             p.all
                 .values()
@@ -237,9 +245,9 @@ mod tests {
         );
         // Both trays land in the same NVL domain and IB fabric
         assert_eq!(p.nvl.len(), 1);
-        assert_eq!(p.nvl[DOMAIN_X], vec!["m1", "m2"]);
+        assert_eq!(p.nvl[DOMAIN_X], vec![m1, m2]);
         assert_eq!(p.ib.len(), 1);
-        assert_eq!(p.ib["fabric-x"], vec!["m1", "m2"]);
+        assert_eq!(p.ib["fabric-x"], vec![m1, m2]);
     }
 
     #[test]
@@ -249,7 +257,7 @@ mod tests {
         let fetched = vec![rack(
             "rack-1",
             "Validation(Pending)",
-            vec![tray("m1", None, 0, &[])],
+            vec![tray(mid(1), None, 0, &[])],
         )];
 
         let p = Partitions::try_from(Racks { inner: fetched }).unwrap();

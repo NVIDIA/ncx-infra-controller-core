@@ -1,6 +1,7 @@
 mod io;
 use std::collections::HashMap;
 
+use carbide_uuid::machine::MachineId;
 use carbide_uuid::nvlink::NvLinkDomainId;
 pub use io::NiccClient;
 use rpc::forge::{Machine, Rack};
@@ -28,8 +29,8 @@ pub struct TrayIbData {
 /// Intermediate representation of a gRPC Machine.
 #[derive(Debug)]
 pub struct TrayData {
-    /// Machine ID as string.
-    pub id: String,
+    /// Machine ID.
+    pub id: MachineId,
     /// Rack-validation labels (`rv.*`) from machine metadata.
     pub rv_labels: HashMap<String, String>,
     /// NVLink data, if machine has NVLink info.
@@ -41,11 +42,7 @@ pub struct TrayData {
 /// Extract TrayData from gRPC Machine.
 impl From<Machine> for TrayData {
     fn from(value: Machine) -> Self {
-        let id = value
-            .id
-            .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_default();
+        let id = value.id.unwrap_or_default();
 
         let nvl = value.nvlink_info.map(|info| TrayNvlData {
             domain_uuid: info.domain_uuid,
