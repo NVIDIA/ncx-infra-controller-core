@@ -80,7 +80,7 @@ impl TryFrom<Racks> for Partitions {
                 if let Some(ref nvl_data) = tray.nvl
                     && let Some(domain_uuid) = &nvl_data.domain_uuid
                 {
-                    nvl.entry(domain_uuid.clone())
+                    nvl.entry(domain_uuid.to_string())
                         .or_default()
                         .push(tray.id.clone());
                 }
@@ -130,16 +130,24 @@ fn is_validation_state(state: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use carbide_uuid::nvlink::NvLinkDomainId;
+
     use super::*;
     use crate::client::{TrayData, TrayIbData, TrayNvlData};
     use crate::rack::Racks;
     use crate::rack::racks::Rack;
 
+    const DOMAIN_A: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const DOMAIN_B: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const DOMAIN_X: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+
     /// Test helper -- build a TrayData with optional NVL/IB fields.
     fn tray(id: &str, domain: Option<&str>, gpus: u32, ib_fabrics: &[&str]) -> TrayData {
         let nvl = if domain.is_some() || gpus > 0 {
             Some(TrayNvlData {
-                domain_uuid: domain.map(|d| d.to_string()),
+                domain_uuid: domain.map(|d| NvLinkDomainId::from_str(d).unwrap()),
                 gpu_count: gpus,
             })
         } else {
@@ -175,9 +183,9 @@ mod tests {
             "rack-1",
             "Validation(Pending)",
             vec![
-                tray("m1", Some("domain-a"), 4, &["fabric-1"]),
-                tray("m2", Some("domain-a"), 4, &["fabric-1"]),
-                tray("m3", Some("domain-b"), 4, &["fabric-1", "fabric-2"]),
+                tray("m1", Some(DOMAIN_A), 4, &["fabric-1"]),
+                tray("m2", Some(DOMAIN_A), 4, &["fabric-1"]),
+                tray("m3", Some(DOMAIN_B), 4, &["fabric-1", "fabric-2"]),
             ],
         )];
 
@@ -193,8 +201,8 @@ mod tests {
         );
         // NVL grouping
         assert_eq!(p.nvl.len(), 2);
-        assert_eq!(p.nvl["domain-a"], vec!["m1", "m2"]);
-        assert_eq!(p.nvl["domain-b"], vec!["m3"]);
+        assert_eq!(p.nvl[DOMAIN_A], vec!["m1", "m2"]);
+        assert_eq!(p.nvl[DOMAIN_B], vec!["m3"]);
         // IB grouping -- m3 appears in both fabrics
         assert_eq!(p.ib.len(), 2);
         assert_eq!(p.ib["fabric-1"], vec!["m1", "m2", "m3"]);
@@ -203,17 +211,17 @@ mod tests {
 
     #[test]
     fn test_cross_rack_domain_merging() {
-        // domain-x and fabric-x each span both racks; racks carry different states.
+        // DOMAIN_X and fabric-x each span both racks; racks carry different states.
         let fetched = vec![
             rack(
                 "rack-1",
                 "Validation(Pending)",
-                vec![tray("m1", Some("domain-x"), 4, &["fabric-x"])],
+                vec![tray("m1", Some(DOMAIN_X), 4, &["fabric-x"])],
             ),
             rack(
                 "rack-2",
                 "Validation(Pending)",
-                vec![tray("m2", Some("domain-x"), 4, &["fabric-x"])],
+                vec![tray("m2", Some(DOMAIN_X), 4, &["fabric-x"])],
             ),
         ];
 
@@ -229,7 +237,7 @@ mod tests {
         );
         // Both trays land in the same NVL domain and IB fabric
         assert_eq!(p.nvl.len(), 1);
-        assert_eq!(p.nvl["domain-x"], vec!["m1", "m2"]);
+        assert_eq!(p.nvl[DOMAIN_X], vec!["m1", "m2"]);
         assert_eq!(p.ib.len(), 1);
         assert_eq!(p.ib["fabric-x"], vec!["m1", "m2"]);
     }

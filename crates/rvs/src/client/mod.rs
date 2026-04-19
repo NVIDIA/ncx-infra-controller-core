@@ -1,6 +1,7 @@
 mod io;
 use std::collections::HashMap;
 
+use carbide_uuid::nvlink::NvLinkDomainId;
 pub use io::NiccClient;
 use rpc::forge::{Machine, Rack};
 
@@ -8,7 +9,7 @@ use rpc::forge::{Machine, Rack};
 #[derive(Debug)]
 pub struct TrayNvlData {
     /// NVL domain this tray belongs to.
-    pub domain_uuid: Option<String>,
+    pub domain_uuid: Option<NvLinkDomainId>,
     /// GPU count reported via NVLink info.
     pub gpu_count: u32,
 }
@@ -47,7 +48,7 @@ impl From<Machine> for TrayData {
             .unwrap_or_default();
 
         let nvl = value.nvlink_info.map(|info| TrayNvlData {
-            domain_uuid: info.domain_uuid.as_ref().map(|u| u.to_string()),
+            domain_uuid: info.domain_uuid,
             gpu_count: info.gpus.len() as u32,
         });
 
