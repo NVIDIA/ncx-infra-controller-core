@@ -114,6 +114,7 @@ pub async fn create(txn: &mut PgConnection, new_switch: &NewSwitch) -> DatabaseR
         nvos_update_status: None,
         metadata,
         version,
+        is_primary: false,
         rack_id: new_switch.rack_id.clone(),
         slot_number: new_switch.slot_number,
         tray_index: new_switch.tray_index,
@@ -327,6 +328,20 @@ pub async fn update_slot_and_tray(
         .execute(txn)
         .await
         .map_err(|e| DatabaseError::new("update_slot_and_tray", e))?;
+    Ok(())
+}
+
+pub async fn set_primary_switch_for_rack(
+    txn: &mut PgConnection,
+    rack_id: &RackId,
+    primary_switch_id: &SwitchId,
+) -> DatabaseResult<()> {
+    sqlx::query("UPDATE switches SET is_primary = (id = $1) WHERE rack_id = $2")
+        .bind(primary_switch_id)
+        .bind(rack_id)
+        .execute(txn)
+        .await
+        .map_err(|e| DatabaseError::new("set_primary_switch_for_rack", e))?;
     Ok(())
 }
 

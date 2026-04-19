@@ -20,6 +20,7 @@
 use std::collections::{HashMap, HashSet};
 
 use carbide_uuid::rack::{RackId, RackProfileId};
+use carbide_uuid::switch::SwitchId;
 use db::{
     host_machine_update as db_host_machine_update, machine as db_machine,
     machine_topology as db_machine_topology, rack as db_rack, rack_firmware as db_rack_firmware,
@@ -1643,6 +1644,24 @@ pub async fn handle_maintenance(
                 Ok(primary_switch) => primary_switch,
                 Err(cause) => return transition_to_rack_error(id, state, cause, ctx).await,
             };
+            let primary_switch_id = match primary_switch.device.node_id.parse::<SwitchId>() {
+                Ok(primary_switch_id) => primary_switch_id,
+                Err(error) => {
+                    return Ok(transition_to_rack_error(
+                        id,
+                        format!(
+                            "selected primary switch '{}' is not a valid SwitchId: {}",
+                            primary_switch.device.node_id, error
+                        ),
+                    ));
+                }
+            };
+
+            {
+                let mut txn = ctx.services.db_pool.begin().await?;
+                db_switch::set_primary_switch_for_rack(&mut txn, id, &primary_switch_id).await?;
+                txn.commit().await?;
+            }
 
             let topology_type = rack_hardware_topology.to_string();
             tracing::info!(
