@@ -6,6 +6,8 @@ use carbide_uuid::nvlink::NvLinkDomainId;
 pub use io::NiccClient;
 use rpc::forge::{Machine, Rack};
 
+use crate::error::RvsError;
+
 /// NVLink fields extracted from gRPC Machine.
 #[derive(Debug)]
 pub struct TrayNvlData {
@@ -40,9 +42,11 @@ pub struct TrayData {
 }
 
 /// Extract TrayData from gRPC Machine.
-impl From<Machine> for TrayData {
-    fn from(value: Machine) -> Self {
-        let id = value.id.unwrap_or_default();
+impl TryFrom<Machine> for TrayData {
+    type Error = RvsError;
+
+    fn try_from(value: Machine) -> Result<Self, Self::Error> {
+        let id = value.id.ok_or(RvsError::MissingField("Machine.id"))?;
 
         let nvl = value.nvlink_info.map(|info| TrayNvlData {
             domain_uuid: info.domain_uuid,
@@ -79,12 +83,12 @@ impl From<Machine> for TrayData {
             })
             .unwrap_or_default();
 
-        Self {
+        Ok(Self {
             id,
             rv_labels,
             nvl,
             ib,
-        }
+        })
     }
 }
 
@@ -100,20 +104,21 @@ pub struct RackData {
 }
 
 /// Extract RackData from gRPC Rack.
-impl From<Rack> for RackData {
-    fn from(value: Rack) -> Self {
-        Self {
+impl TryFrom<Rack> for RackData {
+    type Error = RvsError;
+
+    fn try_from(value: Rack) -> Result<Self, Self::Error> {
+        Ok(Self {
             id: value
                 .id
-                .as_ref()
-                .map(|id| id.to_string())
-                .unwrap_or_default(),
+                .ok_or(RvsError::MissingField("Rack.id"))?
+                .to_string(),
             state: value.rack_state,
             compute_tray_ids: value
                 .compute_trays
                 .into_iter()
                 .map(|id| id.to_string())
                 .collect(),
-        }
+        })
     }
 }

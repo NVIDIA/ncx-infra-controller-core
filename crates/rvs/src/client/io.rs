@@ -28,7 +28,7 @@ impl NiccClient {
     /// Fetch all racks from NICC -> Vec<RackData>.
     pub async fn get_racks(&self) -> Result<Vec<RackData>, RvsError> {
         let response = self.inner.get_rack(GetRackRequest { id: None }).await?;
-        Ok(response.rack.into_iter().map(RackData::from).collect())
+        response.rack.into_iter().map(RackData::try_from).collect()
     }
 
     /// Update `rv.*` labels on a machine, preserving all non-`rv.*` labels.
@@ -151,7 +151,9 @@ impl NiccClient {
                 })
                 .await?;
 
-            trays.extend(response.machines.into_iter().map(TrayData::from));
+            for machine in response.machines {
+                trays.push(TrayData::try_from(machine)?);
+            }
         }
 
         Ok(trays)

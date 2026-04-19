@@ -21,6 +21,10 @@ pub enum RvsError {
     #[error("Expected 1 machine for tray {tray_id}, got {count}")]
     UnexpectedMachineCount { tray_id: String, count: usize },
 
+    /// A required gRPC message field was missing (would carry invalid data forward).
+    #[error("{0}")]
+    MissingField(&'static str),
+
     /// Invalid or missing command-line argument.
     #[error("Invalid argument: {0}")]
     InvalidArg(String),
