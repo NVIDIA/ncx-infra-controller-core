@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use carbide_redfish::libredfish::RedfishClientPool;
 use carbide_uuid::machine::MachineId;
 use chrono::Utc;
 use model::attestation::spdm::{SpdmAttestationState, SpdmDeviceAttestationDetails};
@@ -32,7 +33,6 @@ use crate::state_controller::machine::context::MachineStateHandlerContextObjects
 use crate::state_controller::state_handler::{
     StateHandlerContext, StateHandlerError, StateHandlerOutcome,
 };
-use carbide_redfish::libredfish::RedfishClientPool;
 
 /// When SPDM attestation failed, check whether attestation was restarted (admin / status) or
 /// disabled in config; if so, transition back to the appropriate measuring state based on
