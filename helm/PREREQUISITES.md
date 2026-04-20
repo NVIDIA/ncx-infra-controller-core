@@ -151,7 +151,9 @@ All secrets should be created in the `forge-system` namespace (or whichever name
 
 Database credentials for `carbide-api`.
 
-**Required keys:** `username`, `password`, `host`, `port`, `dbname`, `uri`
+**Required keys:** `username`, `password`
+
+The Helm chart reads only `username` and `password` from this secret; connection host, port, and database name come from the `forge-system-carbide-database-config` ConfigMap (Section 4). The additional keys below (`host`, `port`, `dbname`, `uri`) are optional conveniences for manual `psql` access or ESO integration.
 
 ```bash
 kubectl create secret generic forge-system.carbide.forge-pg-cluster.credentials \

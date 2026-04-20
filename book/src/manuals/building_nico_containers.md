@@ -155,11 +155,11 @@ make docker-build IMAGE_REGISTRY=<your-registry.example.com/carbide> IMAGE_TAG=<
 | Image | Purpose |
 |-------|---------|
 | `carbide-rest-api` | REST API server (port 8388) |
-| `carbide-rest-workflow` | Temporal workflow worker (cloud-worker, site-worker) |
-| `carbide-rest-site-manager` | Site management / registry service |
-| `carbide-rest-site-agent` | On-site agent (elektra) |
+| `carbide-rest-workflow` | Temporal workflow worker |
+| `carbide-rest-site-manager` | Site management and registry service |
+| `carbide-rest-site-agent` | On-site Temporal agent |
 | `carbide-rest-db` | Database migration job (runs once per upgrade) |
-| `carbide-rest-cert-manager` | Native PKI certificate manager (credsmgr) |
+| `carbide-rest-cert-manager` | PKI certificate manager |
 | `carbide-rla` | Rack Level Abstraction service |
 | `carbide-psm` | Power Shelf Manager service |
 | `carbide-nsm` | NVSwitch Manager service |
