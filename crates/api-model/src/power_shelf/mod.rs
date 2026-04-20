@@ -30,6 +30,7 @@ use sqlx::{FromRow, Row};
 
 use crate::StateSla;
 use crate::controller_outcome::PersistentStateHandlerOutcome;
+use crate::health::HealthReportSources;
 use crate::metadata::Metadata;
 
 pub mod power_shelf_id;
@@ -57,9 +58,11 @@ impl TryFrom<rpc::PowerShelfCreationRequest> for NewPowerShelf {
 
         let id = value.id.unwrap_or_else(|| uuid::Uuid::new_v4().into());
 
+        let config = PowerShelfConfig::try_from(conf)?;
+
         Ok(NewPowerShelf {
             id,
-            config: PowerShelfConfig::try_from(conf)?,
+            config,
             metadata: None,
             rack_id: None,
         })
@@ -69,9 +72,8 @@ impl TryFrom<rpc::PowerShelfCreationRequest> for NewPowerShelf {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PowerShelfConfig {
     pub name: String,
-    pub capacity: Option<u32>,    // Power capacity in watts
-    pub voltage: Option<u32>,     // Voltage in volts
-    pub location: Option<String>, // Physical location
+    pub capacity: Option<u32>, // Power capacity in watts
+    pub voltage: Option<u32>,  // Voltage in volts
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,11 +99,13 @@ pub struct PowerShelf {
 
     /// The rack that this power shelf is associated with.
     pub rack_id: Option<RackId>,
+
     // Columns for these exist, but are unused in rust code
     // pub created: DateTime<Utc>,
     // pub updated: DateTime<Utc>,
     pub metadata: Metadata,
     pub version: ConfigVersion,
+    pub health_reports: HealthReportSources,
 }
 
 impl<'r> FromRow<'r, PgRow> for PowerShelf {
@@ -113,6 +117,11 @@ impl<'r> FromRow<'r, PgRow> for PowerShelf {
         let controller_state_outcome: Option<sqlx::types::Json<PersistentStateHandlerOutcome>> =
             row.try_get("controller_state_outcome").ok();
 
+        // DB column is still named "health_report_overrides" for backward compatibility.
+        let health_reports: HealthReportSources = row
+            .try_get::<sqlx::types::Json<HealthReportSources>, _>("health_report_overrides")
+            .map(|j| j.0)
+            .unwrap_or_default();
         let labels: sqlx::types::Json<HashMap<String, String>> = row.try_get("labels")?;
         let metadata = Metadata {
             name: row.try_get("name")?,
@@ -132,6 +141,7 @@ impl<'r> FromRow<'r, PgRow> for PowerShelf {
             metadata,
             version: row.try_get("version")?,
             rack_id: row.try_get("rack_id").ok().flatten(),
+            health_reports,
         })
     }
 }
@@ -144,9 +154,22 @@ impl TryFrom<rpc::PowerShelfConfig> for PowerShelfConfig {
             name: conf.name,
             capacity: conf.capacity.map(|c| c as u32),
             voltage: conf.voltage.map(|v| v as u32),
-            location: conf.location,
         })
     }
+}
+
+fn derive_power_shelf_aggregate_health(
+    sources: &HealthReportSources,
+) -> health_report::HealthReport {
+    if let Some(replace) = &sources.replace {
+        return replace.clone();
+    }
+    let mut output = health_report::HealthReport::empty("power-shelf-aggregate-health".to_string());
+    for report in sources.merges.values() {
+        output.merge(report);
+    }
+    output.observed_at = Some(chrono::Utc::now());
+    output
 }
 
 impl TryFrom<PowerShelf> for rpc::PowerShelf {
@@ -183,9 +206,18 @@ impl TryFrom<PowerShelf> for rpc::PowerShelf {
             name: src.config.name,
             capacity: src.config.capacity.map(|c| c as i32),
             voltage: src.config.voltage.map(|v| v as i32),
-            location: src.config.location,
         };
 
+        let health = derive_power_shelf_aggregate_health(&src.health_reports);
+        let health_sources = src
+            .health_reports
+            .clone()
+            .into_iter()
+            .map(|(hr, m)| rpc::HealthSourceOrigin {
+                mode: m as i32,
+                source: hr.source,
+            })
+            .collect();
         let deleted = if src.deleted.is_some() {
             Some(src.deleted.unwrap().into())
         } else {
@@ -203,6 +235,8 @@ impl TryFrom<PowerShelf> for rpc::PowerShelf {
             bmc_info: None,
             state_version,
             rack_id: src.rack_id,
+            health: Some(health.into()),
+            health_sources,
         })
     }
 }
@@ -257,25 +291,6 @@ pub fn state_sla(state: &PowerShelfControllerState, state_version: &ConfigVersio
             std::time::Duration::from_secs(slas::DELETING),
             time_in_state,
         ),
-    }
-}
-
-/// History of Power Shelf states for a single Power Shelf
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PowerShelfStateHistoryRecord {
-    /// The state that was entered
-    pub state: String,
-    // The version number associated with the state change
-    pub state_version: ConfigVersion,
-}
-
-impl From<PowerShelfStateHistoryRecord> for rpc::PowerShelfStateHistoryRecord {
-    fn from(value: PowerShelfStateHistoryRecord) -> rpc::PowerShelfStateHistoryRecord {
-        rpc::PowerShelfStateHistoryRecord {
-            state: value.state,
-            version: value.state_version.version_string(),
-            time: Some(value.state_version.timestamp().into()),
-        }
     }
 }
 

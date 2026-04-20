@@ -21,7 +21,7 @@ use std::net::IpAddr;
 
 use carbide_uuid::machine::MachineId;
 use carbide_uuid::power_shelf::{PowerShelfId, PowerShelfIdSource, PowerShelfType};
-use carbide_uuid::rack::RackId;
+use carbide_uuid::rack::{RackId, RackProfileId};
 use carbide_uuid::switch::SwitchId;
 use db::machine_interface::find_by_mac_address;
 use db::{DatabaseError, power_shelf as db_power_shelf, rack as db_rack, switch as db_switch};
@@ -44,7 +44,7 @@ use model::rack::RackConfig;
 use model::site_explorer::EndpointExplorationReport;
 use model::switch::{NewSwitch, SwitchConfig};
 use rpc::forge::forge_server::Forge;
-use rpc::forge::{self, HealthReportOverride, InsertHealthReportOverrideRequest};
+use rpc::forge::{self, HealthReportEntry, InsertHealthReportOverrideRequest};
 use rpc::forge_agent_control_response::Action;
 use rpc::machine_discovery::AttestKeyInfo;
 use rpc::{DiscoveryData, DiscoveryInfo};
@@ -682,7 +682,7 @@ impl<'a> MockExploredHost<'a> {
         self.test_env
             .api
             .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
-                r#override: Some(HealthReportOverride {
+                health_report_entry: Some(HealthReportEntry {
                     report: Some(
                         HealthReport::empty(format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health"))
                             .into(),
@@ -905,7 +905,7 @@ impl<'a> MockExploredHost<'a> {
         self.test_env
             .api
             .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
-                r#override: Some(HealthReportOverride {
+                health_report_entry: Some(HealthReportEntry {
                     report: Some(
                         HealthReport::empty(format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health"))
                             .into(),
@@ -1490,7 +1490,7 @@ pub async fn new_power_shelf(
     name: Option<String>,
     capacity: Option<u32>,
     voltage: Option<u32>,
-    location: Option<String>,
+    _location: Option<String>,
 ) -> eyre::Result<PowerShelfId> {
     let mut txn = env.pool.begin().await.unwrap();
 
@@ -1521,7 +1521,6 @@ pub async fn new_power_shelf(
         name: power_shelf_name,
         capacity: capacity.or(Some(100)),
         voltage: voltage.or(Some(240)),
-        location: location.or(Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string())),
     };
 
     // Create the power shelf
@@ -1573,14 +1572,14 @@ clear looking at the test what the intent of the configuration is.
 */
 pub struct TestRackDbBuilder {
     rack_id: RackId,
-    rack_type: Option<String>,
+    rack_profile_id: Option<RackProfileId>,
 }
 
 impl Default for TestRackDbBuilder {
     fn default() -> Self {
         TestRackDbBuilder {
             rack_id: RackId::new(uuid::Uuid::new_v4().to_string()),
-            rack_type: Some("rack".to_string()),
+            rack_profile_id: Some(RackProfileId::new("rack")),
         }
     }
 }
@@ -1597,17 +1596,21 @@ impl TestRackDbBuilder {
         self
     }
 
-    pub fn with_rack_type(mut self, rack_type: impl Into<String>) -> Self {
-        self.rack_type = Some(rack_type.into());
+    pub fn with_rack_profile_id(mut self, rack_profile_id: impl Into<String>) -> Self {
+        self.rack_profile_id = Some(RackProfileId::new(rack_profile_id));
         self
     }
 
     pub async fn persist(&self, txn: &mut PgConnection) -> Result<RackId, DatabaseError> {
-        let rack_config = RackConfig {
-            rack_type: self.rack_type.clone(),
-            ..Default::default()
-        };
-        db_rack::create(txn, &self.rack_id, &rack_config, None).await?;
+        let rack_config = RackConfig::default();
+        db_rack::create(
+            txn,
+            &self.rack_id,
+            self.rack_profile_id.as_ref(),
+            &rack_config,
+            None,
+        )
+        .await?;
 
         Ok(self.rack_id.clone())
     }
@@ -1621,7 +1624,7 @@ impl TestRackDbBuilder {
 pub async fn new_switch(
     env: &TestEnv,
     name: Option<String>,
-    location: Option<String>,
+    _location: Option<String>,
 ) -> eyre::Result<SwitchId> {
     let mut txn = env.pool.begin().await.unwrap();
 
@@ -1648,7 +1651,6 @@ pub async fn new_switch(
         name: expected_switch.metadata.name.clone(),
         enable_nmxc: false,
         fabric_manager_config: None,
-        location: location.or(Some("US/CA/DC/San Jose/1000 N Mathilda Ave".to_string())),
     };
 
     let new_switch = NewSwitch {
@@ -1657,6 +1659,8 @@ pub async fn new_switch(
         bmc_mac_address: Some(expected_switch.bmc_mac_address),
         metadata: None,
         rack_id: None,
+        slot_number: Some(0),
+        tray_index: Some(0),
     };
 
     let _switch = db_switch::create(&mut txn, &new_switch)
@@ -1814,6 +1818,7 @@ pub async fn create_expected_switches(
                 labels: HashMap::new(),
             },
             rack_id: None,
+            bmc_retain_credentials: None,
         };
         let result = db::expected_switch::create(txn, switch)
             .await
@@ -1883,6 +1888,7 @@ pub async fn create_expected_power_shelves(
             },
             metadata: Metadata::default(),
             rack_id: None,
+            bmc_retain_credentials: None,
         };
         let result = db::expected_power_shelf::create(txn, power_shelf)
             .await

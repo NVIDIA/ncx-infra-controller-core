@@ -28,6 +28,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use carbide_ipmi::IPMITool;
+use carbide_redfish::libredfish::test_support::{RedfishSim, RedfishSimTestOverrides};
+use carbide_redfish::nv_redfish::NvRedfishClientPool;
 use carbide_uuid::instance::InstanceId;
 use carbide_uuid::instance_type::InstanceTypeId;
 use carbide_uuid::machine::MachineId;
@@ -44,7 +47,7 @@ use forge_secrets::credentials::{
 };
 use forge_secrets::{ChainedCredentialReader, CredentialSnapshot, UsernamePassword};
 use futures::FutureExt as _;
-use health_report::{HealthReport, OverrideMode};
+use health_report::{HealthReport, HealthReportApplyMode};
 use ipnetwork::IpNetwork;
 use lazy_static::lazy_static;
 use measured_boot::pcr::PcrRegisterValue;
@@ -70,7 +73,7 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 use regex::Regex;
 use rpc::forge::forge_server::Forge;
 use rpc::forge::{
-    HealthReportOverride, InsertHealthReportOverrideRequest, RemoveHealthReportOverrideRequest,
+    HealthReportEntry, InsertHealthReportOverrideRequest, RemoveHealthReportOverrideRequest,
     VpcVirtualizationType,
 };
 use rpc_instance::RpcInstance;
@@ -100,15 +103,12 @@ use crate::dpf::DpfOperations;
 use crate::ethernet_virtualization::{EthVirtData, SiteFabricPrefixList};
 use crate::ib::{self, IBFabricManagerImpl, IBFabricManagerType};
 use crate::ib_fabric_monitor::IbFabricMonitor;
-use crate::ipmitool::IPMIToolTestImpl;
 use crate::logging::level_filter::ActiveLevel;
 use crate::logging::log_limiter::LogLimiter;
-use crate::nv_redfish::NvRedfishClientPool;
 use crate::nvl_partition_monitor::NvlPartitionMonitor;
 use crate::nvlink::NmxmClientPool;
 use crate::nvlink::test_support::NmxmSimClient;
 use crate::rack::rms_client::test_support::RmsSim;
-use crate::redfish::test_support::{RedfishSim, RedfishSimState};
 use crate::scout_stream;
 use crate::site_explorer::{BmcEndpointExplorer, SiteExplorer};
 use crate::state_controller::common_services::CommonStateHandlerServices;
@@ -346,7 +346,7 @@ pub struct TestEnv {
     pub redfish_sim: Arc<RedfishSim>,
     pub ib_fabric_monitor: Arc<IbFabricMonitor>,
     pub ib_fabric_manager: Arc<IBFabricManagerImpl>,
-    pub ipmi_tool: Arc<IPMIToolTestImpl>,
+    pub ipmi_tool: Arc<dyn IPMITool>,
     machine_state_controller: Arc<Mutex<StateController<MachineStateControllerIO>>>,
     spdm_state_controller: Arc<Mutex<StateController<SpdmStateControllerIO>>>,
     pub machine_state_handler: SwapHandler<MachineStateHandler>,
@@ -1101,7 +1101,7 @@ pub fn get_config() -> CarbideConfig {
         max_concurrent_machine_updates: None,
         machine_update_run_interval: Some(1),
         site_explorer: SiteExplorerConfig {
-            enabled: false,
+            enabled: Arc::new(false.into()),
             run_interval: std::time::Duration::from_secs(0),
             concurrent_explorations: 0,
             explorations_per_run: 0,
@@ -1188,6 +1188,7 @@ pub fn get_config() -> CarbideConfig {
         fnn: None,
         bios_profiles: HashMap::default(),
         selected_profile: libredfish::BiosProfileType::Performance,
+        oem_manager_profiles: HashMap::default(),
         bom_validation: BomValidationConfig::default(),
         listen_mode: ListenMode::Tls,
         listen_only: false,
@@ -1216,10 +1217,13 @@ pub fn get_config() -> CarbideConfig {
         }),
         mlxconfig_profiles: None,
         rack_management_enabled: false,
-        rms_api_url: Some(
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080).to_string(),
-        ),
-        rack_types: Default::default(),
+        rms: crate::cfg::file::RmsConfig {
+            api_url: Some(
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080).to_string(),
+            ),
+            ..Default::default()
+        },
+        rack_profiles: Default::default(),
         spdm_state_controller: SpdmStateControllerConfig {
             controller: StateControllerConfig::default(),
         },
@@ -1368,16 +1372,12 @@ pub async fn create_test_env_with_overrides(
     let certificate_provider = Arc::new(TestCertificateProvider::new());
 
     let redfish_sim = if let Some(redfish_overrides) = overrides.redfish_overrides {
-        Arc::new(RedfishSim {
-            state: Arc::new(std::sync::Mutex::new(RedfishSimState {
-                no_component_integrities: redfish_overrides.no_component_integrities,
-                firmware_for_component_error: redfish_overrides.firmware_for_component_error,
-                get_task_trigger_evidence_returns_interrupted: redfish_overrides
-                    .get_task_trigger_evidence_returns_interrupted,
-                ..Default::default()
-            })),
-            ..Default::default()
-        })
+        Arc::new(RedfishSim::with_test_overrides(RedfishSimTestOverrides {
+            no_component_integrities: redfish_overrides.no_component_integrities,
+            firmware_for_component_error: redfish_overrides.firmware_for_component_error,
+            get_task_trigger_evidence_returns_interrupted: redfish_overrides
+                .get_task_trigger_evidence_returns_interrupted,
+        }))
     } else {
         Arc::new(RedfishSim::default())
     };
@@ -1500,17 +1500,17 @@ pub async fn create_test_env_with_overrides(
                 .unwrap(),
             None,
         )),
+        site_explorer_enabled: config.site_explorer.enabled.clone(),
         create_machines: config.site_explorer.create_machines.clone(),
         bmc_proxy: config.site_explorer.bmc_proxy.clone(),
         tracing_enabled: Arc::new(false.into()),
     };
 
-    let ipmi_tool = Arc::new(IPMIToolTestImpl {});
     let bmc_proxy = Arc::new(ArcSwap::new(None.into()));
     let bmc_explorer = Arc::new(BmcEndpointExplorer::new(
         redfish_sim.clone(),
         Arc::new(NvRedfishClientPool::new(bmc_proxy)),
-        ipmi_tool.clone(),
+        carbide_ipmi::test_support(),
         composite_manager.clone(),
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // Tests use MockEndpointExplorer. So this doesn't affect anything.
@@ -1553,7 +1553,7 @@ pub async fn create_test_env_with_overrides(
     });
 
     let attestation_enabled = config.attestation_enabled;
-    let ipmi_tool = Arc::new(IPMIToolTestImpl {});
+    let ipmi_tool = carbide_ipmi::test_support();
     let mut power_options: PowerOptionConfig = config.power_manager_options.clone().into();
     if let Some(v) = overrides.power_manager_enabled {
         power_options.enabled = v;
@@ -1694,7 +1694,7 @@ pub async fn create_test_env_with_overrides(
     let site_explorer = SiteExplorer::new(
         db_pool.clone(),
         SiteExplorerConfig {
-            enabled: true,
+            enabled: Arc::new(true.into()),
             // run_interval shouldn't matter, this should not be run(), we only trigger intervals manually.
             run_interval: Duration::seconds(0).to_std().unwrap(),
             concurrent_explorations: 100,
@@ -1725,6 +1725,7 @@ pub async fn create_test_env_with_overrides(
         common_pools.clone(),
         work_lock_manager_handle.clone(),
         rms_sim.as_rms_client(),
+        credential_manager.clone(),
     );
 
     // Create some instance types
@@ -2294,14 +2295,14 @@ pub async fn simulate_hardware_health_report(
     health_report: health_report::HealthReport,
 ) {
     use rpc::forge::forge_server::Forge;
-    use rpc::forge::{HealthReportOverride, InsertHealthReportOverrideRequest};
+    use rpc::forge::{HealthReportEntry, InsertHealthReportOverrideRequest};
     use tonic::Request;
 
     let _ = env
         .api
         .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
             machine_id: Some(*host_machine_id),
-            r#override: Some(HealthReportOverride {
+            health_report_entry: Some(HealthReportEntry {
                 report: Some(health_report.into()),
                 ..Default::default()
             }),
@@ -2314,7 +2315,7 @@ pub async fn simulate_hardware_health_report(
 pub async fn send_health_report_override(
     env: &TestEnv,
     machine_id: &MachineId,
-    r#override: (HealthReport, OverrideMode),
+    r#override: (HealthReport, HealthReportApplyMode),
 ) {
     use rpc::forge::forge_server::Forge;
     use tonic::Request;
@@ -2322,7 +2323,7 @@ pub async fn send_health_report_override(
         .api
         .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
             machine_id: Some(*machine_id),
-            r#override: Some(HealthReportOverride {
+            health_report_entry: Some(HealthReportEntry {
                 report: Some(r#override.0.into()),
                 mode: r#override.1 as i32,
             }),

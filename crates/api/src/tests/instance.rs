@@ -989,6 +989,7 @@ async fn test_instance_dns_resolution(_: PgPoolOptions, options: PgConnectOption
                 device_instance: 0u32,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -998,6 +999,7 @@ async fn test_instance_dns_resolution(_: PgPoolOptions, options: PgConnectOption
                 device_instance: 0u32,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
         ],
     };
@@ -1782,6 +1784,7 @@ async fn test_instance_address_creation(_: PgPoolOptions, options: PgConnectOpti
                 device_instance: 0u32,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -1791,6 +1794,7 @@ async fn test_instance_address_creation(_: PgPoolOptions, options: PgConnectOpti
                 device_instance: 0u32,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
         ],
     };
@@ -2372,6 +2376,7 @@ async fn test_allocate_network_vpc_prefix_id(_: PgPoolOptions, options: PgConnec
             device_instance: 0u32,
             virtual_function_id: None,
             ip_address: None,
+            ipv6_interface_config: None,
         }],
     };
 
@@ -3246,6 +3251,7 @@ async fn test_network_details_migration(
                                 device_instance: 0,
                                 virtual_function_id: None,
                                 ip_address: None,
+                                ipv6_interface_config: None,
                             }],
                         })
                         .rpc(),
@@ -3320,6 +3326,7 @@ async fn test_network_details_migration(
                 network: Some(rpc::InstanceNetworkConfig {
                     interfaces: vec![rpc::InstanceInterfaceConfig {
                         ip_address: None,
+                        ipv6_interface_config: None,
 
                         function_type: rpc::InterfaceFunctionType::Physical as i32,
                         network_segment_id: None,
@@ -3402,6 +3409,7 @@ async fn test_network_details_migration(
                 network: Some(rpc::InstanceNetworkConfig {
                     interfaces: vec![rpc::InstanceInterfaceConfig {
                         ip_address: None,
+                        ipv6_interface_config: None,
 
                         function_type: rpc::InterfaceFunctionType::Physical as i32,
                         network_segment_id: None,
@@ -3553,6 +3561,7 @@ async fn test_instance_cannot_allocate_requested_ip_with_network_segment(
                     network: Some(rpc::InstanceNetworkConfig {
                         interfaces: vec![rpc::InstanceInterfaceConfig {
                             ip_address: Some("192.168.0.1".to_string()),
+                            ipv6_interface_config: None,
 
                             function_type: rpc::InterfaceFunctionType::Physical as i32,
                             network_segment_id: None,
@@ -3628,6 +3637,7 @@ async fn test_allocate_and_update_network_config_instance(
     let new_network_config = rpc::InstanceNetworkConfig {
         interfaces: vec![rpc::InstanceInterfaceConfig {
             ip_address: None,
+            ipv6_interface_config: None,
             function_type: rpc::InterfaceFunctionType::Physical as i32,
             network_segment_id: None,
             network_details: Some(
@@ -3754,6 +3764,7 @@ async fn test_allocate_and_update_network_config_instance_add_vf(
                 device_instance: 0,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -3765,6 +3776,7 @@ async fn test_allocate_and_update_network_config_instance_add_vf(
                 device_instance: 0,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
         ],
     };
@@ -3900,6 +3912,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_delete_vf(
                 device_instance: 0,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -3911,6 +3924,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_delete_vf(
                 device_instance: 0,
                 virtual_function_id: Some(0),
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -3922,6 +3936,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_delete_vf(
                 device_instance: 0,
                 virtual_function_id: Some(1),
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -3933,6 +3948,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_delete_vf(
                 device_instance: 0,
                 virtual_function_id: Some(2),
                 ip_address: None,
+                ipv6_interface_config: None,
             },
         ],
     };
@@ -3999,6 +4015,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_delete_vf(
                 device_instance: 0,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -4010,6 +4027,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_delete_vf(
                 device_instance: 0,
                 virtual_function_id: Some(0),
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             // VF 1 is deleted.
             rpc::InstanceInterfaceConfig {
@@ -4022,6 +4040,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_delete_vf(
                 device_instance: 0,
                 virtual_function_id: Some(2),
                 ip_address: None,
+                ipv6_interface_config: None,
             },
         ],
     };
@@ -4160,6 +4179,7 @@ async fn test_allocate_and_update_network_config_instance_state_machine(
             device_instance: 0,
             virtual_function_id: None,
             ip_address: None,
+            ipv6_interface_config: None,
         }],
     };
 
@@ -4294,6 +4314,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_state_machine(
             device_instance: 0,
             virtual_function_id: None,
             ip_address: None,
+            ipv6_interface_config: None,
         }],
     };
 
@@ -4341,6 +4362,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_state_machine(
                 device_instance: 0,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: rpc::InterfaceFunctionType::Virtual as i32,
@@ -4352,6 +4374,7 @@ async fn test_update_instance_config_vpc_prefix_network_update_state_machine(
                 device_instance: 0,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
         ],
     };
@@ -4488,6 +4511,7 @@ async fn test_allocate_network_multi_dpu_vpc_prefix_id(
                 device_instance: 0,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
             rpc::InstanceInterfaceConfig {
                 function_type: 0,
@@ -4501,6 +4525,7 @@ async fn test_allocate_network_multi_dpu_vpc_prefix_id(
                 device_instance: 1,
                 virtual_function_id: None,
                 ip_address: None,
+                ipv6_interface_config: None,
             },
         ],
     };
@@ -4648,7 +4673,7 @@ async fn test_instance_release_backward_compatibility(_: PgPoolOptions, options:
     // CRITICAL BACKWARD COMPATIBILITY VERIFICATION:
     // When using old API format (no issue, no is_repair_tenant), NO health overrides should be applied
     assert_eq!(
-        host_machine.health_report_overrides.merges.len(),
+        host_machine.health_reports.merges.len(),
         1, // Single HealthOverride for HardwareHealth
         "Backward compatibility test: NO health overrides should be applied when using old API format"
     );
@@ -4656,7 +4681,7 @@ async fn test_instance_release_backward_compatibility(_: PgPoolOptions, options:
     // Verify specifically that neither TenantReportedIssue nor RequestRepair overrides exist
     assert!(
         !host_machine
-            .health_report_overrides
+            .health_reports
             .merges
             .contains_key("tenant-reported-issue"),
         "Backward compatibility: TenantReportedIssue override should NOT be applied without issue field"
@@ -4664,7 +4689,7 @@ async fn test_instance_release_backward_compatibility(_: PgPoolOptions, options:
 
     assert!(
         !host_machine
-            .health_report_overrides
+            .health_reports
             .merges
             .contains_key("repair-request"),
         "Backward compatibility: RequestRepair override should NOT be applied without issue field"
@@ -4769,11 +4794,11 @@ async fn test_instance_release_repair_tenant(_: PgPoolOptions, options: PgConnec
         } else {
             // For regular tenant without issues, no health overrides should be applied
             let has_tenant_reported_override = host_machine
-                .health_report_overrides
+                .health_reports
                 .merges
                 .contains_key("tenant-reported-issue");
             let has_repair_request_override = host_machine
-                .health_report_overrides
+                .health_reports
                 .merges
                 .contains_key("repair-request");
 
@@ -4860,7 +4885,7 @@ async fn test_instance_release_combined_enhancements(_: PgPoolOptions, options: 
 
     // For repair tenant with issues (no existing RequestRepair override), should apply TenantReportedIssue
     let has_tenant_reported_override = host_machine
-        .health_report_overrides
+        .health_reports
         .merges
         .contains_key("tenant-reported-issue");
 
@@ -4871,7 +4896,7 @@ async fn test_instance_release_combined_enhancements(_: PgPoolOptions, options: 
 
     // Should NOT apply RequestRepair (repair tenants don't trigger auto-repair to prevent cycles)
     let has_repair_request_override = host_machine
-        .health_report_overrides
+        .health_reports
         .merges
         .contains_key("repair-request");
 
@@ -4949,13 +4974,13 @@ async fn test_instance_release_auto_repair_enabled(_: PgPoolOptions, options: Pg
 
     println!(
         "Auto-repair enabled test - machine health overrides: {:#?}",
-        host_machine.health_report_overrides
+        host_machine.health_reports
     );
 
     // CRITICAL VERIFICATIONS for auto-repair enabled scenario:
     // 1. Should have THREE health overrides (TenantReportedIssue + RequestRepair + Default HardwareHealth)
     assert_eq!(
-        host_machine.health_report_overrides.merges.len(),
+        host_machine.health_reports.merges.len(),
         3,
         "Auto-repair enabled should apply both TenantReportedIssue and RequestRepair overrides"
     );
@@ -4963,7 +4988,7 @@ async fn test_instance_release_auto_repair_enabled(_: PgPoolOptions, options: Pg
     // 2. Should have TenantReportedIssue override
     assert!(
         host_machine
-            .health_report_overrides
+            .health_reports
             .merges
             .contains_key("tenant-reported-issue"),
         "Should have TenantReportedIssue override for issue reporting"
@@ -4972,14 +4997,14 @@ async fn test_instance_release_auto_repair_enabled(_: PgPoolOptions, options: Pg
     // 3. Should have RequestRepair override
     assert!(
         host_machine
-            .health_report_overrides
+            .health_reports
             .merges
             .contains_key("repair-request"),
         "Should have RequestRepair override when auto-repair is enabled"
     );
 
     // 4. Verify the RequestRepair override content
-    let repair_override = &host_machine.health_report_overrides.merges["repair-request"];
+    let repair_override = &host_machine.health_reports.merges["repair-request"];
     let repair_report: health_report::HealthReport = repair_override.clone();
     assert_eq!(repair_report.source, "repair-request");
     assert_eq!(repair_report.alerts.len(), 1);
@@ -5054,7 +5079,7 @@ async fn test_instance_release_repair_tenant_successful_completion(
     let host_machine = mh.host().db_machine(&mut txn).await;
 
     assert_eq!(
-        host_machine.health_report_overrides.merges.len(),
+        host_machine.health_reports.merges.len(),
         3,
         "Should have both TenantReportedIssue and RequestRepair after regular tenant release"
     );

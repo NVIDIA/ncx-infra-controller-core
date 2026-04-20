@@ -28,11 +28,11 @@ use rpc::forge::SpdmAttestationStatus;
 use sqlx::PgPool;
 
 use crate::handlers::attestation as attestation_handlers;
-use crate::redfish::RedfishClientPool;
 use crate::state_controller::machine::context::MachineStateHandlerContextObjects;
 use crate::state_controller::state_handler::{
     StateHandlerContext, StateHandlerError, StateHandlerOutcome,
 };
+use carbide_redfish::libredfish::RedfishClientPool;
 
 /// When SPDM attestation failed, check whether attestation was restarted (admin / status) or
 /// disabled in config; if so, transition back to the appropriate measuring state based on

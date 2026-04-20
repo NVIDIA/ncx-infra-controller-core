@@ -22,6 +22,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use carbide_network::deserialize_input_mac_to_address;
+use carbide_redfish::libredfish::{
+    RedfishAuth, RedfishClientCreationError, RedfishClientPool, redact_password,
+};
+use carbide_redfish::nv_redfish::NvRedfishClientPool;
 use forge_secrets::credentials::Credentials;
 use libredfish::model::oem::nvidia_dpu::NicMode;
 use libredfish::model::service_root::RedfishVendor;
@@ -35,9 +39,6 @@ use model::site_explorer::{
 };
 use nv_redfish::oem::hpe::ilo_service_ext::ManagerType as HpeManagerType;
 use regex::Regex;
-
-use crate::nv_redfish::NvRedfishClientPool;
-use crate::redfish::{RedfishAuth, RedfishClientCreationError, RedfishClientPool, redact_password};
 
 const NOT_FOUND: u16 = 404;
 
@@ -1064,20 +1065,25 @@ async fn fetch_boot_order(
                 url: system.odata.odata_id.to_string(),
             })?;
 
-    let all_boot_options: Vec<BootOption> = client
+    let all_boot_options: Vec<libredfish::model::BootOption> = client
         .get_collection(boot_options_id)
         .await
         .and_then(|t1| t1.try_get::<libredfish::model::BootOption>())
         .into_iter()
         .flat_map(|x1| x1.members)
-        .map(Into::into)
         .collect();
 
     let boot_order: Vec<BootOption> = system
         .boot
         .boot_order
         .iter()
-        .filter_map(|id| all_boot_options.iter().find(|opt| opt.id == *id).cloned())
+        .filter_map(|ref_id| {
+            all_boot_options
+                .iter()
+                .find(|opt| opt.boot_option_reference == *ref_id)
+                .cloned()
+                .map(Into::into)
+        })
         .collect();
 
     Ok(BootOrder { boot_order })
@@ -1294,7 +1300,7 @@ pub(crate) fn map_redfish_error(error: RedfishError) -> EndpointExplorationError
 }
 
 fn nv_error_classifier(
-    err: &<crate::nv_redfish::NvRedfishBmc as nv_redfish::Bmc>::Error,
+    err: &<carbide_redfish::nv_redfish::NvRedfishBmc as nv_redfish::Bmc>::Error,
 ) -> Option<bmc_explorer::ErrorClass> {
     type BmcError = nv_redfish::bmc_http::reqwest::BmcError;
     match err {
@@ -1308,7 +1314,7 @@ fn nv_error_classifier(
 
 fn nv_bmc_explore_config(
     boot_interface_mac: Option<MacAddress>,
-) -> bmc_explorer::Config<'static, crate::nv_redfish::NvRedfishBmc> {
+) -> bmc_explorer::Config<'static, carbide_redfish::nv_redfish::NvRedfishBmc> {
     bmc_explorer::Config {
         boot_interface_mac,
         error_classifier: &nv_error_classifier,
@@ -1320,7 +1326,7 @@ fn nv_bmc_explore_config(
 }
 
 fn map_nv_redfish_explore_error(
-    err: bmc_explorer::Error<crate::nv_redfish::NvRedfishBmc>,
+    err: bmc_explorer::Error<carbide_redfish::nv_redfish::NvRedfishBmc>,
 ) -> EndpointExplorationError {
     type BmcError = nv_redfish::bmc_http::reqwest::BmcError;
     match err {
