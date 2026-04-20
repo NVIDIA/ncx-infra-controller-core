@@ -186,6 +186,7 @@ impl FakePowerShelf {
                 labels: HashMap::new(),
             },
             rack_id: None,
+            bmc_retain_credentials: None,
         }
     }
 }
@@ -220,7 +221,7 @@ async fn test_site_explorer_default_pause_ingestion_and_poweron(
     )]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -426,7 +427,7 @@ async fn test_site_explorer_main(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -882,7 +883,7 @@ async fn test_site_explorer_audit_exploration_results(
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 7,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1100,7 +1101,7 @@ async fn test_site_explorer_reexplore(
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1287,7 +1288,7 @@ async fn test_disable_machine_creation_outside_site_explorer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = common::api_fixtures::get_config();
     config.site_explorer = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1368,7 +1369,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 10,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1437,6 +1438,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
                 rack_id: None,
                 dpf_enabled: Some(true),
                 bmc_ip_address: None,
+                bmc_retain_credentials: None,
             },
         },
     )
@@ -1486,6 +1488,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
         rack_id: None,
         dpf_enabled: Some(true),
         bmc_ip_address: None,
+        bmc_retain_credentials: None,
     };
     db::expected_machine::update(&mut txn, &host1_expected_machine).await?;
     txn.commit().await?;
@@ -1587,7 +1590,7 @@ async fn test_site_explorer_health_report(
     txn.commit().await.unwrap();
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 10,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2162,7 +2165,7 @@ async fn test_site_explorer_unknown_vendor(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2380,7 +2383,7 @@ async fn test_machine_creation_with_sku(
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 10,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2449,6 +2452,7 @@ async fn test_machine_creation_with_sku(
                 rack_id: None,
                 dpf_enabled: Some(true),
                 bmc_ip_address: None,
+                bmc_retain_credentials: None,
             },
         },
     )
@@ -2583,6 +2587,7 @@ async fn test_expected_machine_device_type_metrics(
                 rack_id: None,
                 dpf_enabled: Some(true),
                 bmc_ip_address: None,
+                bmc_retain_credentials: None,
             },
         },
     )
@@ -2605,6 +2610,7 @@ async fn test_expected_machine_device_type_metrics(
                 rack_id: None,
                 dpf_enabled: Some(true),
                 bmc_ip_address: None,
+                bmc_retain_credentials: None,
             },
         },
     )
@@ -2627,6 +2633,7 @@ async fn test_expected_machine_device_type_metrics(
                 rack_id: None,
                 dpf_enabled: Some(true),
                 bmc_ip_address: None,
+                bmc_retain_credentials: None,
             },
         },
     )
@@ -2718,7 +2725,7 @@ async fn test_expected_machine_device_type_metrics(
 
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 3, // Explore our 3 machines
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2869,7 +2876,7 @@ async fn test_site_explorer_power_shelf_discovery(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2981,6 +2988,7 @@ async fn test_site_explorer_switch_discovery(
             labels: HashMap::new(),
         },
         rack_id: None,
+        bmc_retain_credentials: None,
     };
     db::expected_switch::create(&mut txn, expected_switch).await?;
     txn.commit().await?;
@@ -3024,7 +3032,7 @@ async fn test_site_explorer_switch_discovery(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3173,7 +3181,7 @@ async fn test_site_explorer_power_shelf_with_expected_config(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3328,7 +3336,7 @@ async fn test_site_explorer_power_shelf_creation_limit(
     }
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 3,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3463,7 +3471,7 @@ async fn test_site_explorer_power_shelf_disabled(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3567,7 +3575,7 @@ async fn test_site_explorer_power_shelf_error_handling(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3635,7 +3643,7 @@ async fn test_site_explorer_creates_power_shelf(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3935,7 +3943,7 @@ async fn test_power_shelf_state_history(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -4190,7 +4198,7 @@ async fn test_power_shelf_state_history_multiple(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -4412,7 +4420,7 @@ async fn test_power_shelf_state_history_error_handling(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -4586,7 +4594,7 @@ async fn test_site_explorer_power_shelf_discovery_with_static_ip(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),

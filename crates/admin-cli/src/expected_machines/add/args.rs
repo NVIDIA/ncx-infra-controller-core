@@ -122,6 +122,13 @@ pub struct Args {
         help = "Static BMC IP (pre-allocates machine_interface for site explorer, same as expected switches)"
     )]
     pub bmc_ip_address: Option<IpAddr>,
+
+    #[clap(
+        long = "bmc-retain-credentials",
+        value_name = "BMC_RETAIN_CREDENTIALS",
+        help = "When true, site-explorer skips BMC password rotation and stores factory-default credentials in Vault as-is"
+    )]
+    pub bmc_retain_credentials: Option<bool>,
 }
 
 impl Args {
@@ -141,6 +148,7 @@ impl TryFrom<Args> for rpc::forge::ExpectedMachine {
             description: value.meta_description.unwrap_or_default(),
             labels,
         };
+
         let host_nics = value
             .host_nics
             .map(|s| serde_json::from_str::<Vec<MacAddress>>(&s))
@@ -153,6 +161,7 @@ impl TryFrom<Args> for rpc::forge::ExpectedMachine {
                 fixed_ip: None,
                 fixed_mask: None,
                 fixed_gateway: None,
+                primary: None,
             })
             .collect();
 
@@ -172,6 +181,7 @@ impl TryFrom<Args> for rpc::forge::ExpectedMachine {
             dpf_enabled: value.dpf_enabled.unwrap_or_default(),
             is_dpf_enabled: value.dpf_enabled,
             bmc_ip_address: value.bmc_ip_address.map(|ip| ip.to_string()),
+            bmc_retain_credentials: value.bmc_retain_credentials,
         })
     }
 }
