@@ -295,6 +295,10 @@ impl InternalRBACRules {
             "GetAllExpectedMachinesLinked",
             vec![ForgeAdminCLI, SiteAgent, Rla],
         );
+        x.perm(
+            "GetAllUnexpectedMachines",
+            vec![ForgeAdminCLI, SiteAgent, Rla],
+        );
         x.perm("AttestQuote", vec![Anonymous]);
         x.perm("SignMachineIdentity", vec![Agent]);
         x.perm(

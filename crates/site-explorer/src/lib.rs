@@ -542,6 +542,21 @@ impl SiteExplorer {
                             ],
                         });
                 }
+            } else if matches!(machine_type, MachineType::Host) && machine_id.is_some() {
+                // Orphan: a Managed Host whose BMC MAC is no longer listed in
+                // `expected_machines`. Carbide keeps maintaining the host, but
+                // it will not be re-ingested if force-deleted. This alert is a warning
+                // only and does not block allocations.
+                new_health_report
+                    .alerts
+                    .push(health_report::HealthProbeAlert {
+                        id: "OrphanManagedHost".parse().unwrap(),
+                        target: None,
+                        in_alert_since: None,
+                        message: "This managed host is not listed in Expected Machines".to_string(),
+                        tenant_message: None,
+                        classifications: vec![],
+                    });
             }
 
             new_health_report.update_in_alert_since(previous_health_report);

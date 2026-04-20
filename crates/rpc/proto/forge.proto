@@ -397,6 +397,12 @@ service Forge {
   rpc DeleteAllExpectedMachines(google.protobuf.Empty) returns (google.protobuf.Empty);
   // Expected machines connected to Explored Endpoints and Machines
   rpc GetAllExpectedMachinesLinked(google.protobuf.Empty) returns (LinkedExpectedMachineList);
+  // Explored host BMC endpoints whose MAC is not listed in any of
+  // expected_machines, expected_power_shelf, or expected_switch. Entries with
+  // non-null `machine_id` are orphans (ingested before the expected entry
+  // was removed); the rest are hosts Site Explorer refuses to ingest until
+  // they are added to the expected_machines table.
+  rpc GetAllUnexpectedMachines(google.protobuf.Empty) returns (UnexpectedMachineList);
   // Batch create expected machines
   rpc CreateExpectedMachines(BatchExpectedMachineOperationRequest) returns (BatchExpectedMachineOperationResponse);
   // Batch update expected machines
@@ -5258,6 +5264,16 @@ message LinkedExpectedMachine {
   optional string explored_endpoint_address = 4;
   optional common.MachineId machine_id = 5;
   optional common.UUID expected_machine_id = 6;
+}
+
+message UnexpectedMachineList {
+  repeated UnexpectedMachine unexpected_machines = 1;
+}
+
+message UnexpectedMachine {
+  string address = 1;
+  string bmc_mac_address = 2;
+  optional common.MachineId machine_id = 3;
 }
 
 message BatchExpectedMachineOperationRequest {
