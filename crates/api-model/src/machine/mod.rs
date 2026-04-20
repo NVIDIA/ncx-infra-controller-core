@@ -272,6 +272,24 @@ fn pick_boot_interface_mac(
         .map(|x| x.mac_address)
 }
 
+/// Derive a host-level `use_admin_network` from the per-DPU values for
+/// the host.
+///
+/// Split out from `ManagedHostStateSnapshot::use_admin_network` so it's
+/// more easily testable without building a full snapshot. The way this works is:
+/// - True when an empty slice (e.g. zero-DPU host or snapshots failed to load),
+///   because zero DPU hosts have no DPU to handle tenant overlay (and
+///   are always admin). In the snapshot failure case, it seemed more
+///   conservative to treat it as such.
+/// - Otherwise, walk across all of the use_admin_network values from the
+///   hosts DPU(s) and collect their values, defaulting to true otherwise.
+fn derive_use_admin_network(dpu_use_admin_network: &[Option<bool>]) -> bool {
+    dpu_use_admin_network.is_empty()
+        || dpu_use_admin_network
+            .iter()
+            .any(|flag| flag.unwrap_or(true))
+}
+
 impl ManagedHostStateSnapshot {
     /// Returns `true` if this managed host has no DPU snapshots attached.
     ///
@@ -303,6 +321,33 @@ impl ManagedHostStateSnapshot {
     /// `self.host_snapshot.associated_dpu_machine_ids().is_empty()`.
     pub fn is_zero_dpu(&self) -> bool {
         self.dpu_snapshots.is_empty()
+    }
+
+    /// Returns `true` if this managed host is currently operating on the
+    /// admin network (rather than a tenant overlay).
+    ///
+    /// The underlying `use_admin_network` flag is persisted per-DPU on
+    /// `ManagedHostNetworkConfig` (fwiw, the config is generic, but
+    /// site-explorer and the machine state controller only populate this
+    /// for DPUs. Default is true.
+    ///
+    /// Zero-DPU hosts always return `true`, because there's no DPU to
+    /// handle tenant overlay networking. This allows consumers like the
+    /// IB and NVLink partition monitors to treat the host as admin-only
+    /// and detach.
+    ///
+    /// Now, this helper doesn't change where the *flag* is stored. I'm
+    /// planning on doing that in a future PR, but it will be a bit more
+    /// disruptive. It may end up going into the host's network_config,
+    /// allowing us to drop the per-DPU copies, and then this helper can
+    /// just read the host's config value directly.
+    pub fn use_admin_network(&self) -> bool {
+        let dpu_use_admin_network: Vec<_> = self
+            .dpu_snapshots
+            .iter()
+            .map(|dpu| dpu.network_config.use_admin_network)
+            .collect();
+        derive_use_admin_network(&dpu_use_admin_network)
     }
 
     /// Returns the MAC address the host should boot from, if one can be
@@ -3265,6 +3310,36 @@ mod tests {
         )];
 
         assert_eq!(pick_boot_interface_mac(&interfaces), None);
+    }
+
+    // Zero-DPU hosts have no DPU snapshots at all. The helper must return
+    // `true` -- consumers (IB partition monitor, NVLink partition monitor)
+    // use this to decide whether to detach tenant partitions, and zero-DPU
+    // hosts never have a tenant overlay to protect.
+    #[test]
+    fn derive_use_admin_network_returns_true_for_empty_dpu_snapshots() {
+        assert!(derive_use_admin_network(&[]));
+    }
+
+    // Make sure the legacy default still works; when a DPU snapshot has no
+    // explicit value, treat it as admin-network. All or any "None" should
+    // therefore resolve to true.
+    #[test]
+    fn derive_use_admin_network_treats_none_as_true() {
+        assert!(derive_use_admin_network(&[None]));
+        assert!(derive_use_admin_network(&[None, None]));
+    }
+
+    // ...aand check OR semantics across DPUs: if any single DPU says admin,
+    // the whole host is treated as admin. Only "all DPUs explicitly say false"
+    // flips the host to tenant-network mode.
+    #[test]
+    fn derive_use_admin_network_ors_across_dpus() {
+        assert!(derive_use_admin_network(&[Some(false), Some(true)]));
+        assert!(derive_use_admin_network(&[Some(true), Some(true)]));
+        assert!(derive_use_admin_network(&[Some(false), None]));
+        assert!(!derive_use_admin_network(&[Some(false)]));
+        assert!(!derive_use_admin_network(&[Some(false), Some(false)]));
     }
 }
 
