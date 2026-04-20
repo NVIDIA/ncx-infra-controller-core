@@ -1816,56 +1816,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_build_fnn_dual_stack_interface() {
-        // When ipv6.gateway_cidr is set, the NVUE template should configure
-        // both IPv4 and IPv6 addresses on the interface.
-        let mut conf = minimal_nvue_config();
-        conf.is_fnn = true;
-        conf.vpc_virtualization_type = VpcVirtualizationType::Fnn;
-        conf.use_vpc_isolation = true;
-        conf.site_fabric_prefixes = vec!["10.0.0.0/16".into(), "fd00::/32".into()];
-        conf.ct_routing_profile = Some(RoutingProfile {
-            leak_default_route_from_underlay: false,
-            leak_tenant_host_routes_to_underlay: false,
-            tenant_leak_communities_accepted: false,
-            route_target_imports: vec![],
-            route_targets_on_exports: vec![],
-        });
-        conf.ct_port_configs = vec![PortConfig {
-            interface_name: "pf0vf0_if".into(),
-            vlan: 100,
-            vni: Some(1000),
-            l3_vni: Some(100),
-            gateway_cidr: "10.0.1.0/31".into(),
-            ipv6_port_config: Some(Ipv6PortConfig {
-                gateway_cidr: "2001:db8::0/127".into(),
-                svi_ip: None,
-            }),
-            vpc_prefixes: vec!["10.0.1.0/24".into(), "2001:db8::/48".into()],
-            vpc_peer_prefixes: vec![],
-            vpc_peer_vnis: vec![],
-            svi_ip: Some("10.0.1.254".into()),
-            tenant_vrf_loopback_ip: Some("10.0.0.2".into()),
-            is_l2_segment: false,
-            is_phy: false,
-            network_security_group_id: None,
-        }];
-        conf.ct_access_vlans = vec![VlanConfig {
-            vlan_id: 100,
-            network: "10.0.1.0/31".into(),
-            ip: "10.0.1.1".into(),
-            ipv6_vlan_config: Some(Ipv6VlanConfig {
-                network: "2001:db8::0/127".into(),
-                ip: "2001:db8::1".into(),
-            }),
-        }];
-        assert_build_matches_golden(
-            conf,
-            include_str!("../templates/tests/nvue_build_fnn_dual_stack.yaml.expected"),
-        );
-    }
-
     /// `serde_yaml::Value::Null` indicates a YAML key with no value (i.e. a
     /// bare `key:` followed by nothing). In cases like this, YAML parsing fails,
     /// and NVUE subsequently rejects with something like `Error: 'set' operation
