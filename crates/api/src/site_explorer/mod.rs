@@ -75,6 +75,7 @@ mod managed_host;
 use db::ObjectColumnFilter;
 use db::work_lock_manager::WorkLockManagerHandle;
 pub use managed_host::is_endpoint_in_managed_host;
+use model::expected_machine::DpuMode;
 use model::firmware::FirmwareComponentType;
 use model::machine_interface_address::MachineInterfaceAssociation;
 use model::network_segment::NetworkSegmentType;
@@ -840,21 +841,17 @@ impl SiteExplorer {
         explored_dpus: HashMap<IpAddr, ExploredEndpoint>,
         explored_hosts: HashMap<IpAddr, ExploredEndpoint>,
     ) -> CarbideResult<Vec<(ExploredManagedHost, EndpointExplorationReport)>> {
-        if self.config.force_dpu_nic_mode.load(Ordering::Relaxed) {
-            // Ignore the DPU and ingest the machine as a managed host
-            return Ok(explored_hosts
-                .values()
-                .map(|ep| {
-                    (
-                        ExploredManagedHost {
-                            host_bmc_ip: ep.address,
-                            dpus: vec![],
-                        },
-                        ep.report.clone(),
-                    )
-                })
-                .collect());
-        }
+        // Per-host DPU-mode resolution. The old/deprecated/fallback site-wide
+        // `force_dpu_nic_mode` flag is preserved as a fallback when no
+        // per-host override is declared; a per-host `NicMode` or `NoDpu`
+        // always wins.
+        let site_force_nic_mode = self.config.force_dpu_nic_mode.load(Ordering::Relaxed);
+        let effective_mode = |host_bmc_ip: &IpAddr| -> DpuMode {
+            let declared = expected_explored_endpoint_index
+                .matched_expected_machine(host_bmc_ip)
+                .map(|em| em.data.dpu_mode);
+            DpuMode::resolve(declared, site_force_nic_mode)
+        };
         // Match HOST and DPU using SerialNumber.
         // Compare DPU system.serial_number with HOST chassis.network_adapters[].serial_number
         let mut dpu_sn_to_endpoint = HashMap::new();
@@ -896,6 +893,13 @@ impl SiteExplorer {
         };
 
         for (_, ep) in explored_hosts {
+            // Resolve the operator-declared DPU mode for this host once;
+            // it drives both auto-correction (`check_and_configure_dpu_mode`
+            // below -- operator override wins over BF3 model heuristics)
+            // and the post-match attach decision (NicMode/NoDpu hosts emit
+            // a bare managed host regardless of what matched).
+            let host_dpu_mode = effective_mode(&ep.address);
+
             // the list of DPUs that the site-explorer has explored for this host
             let mut dpus_explored_for_host: Vec<ExploredDpu> = Vec::new();
             // the number of DPUs that the host reports are attached to it
@@ -915,7 +919,11 @@ impl SiteExplorer {
                         let dpu_ep = dpu_ep_entry.get();
                         if let Some(model) = pcie_device.part_number.as_ref() {
                             match self
-                                .check_and_configure_dpu_mode(dpu_ep, model.to_string())
+                                .check_and_configure_dpu_mode(
+                                    dpu_ep,
+                                    model.to_string(),
+                                    host_dpu_mode,
+                                )
                                 .await
                             {
                                 Ok(is_dpu_mode_configured_correctly) => {
@@ -969,7 +977,11 @@ impl SiteExplorer {
                             let dpu_ep = dpu_ep_entry.get();
                             if let Some(model) = network_adapter.part_number.as_ref() {
                                 match self
-                                    .check_and_configure_dpu_mode(dpu_ep, model.to_string())
+                                    .check_and_configure_dpu_mode(
+                                        dpu_ep,
+                                        model.to_string(),
+                                        host_dpu_mode,
+                                    )
                                     .await
                                 {
                                     Ok(is_dpu_mode_configured_correctly) => {
@@ -1155,10 +1167,20 @@ impl SiteExplorer {
                 });
             }
 
+            // For NicMode / NoDpu hosts, don't attach DPUs even if matching
+            // discovered some: the operator has declared "treat this host
+            // as zero-DPU". Any DPU hardware has already had `set_nic_mode`
+            // issued by the check-and-configure step above if it was in
+            // DPU mode; this cycle we just emit a bare host.
+            let dpus = match host_dpu_mode {
+                DpuMode::NicMode | DpuMode::NoDpu => Vec::new(),
+                DpuMode::DpuMode => dpus_explored_for_host,
+            };
+
             managed_hosts.push((
                 ExploredManagedHost {
                     host_bmc_ip: ep.address,
-                    dpus: dpus_explored_for_host,
+                    dpus,
                 },
                 ep.report,
             ));
@@ -2286,39 +2308,65 @@ impl SiteExplorer {
         Ok(ingest_host)
     }
 
-    // check_and_configure_dpu_mode returns a boolean indicating whether a DPU is configured correctly.
-    // check_and_configure_dpu_mode will always return true for BF2s
-    // check_and_configure_dpu_mode will return false if a BF3 SuperNIC is configured in DPU mode or if a BF3 DPU is configured in NIC mode. Otherwise, it will return true.
-    // if check_and_configure_dpu_mode returns false, it will try to configure the DPU appropriately (put a BF3 SuperNIC in NIC mode or put a BF3 DPU in DPU mode)
+    /// Returns `true` when the DPU's hardware NIC mode already matches the
+    /// desired target; `false` when the function has issued a `set_nic_mode`
+    /// to fix a mismatch (in which case the caller should skip this host
+    /// for the current site-explorer cycle -- the next cycle will pick up
+    /// the corrected mode).
+    ///
+    /// The target is resolved in priority order:
+    /// 1. If the operator explicitly declared `DpuMode::NicMode` on the
+    ///    `ExpectedMachine`, target NIC mode (per-host override).
+    /// 2. If the operator declared `DpuMode::NoDpu`, bail out -- the
+    ///    `MachineValidation` state handler is where "hardware reports a
+    ///    DPU but operator said no DPU" gets surfaced as a health alert;
+    ///    we don't try to reconfigure in that case.
+    /// 3. Otherwise (operator default `DpuMode::DpuMode`), fall back to
+    ///    the existing BF3 SuperNIC / BF3 DPU model-based heuristic for
+    ///    backward compat: BF3 SuperNIC → NIC mode, BF3 DPU → DPU mode,
+    ///    BF2 / unknown → no-op.
     async fn check_and_configure_dpu_mode(
         &self,
         dpu_ep: &ExploredEndpoint,
         dpu_model: String,
+        host_dpu_mode: DpuMode,
     ) -> CarbideResult<bool> {
-        match dpu_ep.report.nic_mode() {
-            Some(NicMode::Dpu) => {
+        // Compute the target NIC mode. `None` means "no opinion -- don't
+        // attempt to reconfigure" (e.g., BF2 where the heuristic doesn't
+        // apply, or NoDpu where we defer to the health-check path).
+        let target_nic_mode: Option<NicMode> = match host_dpu_mode {
+            DpuMode::NicMode => Some(NicMode::Nic),
+            DpuMode::NoDpu => None,
+            DpuMode::DpuMode => {
+                // Preserve existing BF3-model heuristics when the operator
+                // hasn't explicitly chosen a mode.
                 if is_bf3_supernic(&dpu_model) {
-                    tracing::warn!(
-                        "site explorer found a BF3 SuperNIC ({}) that is in DPU mode; will try setting it into NIC mode",
-                        dpu_ep.address
-                    );
-                    self.set_nic_mode(dpu_ep, NicMode::Nic).await?;
-                    Ok(false)
+                    Some(NicMode::Nic)
+                } else if is_bf3_dpu(&dpu_model) {
+                    Some(NicMode::Dpu)
                 } else {
-                    Ok(true)
+                    None
                 }
             }
-            Some(NicMode::Nic) => {
-                if is_bf3_dpu(&dpu_model) {
-                    tracing::warn!(
-                        "site explorer found a BF3 DPU ({}) that is in NIC mode; will try setting it into DPU mode",
-                        dpu_ep.address
-                    );
-                    self.set_nic_mode(dpu_ep, NicMode::Dpu).await?;
-                    Ok(false)
-                } else {
-                    Ok(true)
-                }
+        };
+
+        let Some(target_nic_mode) = target_nic_mode else {
+            return Ok(true);
+        };
+
+        match dpu_ep.report.nic_mode() {
+            Some(observed) if observed == target_nic_mode => Ok(true),
+            Some(observed) => {
+                tracing::warn!(
+                    address = %dpu_ep.address,
+                    model = %dpu_model,
+                    %observed,
+                    ?target_nic_mode,
+                    ?host_dpu_mode,
+                    "site explorer found a DPU with a mode that does not match the target; will try to reconfigure"
+                );
+                self.set_nic_mode(dpu_ep, target_nic_mode).await?;
+                Ok(false)
             }
             None => {
                 tracing::warn!(
