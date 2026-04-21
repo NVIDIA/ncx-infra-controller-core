@@ -30,6 +30,8 @@ use async_trait::async_trait;
 use carbide_ipmi::IPMITool;
 use carbide_redfish::libredfish::test_support::RedfishSim;
 use carbide_redfish::nv_redfish::NvRedfishClientPool;
+use carbide_site_explorer::config::{SiteExplorerConfig, SiteExplorerExploreMode};
+use carbide_site_explorer::{BmcEndpointExplorer, SiteExplorer};
 use carbide_uuid::instance::InstanceId;
 use carbide_uuid::instance_type::InstanceTypeId;
 use carbide_uuid::machine::MachineId;
@@ -63,7 +65,7 @@ use model::metadata::Metadata;
 use model::network_security_group;
 use model::resource_pool::common::CommonPools;
 use model::resource_pool::{self};
-use model::tenant::{RoutingProfileType, TenantOrganizationId};
+use model::tenant::TenantOrganizationId;
 use nras::{
     DeviceAttestationInfo, NrasError, ProcessedAttestationOutcome, RawAttestationOutcome,
     VerifierClient,
@@ -109,8 +111,6 @@ use crate::nvlink::NmxmClientPool;
 use crate::nvlink::test_support::NmxmSimClient;
 use crate::rack::rms_client::test_support::RmsSim;
 use crate::scout_stream;
-use crate::site_explorer::config::{SiteExplorerConfig, SiteExplorerExploreMode};
-use crate::site_explorer::{BmcEndpointExplorer, SiteExplorer};
 use crate::state_controller::common_services::CommonStateHandlerServices;
 use crate::state_controller::controller::{Enqueuer, StateController};
 use crate::state_controller::ib_partition::handler::IBPartitionStateHandler;
@@ -280,8 +280,9 @@ impl TestEnvOverrides {
                 additional_route_target_imports: vec![],
                 routing_profiles: HashMap::from([
                     (
-                        RoutingProfileType::External.to_string(),
+                        "EXTERNAL".to_string(),
                         crate::cfg::file::FnnRoutingProfileConfig {
+                            access_tier: 2,
                             internal: false,
                             route_target_imports: vec![],
                             route_targets_on_exports: vec![],
@@ -291,8 +292,9 @@ impl TestEnvOverrides {
                         },
                     ),
                     (
-                        RoutingProfileType::Internal.to_string(),
+                        "INTERNAL".to_string(),
                         crate::cfg::file::FnnRoutingProfileConfig {
+                            access_tier: 1,
                             internal: true,
                             route_target_imports: vec![],
                             route_targets_on_exports: vec![],
@@ -1050,6 +1052,7 @@ fn host_firmware_example() -> HashMap<String, Firmware> {
 
 pub fn get_config() -> CarbideConfig {
     CarbideConfig {
+        default_tenant_routing_profile_type: "EXTERNAL".to_string(),
         bgp_leaf_session_password: None,
         rack_validation_config: crate::cfg::file::RackValidationConfig {
             enabled: true,
