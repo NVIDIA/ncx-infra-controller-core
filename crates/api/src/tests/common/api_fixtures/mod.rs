@@ -65,7 +65,7 @@ use model::metadata::Metadata;
 use model::network_security_group;
 use model::resource_pool::common::CommonPools;
 use model::resource_pool::{self};
-use model::tenant::{RoutingProfileType, TenantOrganizationId};
+use model::tenant::TenantOrganizationId;
 use nras::{
     DeviceAttestationInfo, NrasError, ProcessedAttestationOutcome, RawAttestationOutcome,
     VerifierClient,
@@ -280,8 +280,9 @@ impl TestEnvOverrides {
                 additional_route_target_imports: vec![],
                 routing_profiles: HashMap::from([
                     (
-                        RoutingProfileType::External.to_string(),
+                        "EXTERNAL".to_string(),
                         crate::cfg::file::FnnRoutingProfileConfig {
+                            access_tier: 2,
                             internal: false,
                             route_target_imports: vec![],
                             route_targets_on_exports: vec![],
@@ -291,8 +292,9 @@ impl TestEnvOverrides {
                         },
                     ),
                     (
-                        RoutingProfileType::Internal.to_string(),
+                        "INTERNAL".to_string(),
                         crate::cfg::file::FnnRoutingProfileConfig {
+                            access_tier: 1,
                             internal: true,
                             route_target_imports: vec![],
                             route_targets_on_exports: vec![],
@@ -1050,6 +1052,7 @@ fn host_firmware_example() -> HashMap<String, Firmware> {
 
 pub fn get_config() -> CarbideConfig {
     CarbideConfig {
+        default_tenant_routing_profile_type: "EXTERNAL".to_string(),
         bgp_leaf_session_password: None,
         rack_validation_config: crate::cfg::file::RackValidationConfig {
             enabled: true,
@@ -1518,6 +1521,7 @@ pub async fn create_test_env_with_overrides(
         machine_state_handler_enqueuer: Enqueuer::new(db_pool.clone()),
         metric_emitter: ApiMetricsEmitter::new(&test_meter.meter()),
         component_manager: None,
+        bms_client: std::sync::OnceLock::new(),
     });
 
     let attestation_enabled = config.attestation_enabled;

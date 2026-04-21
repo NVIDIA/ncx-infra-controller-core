@@ -73,6 +73,7 @@ use crate::mqtt_state_change_hook::hook::MqttStateChangeHook;
 use crate::nvl_partition_monitor::NvlPartitionMonitor;
 use crate::nvlink::{NmxmClientPool, NmxmClientPoolImpl};
 use crate::preingestion_manager::PreingestionManager;
+use crate::rack::bms_client::BmsDsxExchangeHandle;
 use crate::scout_stream::ConnectionRegistry;
 use crate::state_controller::common_services::CommonStateHandlerServices;
 use crate::state_controller::controller::{Enqueuer, StateController};
@@ -532,6 +533,7 @@ pub async fn start_api(
         machine_state_handler_enqueuer: Enqueuer::new(db_pool),
         metric_emitter: ApiMetricsEmitter::new(&meter),
         component_manager,
+        bms_client: std::sync::OnceLock::new(),
     });
 
     if carbide_config.listen_only {
@@ -784,6 +786,23 @@ pub async fn initialize_and_start_controllers(
                 config.mqtt_endpoint,
                 config.mqtt_broker_port
             );
+
+            let bms_client = BmsDsxExchangeHandle::new(
+                client.clone(),
+                db_pool,
+                join_set,
+                config.publish_timeout,
+                config.queue_capacity,
+                &meter,
+                cancel_token.clone(),
+            )
+            .await?;
+
+            api_service
+                .bms_client
+                .set(bms_client)
+                .map_err(|_| eyre::eyre!("BMS DSX Exchange handle already initialized"))?;
+
             emitter_builder = emitter_builder.hook(Box::new(MqttStateChangeHook::new(
                 client,
                 join_set,
