@@ -407,21 +407,15 @@ pub async fn start_api(
 
         let provider = crate::dpf::CarbideBmcPasswordProvider::new(credential_manager.clone());
 
-        let services = vec![carbide_dpf::services::dts_service(
-            &carbide_dpf::services::ServiceRegistryConfig::default(),
-        )];
-        let reg = crate::dpf_services::CarbideServiceRegistryConfig::from_runtime(
-            carbide_config.dpf.carbide_helm_version.clone(),
-            carbide_config.dpf.carbide_image_tag.clone(),
-        );
+        let mandatory_services = carbide_config.dpf.services.clone();
+        let services = vec![crate::dpf_services::dts_service(&mandatory_services.dts)];
         let v2_services = vec![
-            carbide_dpf::services::dts_service(
-                &carbide_dpf::services::ServiceRegistryConfig::default(),
-            ),
-            crate::dpf_services::dhcp_server_service(&reg),
-            crate::dpf_services::doca_hbn_service(&reg),
-            crate::dpf_services::dpu_agent_service(&reg),
-            crate::dpf_services::fmds_service(&reg),
+            crate::dpf_services::dts_service(&mandatory_services.dts),
+            crate::dpf_services::doca_hbn_service(&mandatory_services.doca_hbn),
+            crate::dpf_services::dhcp_server_service(&mandatory_services.dhcp_server),
+            crate::dpf_services::dpu_agent_service(&mandatory_services.dpu_agent),
+            crate::dpf_services::fmds_service(&mandatory_services.fmds),
+            // crate::dpf_services::otel_service(&mandatory_services.otel),
         ];
 
         let bfcfg_template = if carbide_config.dpf.bfcfg_enabled {

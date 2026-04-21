@@ -663,7 +663,7 @@ pub struct DpfConfig {
     pub bfb_url: String,
     /// Additional Helm services to deploy alongside DPF.
     #[serde(default)]
-    pub services: Option<Vec<DpfServiceConfig>>,
+    pub services: Box<DpfMandatoryServicesConfig>,
     /// Whether to create the bf.cfg ConfigMap during initialization.
     #[serde(default = "default_to_true")]
     pub bfcfg_enabled: bool,
@@ -671,16 +671,6 @@ pub struct DpfConfig {
     /// This is just temporary flag and will be removed once v2 becomes only option.
     #[serde(default)]
     pub v2: bool,
-    /// Helm chart version for Carbide DPU services (e.g. `"1.2.3-42.gabcdef1"`).
-    /// When unset, the version baked in at compile time is used (CI builds on main).
-    /// Set this in config to test against a specific published version on PR/fork/local dev.
-    #[serde(default)]
-    pub carbide_helm_version: Option<String>,
-    /// Container image tag for Carbide DPU services (e.g. `"v1.2.3-42-gabcdef1"`).
-    /// When unset, the tag baked in at compile time is used (CI builds on main).
-    /// Set this in config to test against a specific published image on PR/fork/local dev.
-    #[serde(default)]
-    pub carbide_image_tag: Option<String>,
 }
 
 impl Default for DpfConfig {
@@ -691,11 +681,9 @@ impl Default for DpfConfig {
             flavor_name: default_dpf_flavor_name(),
             node_label_key: default_dpf_node_label_key(),
             bfb_url: String::new(),
-            services: None,
+            services: Box::default(),
             bfcfg_enabled: true,
             v2: false,
-            carbide_helm_version: None,
-            carbide_image_tag: None,
         }
     }
 }
@@ -715,6 +703,40 @@ fn default_dpf_node_label_key() -> String {
     "carbide.nvidia.com/controlled.node.v1".to_string()
 }
 
+/// Configuration for a mandatory Helm-based DPF service.
+/// Making it configurable means, a user can provide the link for his version of the service (for
+/// testing/dev purpose).
+/// There are following mandatory services:
+/// dpu-agent, fmds, dhcp-server, doca-hbn, dts and otel.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DpfMandatoryServicesConfig {
+    #[serde(default = "crate::dpf_services::default_dts_service")]
+    pub dts: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_doca_hbn_service")]
+    pub doca_hbn: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_dpu_agent_service")]
+    pub dpu_agent: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_dhcp_server_service")]
+    pub dhcp_server: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_fmds_service")]
+    pub fmds: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_otel_service")]
+    pub otel: DpfServiceConfig,
+}
+
+impl Default for DpfMandatoryServicesConfig {
+    fn default() -> Self {
+        Self {
+            dts: crate::dpf_services::default_dts_service(),
+            doca_hbn: crate::dpf_services::default_doca_hbn_service(),
+            dpu_agent: crate::dpf_services::default_dpu_agent_service(),
+            dhcp_server: crate::dpf_services::default_dhcp_server_service(),
+            fmds: crate::dpf_services::default_fmds_service(),
+            otel: crate::dpf_services::default_otel_service(),
+        }
+    }
+}
+
 /// Configuration for a single Helm-based DPF service.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DpfServiceConfig {
@@ -726,6 +748,10 @@ pub struct DpfServiceConfig {
     pub helm_chart: String,
     /// Version of the Helm chart.
     pub helm_version: String,
+    /// Url for docker image
+    pub docker_repo_url: String,
+    /// Version of docker image
+    pub docker_image_tag: String,
 }
 
 /// Machine identity (SPIFFE JWT-SVID) configuration.
