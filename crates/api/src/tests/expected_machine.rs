@@ -23,7 +23,6 @@ use db::{self};
 use mac_address::MacAddress;
 use model::expected_machine::{ExpectedMachine, ExpectedMachineData};
 use model::metadata::Metadata;
-use model::site_explorer::EndpointExplorationReport;
 use rpc::forge::forge_server::Forge;
 use rpc::forge::{ExpectedMachineList, ExpectedMachineRequest};
 use sqlx::PgConnection;
@@ -674,17 +673,6 @@ async fn test_get_linked_expected_machines_completed(pool: sqlx::PgPool) {
             .into();
     let host_machine = env.find_machine(host_machine_id).await.remove(0);
     let bmc_ip = host_machine.bmc_info.as_ref().unwrap().ip();
-
-    let mut txn = pool.begin().await.unwrap();
-    db::explored_endpoints::insert(
-        bmc_ip.parse().unwrap(),
-        &EndpointExplorationReport::default(),
-        false,
-        &mut txn,
-    )
-    .await
-    .unwrap();
-    txn.commit().await.unwrap();
 
     // The test
 

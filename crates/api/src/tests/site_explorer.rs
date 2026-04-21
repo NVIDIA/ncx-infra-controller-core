@@ -4850,41 +4850,15 @@ async fn test_orphan_managed_host_alert_emitted(
     let host_config = ManagedHostConfig::default();
     let host_bmc_mac = host_config.bmc_mac_address;
     let chassis_serial = host_config.serial.clone();
-    let dpu_serial = host_config.get_and_assert_single_dpu().serial.clone();
     let mh = common::api_fixtures::create_managed_host_with_config(&env, host_config).await;
 
     // Orphan the host by deleting its expected_machines entry.
     let mut txn = env.pool.begin().await?;
-    let host = mh.host().db_machine(&mut txn).await;
-    let dpu = mh.dpu().db_machine(&mut txn).await;
-    let host_bmc_ip: IpAddr = host.bmc_info.ip.as_ref().unwrap().parse()?;
-    let dpu_bmc_ip: IpAddr = dpu.bmc_info.ip.as_ref().unwrap().parse()?;
     db::expected_machine::delete_by_mac(&mut txn, host_bmc_mac).await?;
     txn.commit().await?;
 
-    let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
-    endpoint_explorer.insert_endpoint_results(vec![
-        (
-            host_bmc_ip,
-            Ok(ManagedHostConfig::with_serial(chassis_serial.clone()).into()),
-        ),
-        (dpu_bmc_ip, Ok(DpuConfig::with_serial(dpu_serial).into())),
-    ]);
-
-    let explorer = SiteExplorer::new(
-        env.pool.clone(),
-        SiteExplorerConfig::default(),
-        env.test_meter.meter(),
-        endpoint_explorer,
-        Arc::new(env.config.get_firmware_config()),
-        env.common_pools.clone(),
-        env.api.work_lock_manager_handle.clone(),
-        env.rms_sim.as_rms_client(),
-        env.test_credential_manager.clone(),
-    );
-
     // Run an iteration: audit_exploration_results should emit the orphan alert.
-    explorer.run_single_iteration().await.unwrap();
+    env.run_site_explorer_iteration().await;
     let alerts = env
         .find_machine(mh.id)
         .await
@@ -4913,7 +4887,7 @@ async fn test_orphan_managed_host_alert_emitted(
     .await?;
     txn.commit().await?;
 
-    explorer.run_single_iteration().await.unwrap();
+    env.run_site_explorer_iteration().await;
     let alerts = env
         .find_machine(mh.id)
         .await
