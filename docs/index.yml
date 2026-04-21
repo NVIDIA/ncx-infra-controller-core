@@ -73,8 +73,6 @@ navigation:
 
     - section: Operations
       contents:
-        - page: Cargo via Docker on macOS
-          path: manuals/cargo-via-docker-macos.md
         - page: Host Validation
           path: manuals/machine_validation.md
         - page: SKU Validation
