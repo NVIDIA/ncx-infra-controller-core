@@ -15,6 +15,19 @@ navigation:
     - page: Introduction
       path: README.md
 
+    - section: Overview
+      contents:
+        - page: What is NICo?
+          path: overview/what-is-nico.md
+        - page: Key Capabilities
+          path: overview/capabilities.md
+        - page: Operational Principles
+          path: overview/operational-principles.md
+        - page: Day 0 / Day 1 / Day 2 Lifecycle
+          path: overview/lifecycle.md
+        - page: What NICo Does Not Cover
+          path: overview/what-nico-does-not-cover.md
+
     - section: Getting Started
       contents:
         - page: Site Reference Architecture
