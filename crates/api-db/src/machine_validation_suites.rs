@@ -173,76 +173,93 @@ fn push_update<'a>(
 
     let mut n = 0usize;
     if let Some(ref v) = payload.name {
-        sets.push("name = ").push_bind(v);
+        sets.push("name = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.description {
-        sets.push("description = ").push_bind(v);
+        sets.push("description = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if !payload.contexts.is_empty() {
-        sets.push("contexts = ").push_bind(&payload.contexts);
+        sets.push("contexts = ");
+        sets.push_bind_unseparated(&payload.contexts);
         n += 1;
     }
     if let Some(ref v) = payload.img_name {
-        sets.push("img_name = ").push_bind(v);
+        sets.push("img_name = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(v) = payload.execute_in_host {
-        sets.push("execute_in_host = ").push_bind(v);
+        sets.push("execute_in_host = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.container_arg {
-        sets.push("container_arg = ").push_bind(v);
+        sets.push("container_arg = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.command {
-        sets.push("command = ").push_bind(v);
+        sets.push("command = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.args {
-        sets.push("args = ").push_bind(v);
+        sets.push("args = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.extra_err_file {
-        sets.push("extra_err_file = ").push_bind(v);
+        sets.push("extra_err_file = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.external_config_file {
-        sets.push("external_config_file = ").push_bind(v);
+        sets.push("external_config_file = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.pre_condition {
-        sets.push("pre_condition = ").push_bind(v);
+        sets.push("pre_condition = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(v) = payload.timeout {
-        sets.push("timeout = ").push_bind(v);
+        sets.push("timeout = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if let Some(ref v) = payload.extra_output_file {
-        sets.push("extra_output_file = ").push_bind(v);
+        sets.push("extra_output_file = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if !payload.supported_platforms.is_empty() {
-        sets.push("supported_platforms = ")
-            .push_bind(&payload.supported_platforms);
+        sets.push("supported_platforms = ");
+        sets.push_bind_unseparated(&payload.supported_platforms);
         n += 1;
     }
     if let Some(v) = payload.verified {
-        sets.push("verified = ").push_bind(v);
+        sets.push("verified = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
     if !payload.custom_tags.is_empty() {
-        sets.push("custom_tags = ").push_bind(&payload.custom_tags);
+        sets.push("custom_tags = ");
+        sets.push_bind_unseparated(&payload.custom_tags);
         n += 1;
     }
     if !payload.components.is_empty() {
-        sets.push("components = ").push_bind(&payload.components);
+        sets.push("components = ");
+        sets.push_bind_unseparated(&payload.components);
         n += 1;
     }
     if let Some(v) = payload.is_enabled {
-        sets.push("is_enabled = ").push_bind(v);
+        sets.push("is_enabled = ");
+        sets.push_bind_unseparated(v);
         n += 1;
     }
 
@@ -253,10 +270,12 @@ fn push_update<'a>(
     }
 
     if payload.verified.is_none() {
-        sets.push("verified = ").push_bind(false);
+        sets.push("verified = ");
+        sets.push_bind_unseparated(false);
     }
 
-    sets.push("modified_by = ").push_bind(modified_by);
+    sets.push("modified_by = ");
+    sets.push_bind_unseparated(modified_by);
     qb.push(" WHERE test_id = ")
         .push_bind(test_id)
         .push(" AND version = ")
