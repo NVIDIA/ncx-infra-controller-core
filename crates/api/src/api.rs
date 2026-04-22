@@ -1441,6 +1441,13 @@ impl Forge for Api {
         crate::handlers::expected_machine::get_linked(self, request).await
     }
 
+    async fn get_all_unexpected_machines(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<rpc::UnexpectedMachineList>, Status> {
+        crate::handlers::expected_machine::get_all_unexpected_machines(self, request).await
+    }
+
     async fn delete_all_expected_machines(
         &self,
         request: Request<()>,
