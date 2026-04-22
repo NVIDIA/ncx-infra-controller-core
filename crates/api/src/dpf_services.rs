@@ -303,10 +303,9 @@ pub fn dpu_otel_agent_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefi
 }
 
 /// FMDS Service
-pub fn fmds_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinition
-{
+pub fn fmds_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinition {
     ServiceDefinition {
-        helm_values:  Some(serde_json::json!({
+        helm_values: Some(serde_json::json!({
             "image": {
                 "repository": format!("{}/{}", reg.carbide_image_registry,
                     FMDS_SERVICE_IMAGE_NAME),
@@ -335,7 +334,6 @@ pub fn fmds_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinition
             FMDS_SERVICE_HELM_NAME,
             FMDS_SERVICE_HELM_VERSION,
         )
-
     }
 }
 
