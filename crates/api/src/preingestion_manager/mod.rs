@@ -983,7 +983,11 @@ impl PreingestionManagerStatic {
                                     );
                                     return Ok(());
                                 }
-                                let delay = time::Duration::seconds(60);
+                                let delay = if *power_drains_needed < 1000 {
+                                    time::Duration::seconds(60)
+                                } else {
+                                    time::Duration::seconds(0)
+                                };
                                 db.with_txn(|txn| {
                                     db::explored_endpoints::set_preingestion_reset_for_new_firmware(
                                         endpoint.address,
