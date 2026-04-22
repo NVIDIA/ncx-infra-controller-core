@@ -32,7 +32,8 @@ use crate::crds::dpudeployments_generated::{
     DpuDeploymentServiceChainsSwitches, DpuDeploymentServiceChainsSwitchesPorts,
     DpuDeploymentServiceChainsSwitchesPortsService,
     DpuDeploymentServiceChainsSwitchesPortsServiceInterface,
-    DpuDeploymentServiceChainsUpgradePolicy, DpuDeploymentServices, DpuDeploymentSpec,
+    DpuDeploymentServiceChainsUpgradePolicy, DpuDeploymentServices,
+    DpuDeploymentServicesDependsOn, DpuDeploymentSpec,
 };
 use crate::crds::dpudevices_generated::{DPUDevice, DpuDeviceSpec};
 use crate::crds::dpunodes_generated::{
@@ -73,7 +74,7 @@ use crate::repository::{
     K8sConfigRepository,
 };
 use crate::types::{
-    BmcPasswordProvider, ConfigPortsServiceType, DHCP_SERVER_SERVICE_NAME, DOCA_HBN_SERVICE_NAME,
+    BmcPasswordProvider, ConfigPortsServiceType, DHCP_SERVER_SERVICE_NAME, DOCA_HBN_SERVICE_NAME, FMDS_SERVICE_NAME,
     DpuDeviceInfo, DpuNodeInfo, DpuPhase, DpuServiceInterfaceTemplateDefinition,
     DpuServiceInterfaceTemplateType, InitDpfResourcesConfig, ServiceConfigPortProtocol,
     ServiceDefinition, ServiceNADResourceType,
@@ -638,7 +639,14 @@ pub fn build_deployment<L: ResourceLabeler>(
             (
                 svc.name.clone(),
                 DpuDeploymentServices {
-                    depends_on: None,
+                    depends_on: if svc.name == "carbide-dpu-agent" {
+                        Some(vec![
+                            DpuDeploymentServicesDependsOn { name: DHCP_SERVER_SERVICE_NAME.to_string() },
+                            DpuDeploymentServicesDependsOn { name: FMDS_SERVICE_NAME.to_string() },
+                        ])
+                    } else {
+                        None
+                    },
                     service_configuration: Some(svc.name.clone()),
                     service_template: Some(svc.name.clone()),
                 },
