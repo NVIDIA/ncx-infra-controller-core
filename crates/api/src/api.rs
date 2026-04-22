@@ -1441,6 +1441,13 @@ impl Forge for Api {
         crate::handlers::expected_machine::get_linked(self, request).await
     }
 
+    async fn get_all_unexpected_machines(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<rpc::UnexpectedMachineList>, Status> {
+        crate::handlers::expected_machine::get_all_unexpected_machines(self, request).await
+    }
+
     async fn delete_all_expected_machines(
         &self,
         request: Request<()>,
@@ -2200,6 +2207,13 @@ impl Forge for Api {
         request: Request<rpc::MachineValidationOnDemandRequest>,
     ) -> Result<Response<rpc::MachineValidationOnDemandResponse>, Status> {
         crate::handlers::machine_validation::on_demand_machine_validation(self, request).await
+    }
+
+    async fn on_demand_rack_maintenance(
+        &self,
+        request: Request<rpc::RackMaintenanceOnDemandRequest>,
+    ) -> Result<Response<rpc::RackMaintenanceOnDemandResponse>, Status> {
+        crate::handlers::rack::on_demand_rack_maintenance(self, request).await
     }
 
     async fn tpm_add_ca_cert(
