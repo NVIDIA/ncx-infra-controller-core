@@ -15,16 +15,20 @@
  * limitations under the License.
  */
 
+mod config;
+mod errors;
+mod metrics;
+
 use std::collections::HashMap;
 use std::default::Default;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use carbide_firmware::FirmwareConfig;
 use carbide_redfish::libredfish::{RedfishClientCreationError, RedfishClientPool};
 use carbide_site_explorer::EndpointExplorer;
 use chrono::{DateTime, Utc};
+pub use config::PreingestionManagerConfig;
 use db::work_lock_manager::WorkLockManagerHandle;
 use db::{DatabaseError, WithTransaction};
 use forge_secrets::credentials::{BmcCredentialType, CredentialKey, CredentialReader, Credentials};
@@ -45,12 +49,9 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use utils::periodic_timer::PeriodicTimer;
 
-use crate::cfg::file::{CarbideConfig, FirmwareGlobal};
 use crate::firmware_downloader::FirmwareDownloader;
+use crate::preingestion_manager::errors::{PreingestionManagerError, PreingestionManagerResult};
 use crate::preingestion_manager::metrics::PreingestionMetrics;
-use crate::{CarbideError, CarbideResult};
-
-mod metrics;
 
 const NOT_FOUND: u16 = 404;
 
@@ -76,14 +77,10 @@ pub struct PreingestionManager {
 
 #[derive(Clone)]
 struct PreingestionManagerStatic {
-    run_interval: Duration,
-    firmware_global: FirmwareGlobal,
-    host_info: FirmwareConfig,
+    config: PreingestionManagerConfig,
     redfish_client_pool: Arc<dyn RedfishClientPool>,
     downloader: FirmwareDownloader,
     upload_limiter: Arc<Semaphore>,
-    concurrency_limit: usize,
-    hgx_bmc_gpu_reboot_delay: Duration,
     upgrade_script_state: Arc<UpdateScriptManager>,
     credential_reader: Option<Arc<dyn CredentialReader>>,
     work_lock_manager_handle: WorkLockManagerHandle,
@@ -101,7 +98,7 @@ impl PreingestionManager {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         database_connection: sqlx::PgPool,
-        config: Arc<CarbideConfig>,
+        config: PreingestionManagerConfig,
         redfish_client_pool: Arc<dyn RedfishClientPool>,
         meter: Meter,
         downloader: Option<FirmwareDownloader>,
@@ -111,40 +108,23 @@ impl PreingestionManager {
         endpoint_explorer: Arc<dyn EndpointExplorer>,
     ) -> PreingestionManager {
         let hold_period = config
-            .firmware_global
             .run_interval
-            .to_std()
-            .unwrap_or(std::time::Duration::from_secs(30))
             .saturating_add(std::time::Duration::from_secs(60));
 
         let metric_holder = Arc::new(metrics::MetricHolder::new(meter, hold_period));
 
         PreingestionManager {
             static_info: Arc::new(PreingestionManagerStatic {
-                run_interval: config
-                    .firmware_global
-                    .run_interval
-                    .to_std()
-                    .unwrap_or(Duration::from_secs(30)),
-                firmware_global: config.firmware_global.clone(),
-                host_info: config.get_firmware_config(),
                 redfish_client_pool,
                 downloader: downloader.unwrap_or_default(),
                 upload_limiter: upload_limiter.unwrap_or(Arc::new(Semaphore::new(5))),
-                concurrency_limit: config.firmware_global.concurrency_limit,
                 upgrade_script_state: Default::default(),
                 credential_reader,
-                hgx_bmc_gpu_reboot_delay: config
-                    .firmware_global
-                    .hgx_bmc_gpu_reboot_delay
-                    .to_std()
-                    .unwrap_or(Duration::from_secs(30)),
                 work_lock_manager_handle,
                 endpoint_explorer,
                 bfb_copy_state: Default::default(),
-                bfb_copy_limiter: Arc::new(Semaphore::new(
-                    config.firmware_global.max_concurrent_bfb_copies,
-                )),
+                bfb_copy_limiter: Arc::new(Semaphore::new(config.max_concurrent_bfb_copies)),
+                config,
             }),
             metric_holder,
             database_connection,
@@ -164,7 +144,7 @@ impl PreingestionManager {
     }
 
     async fn run(&self, cancel_token: CancellationToken) {
-        let timer = PeriodicTimer::new(self.static_info.run_interval);
+        let timer = PeriodicTimer::new(self.static_info.config.run_interval);
         loop {
             let tick = timer.tick();
             let res = self.run_single_iteration().await;
@@ -187,7 +167,7 @@ impl PreingestionManager {
 
     /// run_single_iteration runs a single iteration of the state machine across all explored endpoints in the preingestion state.
     /// Returns true if we stopped early due to a timeout.
-    pub async fn run_single_iteration(&self) -> CarbideResult<()> {
+    pub async fn run_single_iteration(&self) -> PreingestionManagerResult<()> {
         let mut metrics = PreingestionMetrics::new();
         let db = self.database_connection.clone();
 
@@ -230,7 +210,7 @@ impl PreingestionManager {
         // Limit the number of concurrent preingestion tasks.
         // This does not affect how many endpoints are done in a single iteration, it just avoids opening
         // too many simultaneous postgres transactions, which can cause things to deadlock.
-        let limit_sem = Arc::new(Semaphore::new(self.static_info.concurrency_limit));
+        let limit_sem = Arc::new(Semaphore::new(self.static_info.config.concurrency_limit));
         let mut task_set = JoinSet::new();
 
         for endpoint in items.into_iter() {
@@ -292,7 +272,7 @@ async fn one_endpoint(
     db: &PgPool,
     endpoint: &ExploredEndpoint,
     static_info: Arc<PreingestionManagerStatic>,
-) -> CarbideResult<EndpointResult> {
+) -> PreingestionManagerResult<EndpointResult> {
     tracing::debug!("Preingestion on endpoint {:?}", endpoint);
 
     // Main state machine match.
@@ -317,7 +297,7 @@ async fn one_endpoint(
                         .await?
                 }
                 Err(e) => {
-                    if let CarbideError::Internal { message } = e {
+                    if let PreingestionManagerError::Internal { message } = e {
                         tracing::error!(
                             "{} internal error checking BMC time sync: {message}, failing preingestion",
                             endpoint.address
@@ -477,7 +457,7 @@ impl PreingestionManagerStatic {
             }
         };
         let model = endpoint.report.model()?;
-        self.host_info.create_snapshot().find(vendor, &model)
+        self.config.firmware.create_snapshot().find(vendor, &model)
     }
 
     /// check_firmware_versions_below_preingestion will check if we actually need to do firmware upgrades before
@@ -486,7 +466,7 @@ impl PreingestionManagerStatic {
         &self,
         db: &PgPool,
         endpoint: &ExploredEndpoint,
-    ) -> CarbideResult<bool> {
+    ) -> PreingestionManagerResult<bool> {
         // First, we need to check if it's appropriate to upgrade at this point or wait until later.
         let fw_info = match self.find_fw_info_for_host(endpoint) {
             None => {
@@ -555,7 +535,7 @@ impl PreingestionManagerStatic {
         db: &PgPool,
         endpoint: &ExploredEndpoint,
         repeat: bool,
-    ) -> CarbideResult<bool> {
+    ) -> PreingestionManagerResult<bool> {
         if endpoint.waiting_for_explorer_refresh {
             tracing::debug!(
                 "start_firmware_uploads_or_continue {}: Waiting for explorer refresh",
@@ -567,7 +547,7 @@ impl PreingestionManagerStatic {
 
         // Determine if auto updates should be enabled.
         // We can't check machine IDs here as they may not be available yet, so use the global value only.
-        if !self.firmware_global.autoupdate {
+        if !self.config.autoupdate {
             tracing::debug!(
                 "start_firmware_uploads_or_continue {}: Auto updates disabled",
                 endpoint.address
@@ -691,7 +671,7 @@ impl PreingestionManagerStatic {
         &self,
         db: &PgPool,
         args: &InUpgradeFirmwareWaitArgs<'_>,
-    ) -> CarbideResult<()> {
+    ) -> PreingestionManagerResult<()> {
         let (endpoint, task_id, final_version, upgrade_type, power_drains_needed, firmware_number) = (
             args.endpoint,
             args.task_id,
@@ -706,8 +686,10 @@ impl PreingestionManagerStatic {
             .create_client_for_ingested_host(endpoint.address, None, db)
             .await
             .map_err(|e| match e {
-                RedfishClientCreationError::RedfishError(e) => CarbideError::RedfishError(e),
-                _ => CarbideError::internal(format!("{e}")),
+                RedfishClientCreationError::RedfishError(e) => {
+                    PreingestionManagerError::RedfishError(e)
+                }
+                _ => PreingestionManagerError::internal(format!("{e}")),
             }) {
             Ok(redfish_client) => redfish_client,
             Err(e) => {
@@ -886,7 +868,7 @@ impl PreingestionManagerStatic {
         db: &PgPool,
         endpoint: &ExploredEndpoint,
         state: &PreingestionState,
-    ) -> CarbideResult<()> {
+    ) -> PreingestionManagerResult<()> {
         let (
             final_version,
             upgrade_type,
@@ -908,7 +890,7 @@ impl PreingestionManagerStatic {
                 last_power_drain_operation,
             ),
             _ => {
-                return Err(CarbideError::InvalidArgument(
+                return Err(PreingestionManagerError::InvalidArgument(
                     "Wrong enum in_reset_for_new_firmware".to_string(),
                 ));
             }
@@ -919,8 +901,10 @@ impl PreingestionManagerStatic {
             .create_client_for_ingested_host(endpoint.address, None, db)
             .await
             .map_err(|e| match e {
-                RedfishClientCreationError::RedfishError(e) => CarbideError::RedfishError(e),
-                _ => CarbideError::internal(format!("{e}")),
+                RedfishClientCreationError::RedfishError(e) => {
+                    PreingestionManagerError::RedfishError(e)
+                }
+                _ => PreingestionManagerError::internal(format!("{e}")),
             }) {
             Ok(redfish_client) => redfish_client,
             Err(e) => {
@@ -988,6 +972,51 @@ impl PreingestionManagerStatic {
                 Some(PowerDrainState::Off) => {
                     if endpoint.report.vendor.unwrap_or_default().is_lenovo() {
                         tracing::info!("Doing powercycle now for {}", &endpoint.address);
+                        match redfish_client.get_power_state().await {
+                            Ok(power_state) if power_state != PowerState::Off => {
+                                tracing::warn!(
+                                    address = %endpoint.address,
+                                    %power_state,
+                                    "ACPowercycle requires chassis to be Off, forcing off first"
+                                );
+                                if let Err(e) =
+                                    redfish_client.power(SystemPowerControl::ForceOff).await
+                                {
+                                    tracing::error!(
+                                        "Failed to force off {}: {e}",
+                                        &endpoint.address
+                                    );
+                                    return Ok(());
+                                }
+                                let delay = if *power_drains_needed < 1000 {
+                                    time::Duration::seconds(60)
+                                } else {
+                                    time::Duration::seconds(0)
+                                };
+                                db.with_txn(|txn| {
+                                    db::explored_endpoints::set_preingestion_reset_for_new_firmware(
+                                        endpoint.address,
+                                        final_version,
+                                        upgrade_type,
+                                        Some(*power_drains_needed),
+                                        Some(delay),
+                                        Some(PowerDrainState::Off),
+                                        txn,
+                                    )
+                                    .boxed()
+                                })
+                                .await??;
+                                return Ok(());
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to get power state for {}: {e}",
+                                    &endpoint.address
+                                );
+                                return Ok(());
+                            }
+                        }
                         if let Err(e) = redfish_client.power(SystemPowerControl::ACPowercycle).await
                         {
                             tracing::error!("Failed to power cycle {}: {e}", &endpoint.address);
@@ -1104,7 +1133,7 @@ impl PreingestionManagerStatic {
                 tracing::error!("Failed to power off {}: {e}", &endpoint.address);
                 return Ok(());
             }
-            tokio::time::sleep(self.hgx_bmc_gpu_reboot_delay).await;
+            tokio::time::sleep(self.config.hgx_bmc_gpu_reboot_delay).await;
             if let Err(e) = redfish_client.power(SystemPowerControl::On).await {
                 tracing::error!("Failed to power on {}: {e}", &endpoint.address);
                 return Ok(());
@@ -1159,12 +1188,12 @@ impl PreingestionManagerStatic {
         final_version: &str,
         upgrade_type: &FirmwareComponentType,
         previous_reset_time: &Option<i64>,
-    ) -> CarbideResult<()> {
+    ) -> PreingestionManagerResult<()> {
         if let Some(fw_info) = self.find_fw_info_for_host(endpoint) {
             if let Some(current_version) = endpoint.find_version(&fw_info, *upgrade_type) {
                 if current_version != final_version {
                     // Still not reporting the new version.
-                    if !self.firmware_global.no_reset_retries
+                    if !self.config.no_reset_retries
                         && let Some(previous_reset_time) = previous_reset_time
                         && previous_reset_time + 30 * 60 <= Utc::now().timestamp()
                     {
@@ -1418,7 +1447,7 @@ impl PreingestionManagerStatic {
         endpoint: &ExploredEndpoint,
         phase: &TimeSyncResetPhase,
         last_time: Option<&DateTime<Utc>>,
-    ) -> CarbideResult<bool> {
+    ) -> PreingestionManagerResult<bool> {
         let redfish_client = match self
             .redfish_client_pool
             .create_client_for_ingested_host(endpoint.address, None, db)
@@ -1435,7 +1464,7 @@ impl PreingestionManagerStatic {
             TimeSyncResetPhase::Start => {
                 if let Err(e) = redfish_client.set_utc_timezone().await {
                     tracing::error!("Could not set UTC timezone on {}: {e}", endpoint.address);
-                    return Err(CarbideError::RedfishError(e));
+                    return Err(PreingestionManagerError::RedfishError(e));
                 }
                 if !self
                     .execute_power_off_and_bmc_reset(redfish_client.as_ref(), endpoint)
@@ -1515,7 +1544,7 @@ impl PreingestionManagerStatic {
                         Ok(false)
                     }
                     Err(e) => {
-                        if let CarbideError::Internal { message } = e {
+                        if let PreingestionManagerError::Internal { message } = e {
                             // Error checking time sync after reset, fail now
                             tracing::error!(
                                 "{} internal error checking BMC time sync after reset: {message}, failing preingestion",
@@ -1698,15 +1727,17 @@ impl PreingestionManagerStatic {
         &self,
         db: &PgPool,
         endpoint: &ExploredEndpoint,
-    ) -> CarbideResult<bool> {
+    ) -> PreingestionManagerResult<bool> {
         tracing::debug!("Checking BMC time sync for {:?}", endpoint);
         let redfish_client = match self
             .redfish_client_pool
             .create_client_for_ingested_host(endpoint.address, None, db)
             .await
             .map_err(|e| match e {
-                RedfishClientCreationError::RedfishError(e) => CarbideError::RedfishError(e),
-                _ => CarbideError::internal(format!("{e}")),
+                RedfishClientCreationError::RedfishError(e) => {
+                    PreingestionManagerError::RedfishError(e)
+                }
+                _ => PreingestionManagerError::internal(format!("{e}")),
             }) {
             Ok(redfish_client) => redfish_client,
             Err(e) => {
@@ -1718,12 +1749,14 @@ impl PreingestionManagerStatic {
         let bmc_time = match redfish_client
             .get_manager()
             .await
-            .map_err(CarbideError::RedfishError)?
+            .map_err(PreingestionManagerError::RedfishError)?
             .date_time
         {
             Some(time) => time,
             None => {
-                return Err(CarbideError::internal("Failed to get BMC time".to_string()));
+                return Err(PreingestionManagerError::internal(
+                    "Failed to get BMC time".to_string(),
+                ));
             }
         };
 
