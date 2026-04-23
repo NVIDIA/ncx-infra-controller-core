@@ -154,17 +154,6 @@ pub fn get_health_report(template: HealthReportTemplates, message: Option<String
                 HealthAlertClassification::suppress_external_alerting(),
             ];
         }
-        // Manual hold: blocks ReleaseInstance until removed (merge source `prevent-deletion`).
-        HealthReportTemplates::PreventDeletion => {
-            report.source = "prevent-deletion".to_string();
-            report.alerts[0].id = HealthProbeId::from_str("PreventDeletion")
-                .expect("PreventDeletion is a valid non-empty HealthProbeId");
-            report.alerts[0].target = Some("prevent-deletion".to_string());
-            report.alerts[0].classifications = vec![
-                HealthAlertClassification::prevent_deletion(),
-                HealthAlertClassification::suppress_external_alerting(),
-            ];
-        }
     }
 
     report
@@ -354,53 +343,6 @@ mod tests {
                 .classifications
                 .contains(&HealthAlertClassification::prevent_deletion())
         );
-
-        let prevent_deletion = get_health_report(
-            HealthReportTemplates::PreventDeletion,
-            Some("test".to_string()),
-        );
-        assert!(
-            prevent_deletion.alerts[0]
-                .classifications
-                .contains(&HealthAlertClassification::suppress_external_alerting())
-        );
-    }
-
-    #[test]
-    fn test_prevent_deletion_template() {
-        let report = get_health_report(
-            HealthReportTemplates::PreventDeletion,
-            Some("Hold: pending vendor ack".to_string()),
-        );
-
-        assert_eq!(report.source, "prevent-deletion");
-        assert_eq!(report.alerts.len(), 1);
-        let alert = &report.alerts[0];
-        assert_eq!(
-            alert.id,
-            HealthProbeId::from_str("PreventDeletion").unwrap()
-        );
-        assert_eq!(alert.target, Some("prevent-deletion".to_string()));
-        assert_eq!(alert.message, "Hold: pending vendor ack");
-        assert!(alert.tenant_message.is_none());
-        assert_eq!(alert.classifications.len(), 2);
-        assert!(
-            alert
-                .classifications
-                .contains(&HealthAlertClassification::prevent_deletion())
-        );
-        assert!(
-            alert
-                .classifications
-                .contains(&HealthAlertClassification::suppress_external_alerting())
-        );
-    }
-
-    #[test]
-    fn test_prevent_deletion_template_with_empty_message() {
-        let report = get_health_report(HealthReportTemplates::PreventDeletion, None);
-        assert_eq!(report.source, "prevent-deletion");
-        assert_eq!(report.alerts[0].message, "");
     }
 
     #[test]

@@ -327,9 +327,5 @@ fn health_override_templates_value_enum() {
         HealthReportTemplates::from_str("request-online-repair", false),
         Ok(HealthReportTemplates::RequestOnlineRepair)
     ));
-    assert!(matches!(
-        HealthReportTemplates::from_str("prevent-deletion", false),
-        Ok(HealthReportTemplates::PreventDeletion)
-    ));
     assert!(HealthReportTemplates::from_str("invalid", false).is_err());
 }

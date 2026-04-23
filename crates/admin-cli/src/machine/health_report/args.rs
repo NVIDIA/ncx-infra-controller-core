@@ -65,6 +65,4 @@ pub enum HealthReportTemplates {
     TenantReportedIssue,
     RequestOnlineRepair,
     RequestRepair,
-    /// Blocks instance release (not admin force-delete) while this classification is on aggregate health.
-    PreventDeletion,
 }
