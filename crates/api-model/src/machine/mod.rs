@@ -1720,6 +1720,11 @@ pub enum HostReprovisionState {
         component_type: FirmwareComponentType,
         target_version: String,
         started_at: DateTime<Utc>,
+        /// Absolute deadline; the API declares failure past this time.
+        /// Derived from scout's execution/download timeouts plus slack.
+        deadline: DateTime<Utc>,
+        /// Serialized FirmwareUpgradeTask JSON for the scout
+        task_json: String,
         #[serde(default)]
         result: Option<ScoutUpgradeResult>,
     },

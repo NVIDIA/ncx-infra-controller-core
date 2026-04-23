@@ -6692,9 +6692,64 @@ impl HostUpgradeState {
                 self.host_new_firmware_reported_wait(state, ctx, details, machine_id, scenario)
                     .await
             }
-            HostReprovisionState::WaitingForScoutUpgrade { .. } => {
-                // TODO: will be implemented in a follow-up (@jrakhmonov)
-                Ok(StateHandlerOutcome::do_nothing())
+            HostReprovisionState::WaitingForScoutUpgrade {
+                component_type,
+                deadline,
+                result,
+                ..
+            } => {
+                if let Some(result) = result {
+                    if result.success {
+                        tracing::info!(
+                            "Scout firmware upgrade succeeded for {}",
+                            state.host_snapshot.id
+                        );
+                        Ok(StateHandlerOutcome::transition(scenario.actual_new_state(
+                            HostReprovisionState::CheckingFirmwareRepeatV2 {
+                                firmware_type: None,
+                                firmware_number: None,
+                            },
+                            state.managed_state.get_host_repro_retry_count(),
+                        )))
+                    } else {
+                        let reason = if result.error.is_empty() {
+                            format!("Scout upgrade failed with exit code {}", result.exit_code)
+                        } else {
+                            result.error.clone()
+                        };
+                        tracing::warn!(
+                            "Scout firmware upgrade failed for {}: {}",
+                            state.host_snapshot.id,
+                            reason
+                        );
+                        Ok(StateHandlerOutcome::transition(scenario.actual_new_state(
+                            HostReprovisionState::FailedFirmwareUpgrade {
+                                firmware_type: *component_type,
+                                report_time: Some(Utc::now()),
+                                reason: Some(reason),
+                            },
+                            state.managed_state.get_host_repro_retry_count(),
+                        )))
+                    }
+                } else if Utc::now() > *deadline {
+                    tracing::warn!(
+                        "Scout firmware upgrade timed out for {} (deadline {})",
+                        state.host_snapshot.id,
+                        deadline,
+                    );
+                    Ok(StateHandlerOutcome::transition(scenario.actual_new_state(
+                        HostReprovisionState::FailedFirmwareUpgrade {
+                            firmware_type: *component_type,
+                            report_time: Some(Utc::now()),
+                            reason: Some(format!(
+                                "Scout firmware upgrade timed out (deadline {deadline})"
+                            )),
+                        },
+                        state.managed_state.get_host_repro_retry_count(),
+                    )))
+                } else {
+                    Ok(StateHandlerOutcome::do_nothing())
+                }
             }
             HostReprovisionState::FailedFirmwareUpgrade { report_time, .. } => {
                 // A special case in Rackfirmware upgrade to handle FailedFirmwareUpgrade
@@ -6963,6 +7018,61 @@ impl HostUpgradeState {
             if let Some(to_install) =
                 need_host_fw_upgrade(&explored_endpoint, &fw_info, firmware_type)
             {
+                if let Some(scout_config) = &to_install.scout {
+                    let firmware_dir = ctx
+                        .services
+                        .site_config
+                        .firmware_global
+                        .firmware_directory
+                        .to_string_lossy();
+                    const PXE_URL: &str = "http://carbide-pxe.forge:8080";
+                    let to_pxe_url = |path: &str| -> String {
+                        let relative = path
+                            .strip_prefix(firmware_dir.as_ref())
+                            .unwrap_or(path)
+                            .trim_start_matches('/');
+                        format!("{PXE_URL}/public/firmware/{relative}")
+                    };
+
+                    let task = serde_json::json!({
+                        "component_type": firmware_type.to_string(),
+                        "target_version": to_install.version,
+                        "script": {
+                            "url": to_pxe_url(&scout_config.script.filename),
+                            "sha256": scout_config.script.sha256,
+                        },
+                        "execution_timeout_seconds": scout_config.execution_timeout_seconds,
+                        "artifact_download_timeout_seconds": scout_config.artifact_download_timeout_seconds,
+                        "file_artifacts": to_install.files.iter().map(|f| {
+                            serde_json::json!({
+                                "url": to_pxe_url(&f.filename),
+                                "sha256": f.sha256,
+                            })
+                        }).collect::<Vec<_>>(),
+                    });
+
+                    // Scout respects its own execution/download timeouts; slack covers clock
+                    // skew and the round-trip for the report RPC to reach us.
+                    const DEADLINE_SLACK: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
+                    let started_at = Utc::now();
+                    let deadline = started_at
+                        + chrono::TimeDelta::seconds(
+                            i64::from(scout_config.execution_timeout_seconds)
+                                + i64::from(scout_config.artifact_download_timeout_seconds),
+                        )
+                        + DEADLINE_SLACK;
+                    return Ok(StateHandlerOutcome::transition(scenario.actual_new_state(
+                        HostReprovisionState::WaitingForScoutUpgrade {
+                            component_type: firmware_type,
+                            target_version: to_install.version,
+                            started_at,
+                            deadline,
+                            task_json: task.to_string(),
+                            result: None,
+                        },
+                        state.managed_state.get_host_repro_retry_count(),
+                    )));
+                }
                 if to_install.script.is_some() {
                     return self
                         .by_script(to_install, state, explored_endpoint, scenario)

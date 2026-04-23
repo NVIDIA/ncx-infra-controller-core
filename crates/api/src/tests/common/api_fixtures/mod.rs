@@ -86,6 +86,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tonic::Request;
 use tracing_subscriber::EnvFilter;
+use utils::test_support::test_meter::TestMeter;
 
 use crate::api::Api;
 use crate::api::metrics::ApiMetricsEmitter;
@@ -140,7 +141,6 @@ use crate::tests::common::api_fixtures::network_segment::{
 };
 use crate::tests::common::rpc_builder::VpcCreationRequest;
 use crate::tests::common::test_certificates::TestCertificateProvider;
-use crate::tests::common::test_meter::TestMeter;
 
 pub mod dpu;
 pub mod endpoint_explorer;

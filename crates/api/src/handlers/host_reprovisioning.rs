@@ -159,30 +159,37 @@ pub async fn report_scout_firmware_upgrade_status(
     let (machine, mut txn) = api.load_machine(&machine_id, Default::default()).await?;
 
     // Verify machine is in WaitingForScoutUpgrade state
-    let (component_type, target_version, started_at, retry_count) = match machine.current_state() {
-        ManagedHostState::HostReprovision {
-            reprovision_state:
-                HostReprovisionState::WaitingForScoutUpgrade {
-                    component_type,
-                    target_version,
-                    started_at,
-                    ..
-                },
-            retry_count,
-        } => (
-            *component_type,
-            target_version.clone(),
-            *started_at,
-            *retry_count,
-        ),
-        _ => {
-            return Err(CarbideError::FailedPrecondition(format!(
-                "Machine {machine_id} is not in WaitingForScoutUpgrade state"
-            ))
-            .into());
-        }
-    };
+    let (component_type, target_version, started_at, deadline, task_json, retry_count) =
+        match machine.current_state() {
+            ManagedHostState::HostReprovision {
+                reprovision_state:
+                    HostReprovisionState::WaitingForScoutUpgrade {
+                        component_type,
+                        target_version,
+                        started_at,
+                        deadline,
+                        task_json,
+                        ..
+                    },
+                retry_count,
+            } => (
+                *component_type,
+                target_version.clone(),
+                *started_at,
+                *deadline,
+                task_json.clone(),
+                *retry_count,
+            ),
+            _ => {
+                return Err(CarbideError::FailedPrecondition(format!(
+                    "Machine {machine_id} is not in WaitingForScoutUpgrade state"
+                ))
+                .into());
+            }
+        };
 
+    // Cap stdout/stderr/error so the JSON state row stays small; full output
+    // is available in the scout logs if an operator needs to dig deeper.
     const MAX_STORED_OUTPUT_SIZE: usize = 1500;
 
     let new_state = ManagedHostState::HostReprovision {
@@ -190,6 +197,8 @@ pub async fn report_scout_firmware_upgrade_status(
             component_type,
             target_version,
             started_at,
+            deadline,
+            task_json,
             result: Some(ScoutUpgradeResult {
                 success: req.success,
                 exit_code: req.exit_code,
