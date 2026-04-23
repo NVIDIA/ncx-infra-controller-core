@@ -431,10 +431,7 @@ struct MachineDetail<'a> {
     id: String,
     host_id: String,
     rack_id: String,
-    state_version: String,
-    time_in_state: String,
-    state_display: super::StateDisplay,
-    state_sla_detail: super::StateSlaDetail,
+    lifecycle_detail: super::LifecycleDetail,
     last_reboot: String,
     machine_type: String,
     is_host: bool,
@@ -644,34 +641,12 @@ impl From<forgerpc::Machine> for MachineDetail<'_> {
         MachineDetail {
             id: machine_id.clone(),
             rack_id: m.rack_id.map(|id| id.to_string()).unwrap_or_default(),
-            time_in_state: config_version::since_state_change_humanized(&m.state_version),
-            state_version: m.state_version,
-            state_display: super::StateDisplay {
-                state: m.state,
-                time_in_state_above_sla: m
-                    .state_sla
-                    .as_ref()
-                    .map(|sla| sla.time_in_state_above_sla)
-                    .unwrap_or_default(),
-            },
-            state_sla_detail: super::StateSlaDetail {
-                state_sla: m
-                    .state_sla
-                    .as_ref()
-                    .and_then(|sla| sla.sla)
-                    .map(|sla| {
-                        config_version::format_duration(
-                            chrono::TimeDelta::try_from(sla).unwrap_or(chrono::TimeDelta::MAX),
-                        )
-                    })
-                    .unwrap_or_default(),
-                time_in_state_above_sla: m
-                    .state_sla
-                    .as_ref()
-                    .map(|sla| sla.time_in_state_above_sla)
-                    .unwrap_or_default(),
-                state_reason: m.state_reason,
-            },
+            lifecycle_detail: super::LifecycleDetail::new(
+                m.state,
+                m.state_version,
+                m.state_reason,
+                m.state_sla,
+            ),
             last_reboot: to_time(m.last_reboot_time, Some(&machine_id))
                 .unwrap_or("N/A".to_string()),
             metadata_detail: super::MetadataDetail {

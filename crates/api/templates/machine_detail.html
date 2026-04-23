@@ -21,13 +21,7 @@
 		</td>
 	</tr>
 	<tr><th>Rack ID</th><td>{{ rack_id|rack_id_link|safe }}</td></tr>
-	<tr><th>State</th>
-		<td>{{ state_display|safe }}</td>
-	</tr>
-	<tr><th>State Version</th><td>{{ state_version|config_version|safe }}</td></tr>
-	<tr><th>Time in state</th><td>{{ time_in_state }}</td></tr>
 	<tr><th>Last Reboot</th><td>{{ last_reboot }}</td></tr>
-	{{ state_sla_detail|safe }}
 
 	{% if !network_config.is_empty() %}
 	<tr>
@@ -60,6 +54,8 @@
 		{% endif %}
 	{% endif %}
 </table>
+
+{{ lifecycle_detail|safe }}
 
 <h3>Metadata</h3>
 {{ metadata_detail|safe }}

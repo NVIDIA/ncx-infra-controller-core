@@ -48,10 +48,7 @@ struct RackRecord {
 #[template(path = "rack_detail.html")]
 struct RackDetail {
     id: String,
-    rack_state: String,
-    state_version: String,
-    time_in_state: String,
-    state_reason: Option<rpc::forge::ControllerStateReason>,
+    lifecycle_detail: super::LifecycleDetail,
     version: String,
     associated_machines: Vec<String>,
     associated_switches: Vec<String>,
@@ -227,19 +224,15 @@ pub async fn detail(
         }
     };
 
-    let rack_state = maybe_rack
-        .as_ref()
-        .map(|r| r.rack_state.clone())
-        .unwrap_or_default();
-
     let version = maybe_rack
         .as_ref()
         .map(|r| r.version.clone())
         .unwrap_or_default();
 
-    let time_in_state = maybe_rack
+    let lifecycle = maybe_rack
         .as_ref()
-        .map(|r| config_version::since_state_change_humanized(&r.version))
+        .and_then(|r| r.status.as_ref())
+        .and_then(|s| s.lifecycle.clone())
         .unwrap_or_default();
 
     let metadata_detail = super::MetadataDetail {
@@ -254,10 +247,7 @@ pub async fn detail(
 
     let display = RackDetail {
         id: rack_id.to_string(),
-        rack_state,
-        state_version: version.clone(),
-        time_in_state,
-        state_reason: None,
+        lifecycle_detail: lifecycle.into(),
         version,
         associated_machines,
         associated_switches,
