@@ -210,11 +210,7 @@ The BGP details can be checked on the DPU using
 sudo crictl exec -ti $(sudo crictl ps |grep doca-hbn |awk '{print $1}') vtysh -c 'show bgp summary'
 ```
 
-<<<<<<< HEAD:book/src/playbooks/stuck_objects/waiting_for_network_config.md
-<!-- TODO: Provide more details on the next steps here -->
-=======
 {/* TODO: Provide more details on the next steps here */}
->>>>>>> ba4d23d9 (Convert NICo docs to Fern generation):fern/docs/playbooks/stuck_objects/waiting_for_network_config.md
 
 ### `ServiceRunning`
 
