@@ -66,6 +66,7 @@ use crate::machine::health_override::HealthReportSources;
 use crate::machine_interface_address::InterfaceAssociationType;
 use crate::network_segment::NetworkSegmentType;
 use crate::power_manager::PowerOptions;
+use crate::state_history::StateHistoryRecord;
 
 mod slas;
 
@@ -826,8 +827,8 @@ pub struct Machine {
     // The most recent status of the nvlink GPUs.
     pub nvlink_status_observation: Option<MachineNvLinkStatusObservation>,
 
-    /// A list of [MachineStateHistory] that this machine has experienced
-    pub history: Vec<MachineStateHistory>,
+    /// A list of [StateHistoryRecord]s that this machine has experienced
+    pub history: Vec<StateHistoryRecord>,
 
     /// A list of [MachineInterfaceSnapshot]s that this machine owns
     pub interfaces: Vec<MachineInterfaceSnapshot>,
@@ -2590,25 +2591,6 @@ pub fn get_action_for_dpu_state(
             (Action::Noop, None)
         }
     })
-}
-
-/// History of Machine states for a single Machine
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MachineStateHistory {
-    /// The state that was entered
-    pub state: String,
-    // The version number associated with the state change
-    pub state_version: ConfigVersion,
-}
-
-impl From<MachineStateHistory> for rpc::MachineEvent {
-    fn from(value: MachineStateHistory) -> rpc::MachineEvent {
-        rpc::MachineEvent {
-            event: value.state,
-            version: value.state_version.version_string(),
-            time: Some(value.state_version.timestamp().into()),
-        }
-    }
 }
 
 /// Returns the SLA for the current state.

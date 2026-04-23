@@ -139,12 +139,17 @@ pub(crate) async fn find_machine_state_histories(
 
     let mut txn = api.txn_begin().await?;
 
-    let results = db::machine_state_history::find_by_machine_ids(&mut txn, &machine_ids).await?;
+    let results = db::state_history::find_by_object_ids(
+        &mut txn,
+        db::state_history::StateHistoryTableId::Machine,
+        &machine_ids,
+    )
+    .await?;
 
     let mut response = rpc::MachineStateHistories::default();
     for (machine_id, records) in results {
         response.histories.insert(
-            machine_id.to_string(),
+            machine_id,
             ::rpc::forge::MachineStateHistoryRecords {
                 records: records.into_iter().map(Into::into).collect(),
             },

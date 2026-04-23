@@ -220,14 +220,18 @@ pub async fn find_rack_state_histories(
 
     let mut txn = api.txn_begin().await?;
 
-    let results = db::rack_state_history::find_by_rack_ids(&mut txn, &rack_ids)
-        .await
-        .map_err(CarbideError::from)?;
+    let results = db::state_history::find_by_object_ids(
+        &mut txn,
+        db::state_history::StateHistoryTableId::Rack,
+        &rack_ids,
+    )
+    .await
+    .map_err(CarbideError::from)?;
 
     let mut response = rpc::StateHistories::default();
     for (rack_id, records) in results {
         response.histories.insert(
-            rack_id.to_string(),
+            rack_id,
             ::rpc::forge::StateHistoryRecords {
                 records: records.into_iter().map(Into::into).collect(),
             },

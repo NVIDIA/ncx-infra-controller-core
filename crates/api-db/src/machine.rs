@@ -194,7 +194,14 @@ pub async fn advance(
     let version = version.unwrap_or_else(|| machine.state.version.increment());
 
     // Store history of machine state changes.
-    crate::machine_state_history::persist(txn, &machine.id, state, version).await?;
+    crate::state_history::persist(
+        txn,
+        crate::state_history::StateHistoryTableId::Machine,
+        &machine.id,
+        state,
+        version,
+    )
+    .await?;
 
     let _id: (String,) = sqlx::query_as(
             "UPDATE machines SET controller_state_version=$1, controller_state=$2 WHERE id=$3 RETURNING id",
@@ -1125,8 +1132,13 @@ pub async fn try_sync_stable_id_with_current_machine_id_for_host(
     }
 
     // Update the machine state and health history to account for the rename
-    crate::machine_state_history::update_machine_ids(txn, current_machine_id, stable_machine_id)
-        .await?;
+    crate::state_history::update_object_ids(
+        txn,
+        crate::state_history::StateHistoryTableId::Machine,
+        current_machine_id,
+        stable_machine_id,
+    )
+    .await?;
     crate::health_history::update_object_ids(
         txn,
         crate::health_history::HealthHistoryTableId::Machine,

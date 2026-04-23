@@ -35,13 +35,13 @@ use crate::machine::nvlink::MachineNvLinkStatusObservation;
 use crate::machine::topology::MachineTopology;
 use crate::machine::{
     Dpf, FailureDetails, HostReprovisionRequest, Machine, MachineInterfaceSnapshot,
-    MachineLastRebootRequested, MachineStateHistory, ManagedHostState, ReprovisionRequest,
-    UpgradeDecision,
+    MachineLastRebootRequested, ManagedHostState, ReprovisionRequest, UpgradeDecision,
 };
 use crate::metadata::Metadata;
 use crate::power_manager::PowerOptions;
 use crate::rack::RackFirmwareUpgradeStatus;
 use crate::sku::SkuStatus;
+use crate::state_history::StateHistoryRecord;
 
 /// This represents the structure of a machine we get from postgres via the row_to_json or
 /// JSONB_AGG functions. Its fields need to match the column names of the machine_snapshots query
@@ -94,7 +94,7 @@ pub struct MachineSnapshotPgJson {
     pub name: String,
     pub description: String,
     #[serde(default)] // History is only brought in if the search config requested it
-    pub history: Vec<MachineStateHistory>,
+    pub history: Vec<StateHistoryRecord>,
     pub version: String,
     pub hw_sku: Option<String>,
     pub hw_sku_status: Option<SkuStatus>,
@@ -148,12 +148,9 @@ impl TryFrom<MachineSnapshotPgJson> for Machine {
         let history = value
             .history
             .into_iter()
-            .sorted_by(
-                |s1: &crate::machine::MachineStateHistory,
-                 s2: &crate::machine::MachineStateHistory| {
-                    Ord::cmp(&s1.state_version.timestamp(), &s2.state_version.timestamp())
-                },
-            )
+            .sorted_by(|s1: &StateHistoryRecord, s2: &StateHistoryRecord| {
+                Ord::cmp(&s1.state_version.timestamp(), &s2.state_version.timestamp())
+            })
             .collect();
 
         Ok(Self {
