@@ -1000,7 +1000,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mft-aarch64-deb-${{ github.run_id }}
-          path: mft-4.35.0-159-aarch64-deb/
+          path: .
 
   build-bluefield-forge-dpu-agent:
     needs:
