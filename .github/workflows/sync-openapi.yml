@@ -1,24 +1,70 @@
-name: Sync OpenAPI Specs # can be customized
-on:                               # additional custom triggers can be configured
-  workflow_dispatch:              # Manual trigger
-  push:                                          
+name: Sync OpenAPI Specs
+
+on:
+  workflow_dispatch:
+  push:
     branches:
-      - main                      # Trigger on push to
+      - main
   schedule:
-    - cron: '0 3 * * *'           # Daily at 3:00 AM UTC
+    - cron: '0 3 * * *'
+
+# FERN_OPENAPI_SYNC_TOKEN can open PRs but must not push to the default branch (branch
+# protection). We push only to SYNC_BRANCH and open a PR for a human to merge.
+
 jobs:
-  update-from-source:
+  sync-openapi:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.FERN_OPENAPI_SYNC_TOKEN }}
-      # Action pinned to v2 commit; requires fern-api/sync-openapi to be part of the allow-list.
-      - name: Update API with Fern
-        uses: fern-api/sync-openapi@8e936a4bac8ad11d698d7114f3074fa3397398ea
-        with:
-          update_from_source: true
-          token: ${{ secrets.FERN_OPENAPI_SYNC_TOKEN }}
-          branch: 'fern/update-api'
-          auto_merge: false
-          add_timestamp: false
+          fetch-depth: 0
+
+      - name: Sync OpenAPI spec from generators.yml origin (PR only)
+        env:
+          GH_TOKEN: ${{ secrets.FERN_OPENAPI_SYNC_TOKEN }}
+          SYNC_BRANCH: fern/update-api
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          IFS=$'\t' read -r ORIGIN_URL LOCAL_SPEC < <(ruby -ryaml -rpathname -e 'g=YAML.load_file("fern/generators.yml");s=g.dig("api","specs",0);abort("fern/generators.yml: missing api.specs[0]") unless s;o=s["origin"];abort("fern/generators.yml: missing origin") unless o;rel=s["openapi"];abort("fern/generators.yml: missing openapi") unless rel;l=Pathname.new("fern").join(rel).expand_path.cleanpath.to_s;print o,"\t",l')
+
+          echo "Origin URL: ${ORIGIN_URL}"
+          echo "Local file: ${LOCAL_SPEC}"
+
+          curl -fsSL "${ORIGIN_URL}" -o /tmp/openapi-remote.yaml
+
+          if cmp -s /tmp/openapi-remote.yaml "${LOCAL_SPEC}"; then
+            echo "Local spec already matches origin; nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git fetch origin --prune
+
+          git checkout "${DEFAULT_BRANCH}"
+          git pull --ff-only "origin/${DEFAULT_BRANCH}"
+
+          # Branch tip = default branch, then one commit with the upstream spec (linear PR).
+          git checkout -B "${SYNC_BRANCH}"
+
+          cp /tmp/openapi-remote.yaml "${LOCAL_SPEC}"
+          git add -- "${LOCAL_SPEC}"
+          git commit -m "chore(openapi): sync spec from origin in fern/generators.yml"
+
+          git fetch origin "${SYNC_BRANCH}" 2>/dev/null || true
+          git push --force-with-lease "origin" "HEAD:${SYNC_BRANCH}"
+
+          PR_COUNT=$(gh pr list --repo "${{ github.repository }}" --head "${SYNC_BRANCH}" --state open --json number --jq 'length')
+          if [ "${PR_COUNT}" -eq 0 ]; then
+            gh pr create --repo "${{ github.repository }}" --base "${DEFAULT_BRANCH}" --head "${SYNC_BRANCH}" \
+              --title "chore(openapi): sync OpenAPI spec from REST repo" \
+              --body "Updates \`${LOCAL_SPEC}\` to match the \`origin\` URL in \`fern/generators.yml\`. This PR was opened by automation; an admin should review and merge."
+          else
+            echo "Open PR already exists for ${SYNC_BRANCH}; branch updated."
+          fi
