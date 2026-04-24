@@ -2518,6 +2518,13 @@ pub struct MqttOAuth2Config {
     /// Default is "oauth2token".
     #[serde(default = "MqttOAuth2Config::default_username")]
     pub username: String,
+
+    /// Optional Vault issue endpoint that returns `client_id` and
+    /// `client_secret` for OAuth2 client credentials.
+    ///
+    /// When unset, credentials are read from the legacy `CredentialKey`
+    /// path supplied by the caller.
+    pub credentials_vault_path: Option<String>,
 }
 
 impl MqttOAuth2Config {
@@ -3863,6 +3870,27 @@ mqtt_endpoint = "mqtt.forge"
                 subnet_mask: 0_i32,
                 auth: MqttAuthConfig::default(),
             }
+        );
+    }
+
+    #[test]
+    fn deserialize_mqtt_oauth2_credentials_vault_path() {
+        let toml = r#"
+auth_mode = "oauth2"
+
+[oauth2]
+token_url = "https://example.com/token"
+scopes = ["mqtt"]
+credentials_vault_path = "services/dsx/clients/example-component/issue/creds"
+        "#;
+
+        let auth: MqttAuthConfig = Figment::new().merge(Toml::string(toml)).extract().unwrap();
+        let oauth2 = auth.oauth2.expect("oauth2 config");
+
+        assert_eq!(auth.auth_mode, MqttAuthMode::Oauth2);
+        assert_eq!(
+            oauth2.credentials_vault_path.as_deref(),
+            Some("services/dsx/clients/example-component/issue/creds")
         );
     }
 

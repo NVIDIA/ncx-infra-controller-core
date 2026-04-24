@@ -36,13 +36,45 @@ use vaultrs::client::{
     VaultClient, VaultClientSettings, VaultClientSettingsBuilder, VaultClientSettingsBuilderError,
 };
 use vaultrs::error::ClientError;
-use vaultrs::{kv2, pki};
+use vaultrs::{kv1, kv2, pki};
 
 use crate::SecretsError;
 use crate::certificates::{Certificate, CertificateProvider};
 use crate::credentials::{
     CredentialKey, CredentialManager, CredentialReader, CredentialWriter, Credentials,
 };
+
+#[derive(serde::Deserialize)]
+struct VaultIssuedClientCredentials {
+    client_id: String,
+    client_secret: String,
+}
+
+impl From<VaultIssuedClientCredentials> for Credentials {
+    fn from(value: VaultIssuedClientCredentials) -> Self {
+        Credentials::UsernamePassword {
+            username: value.client_id,
+            password: value.client_secret,
+        }
+    }
+}
+
+fn split_vault_path(path: &str) -> Result<(&str, &str), SecretsError> {
+    path.split_once('/').ok_or_else(|| {
+        SecretsError::GenericError(eyre!(
+            "Vault issue credential path must include both mount and path: {path}"
+        ))
+    })
+}
+
+fn reject_vault_issued_client_credentials_write(key: &CredentialKey) -> Result<(), SecretsError> {
+    if key.vault_issued_client_credentials_path().is_some() {
+        return Err(SecretsError::GenericError(eyre!(
+            "Vault-issued client credentials are read-only"
+        )));
+    }
+    Ok(())
+}
 
 const DEFAULT_VAULT_CA_PATH: &str = "/var/run/secrets/forge-roots/ca.crt";
 const VAULT_CACERT_ENV_VAR: &str = "VAULT_CACERT";
@@ -390,12 +422,19 @@ impl VaultTask<Option<Credentials>> for GetCredentialsHelper<'_, '_> {
             .add(1, &[KeyValue::new("request_type", "get_credentials")]);
 
         let time_started_vault_request = Instant::now();
-        let vault_response = kv2::read(
-            vault_client.deref(),
-            self.kv_mount_location,
-            self.key.to_key_str().as_ref(),
-        )
-        .await;
+        let vault_response = if let Some(path) = self.key.vault_issued_client_credentials_path() {
+            let (mount, path) = split_vault_path(path)?;
+            kv1::get::<VaultIssuedClientCredentials>(vault_client.deref(), mount, path)
+                .await
+                .map(Credentials::from)
+        } else {
+            kv2::read(
+                vault_client.deref(),
+                self.kv_mount_location,
+                self.key.to_key_str().as_ref(),
+            )
+            .await
+        };
         let elapsed_request_duration = time_started_vault_request.elapsed().as_millis() as u64;
         vault_metrics.vault_request_duration_histogram.record(
             elapsed_request_duration,
@@ -597,6 +636,7 @@ impl CredentialWriter for ForgeVaultClient {
         key: &CredentialKey,
         credentials: &Credentials,
     ) -> Result<(), SecretsError> {
+        reject_vault_issued_client_credentials_write(key)?;
         let kv_mount_location = &self.vault_client_config.kv_mount_location;
         let set_credentials_helper = SetCredentialsHelper {
             key,
@@ -615,6 +655,7 @@ impl CredentialWriter for ForgeVaultClient {
         key: &CredentialKey,
         credentials: &Credentials,
     ) -> Result<(), SecretsError> {
+        reject_vault_issued_client_credentials_write(key)?;
         let kv_mount_location = &self.vault_client_config.kv_mount_location;
         let set_credentials_helper = SetCredentialsHelper {
             key,
@@ -629,6 +670,7 @@ impl CredentialWriter for ForgeVaultClient {
     }
 
     async fn delete_credentials(&self, key: &CredentialKey) -> Result<(), SecretsError> {
+        reject_vault_issued_client_credentials_write(key)?;
         let kv_mount_location = &self.vault_client_config.kv_mount_location;
         let delete_credentials_helper = DeleteCredentialsHelper {
             key,
@@ -1004,7 +1046,12 @@ mod tests {
     use base64::Engine;
     use serde_json::json;
 
-    use super::service_account_role_name_from_jwt;
+    use crate::credentials::CredentialKey;
+
+    use super::{
+        reject_vault_issued_client_credentials_write, service_account_role_name_from_jwt,
+        split_vault_path,
+    };
 
     fn jwt_from_payload(payload_value: serde_json::Value) -> String {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -1062,5 +1109,29 @@ mod tests {
     fn rejects_random_json() {
         let jwt = jwt_from_payload(json!({"foo": ["bar"]}));
         assert!(service_account_role_name_from_jwt(&jwt).is_err());
+    }
+
+    #[test]
+    fn splits_vault_issue_path_into_mount_and_path() {
+        assert_eq!(
+            split_vault_path("services/dsx/clients/example/issue/creds").unwrap(),
+            ("services", "dsx/clients/example/issue/creds")
+        );
+        assert!(split_vault_path("services").is_err());
+    }
+
+    #[test]
+    fn rejects_writes_to_vault_issued_client_credentials() {
+        let key = CredentialKey::VaultIssuedClientCredentials {
+            path: "services/dsx/clients/example/issue/creds".to_string(),
+        };
+
+        assert!(reject_vault_issued_client_credentials_write(&key).is_err());
+        assert!(
+            reject_vault_issued_client_credentials_write(&CredentialKey::MqttAuth {
+                credential_type: crate::credentials::MqttCredentialType::DsxExchangeEventBus,
+            })
+            .is_ok()
+        );
     }
 }

@@ -67,6 +67,8 @@ pub struct MqttOAuth2Config {
 
     #[serde(default = "MqttOAuth2Config::default_username")]
     pub username: String,
+
+    pub credentials_vault_path: Option<String>,
 }
 
 impl MqttOAuth2Config {
@@ -241,6 +243,16 @@ mod tests {
         assert_eq!(config.mqtt.port, 1884);
         assert_eq!(config.mqtt.client_id, "carbide-dsx-exchange-consumer");
         assert_eq!(config.mqtt.topic_prefix, "BMS/v1");
+        assert_eq!(config.mqtt.auth.auth_mode, MqttAuthMode::Oauth2);
+        assert_eq!(
+            config
+                .mqtt
+                .auth
+                .oauth2
+                .as_ref()
+                .and_then(|oauth2| oauth2.credentials_vault_path.as_deref()),
+            Some("services/dsx/clients/example-component/issue/creds")
+        );
 
         if let Some(ref carbide_api) = config.carbide_api {
             assert_eq!(carbide_api.root_ca, "/var/run/secrets/spiffe.io/ca.crt");

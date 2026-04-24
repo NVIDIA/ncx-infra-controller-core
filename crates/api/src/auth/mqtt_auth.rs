@@ -50,6 +50,11 @@ pub async fn build_credentials_provider(
                 .oauth2
                 .as_ref()
                 .ok_or_else(|| eyre::eyre!("auth_mode is oauth2 but oauth2 config is missing"))?;
+            let credential_key = oauth2
+                .credentials_vault_path
+                .as_ref()
+                .map(|path| CredentialKey::VaultIssuedClientCredentials { path: path.clone() })
+                .unwrap_or(credential_key);
             let config = mqttea::auth::OAuth2Config::new(
                 &oauth2.token_url,
                 oauth2.scopes.clone(),

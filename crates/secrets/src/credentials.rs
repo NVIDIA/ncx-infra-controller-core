@@ -394,6 +394,9 @@ pub enum CredentialKey {
     MqttAuth {
         credential_type: MqttCredentialType,
     },
+    VaultIssuedClientCredentials {
+        path: String,
+    },
     /// Machine identity encryption key by key-id (from credential file `machine_identity.encryption_keys`).
     /// Returns `UsernamePassword { username: key_id, password: secret }`.
     MachineIdentityEncryptionKey {
@@ -421,6 +424,7 @@ pub enum CredentialPrefix {
     RackFirmware,
     SwitchNvosAdmin,
     MqttAuth,
+    VaultIssuedClientCredentials,
     MachineIdentityEncryptionKey,
 }
 
@@ -443,6 +447,7 @@ impl CredentialPrefix {
             Self::RackFirmware => "rack_firmware/",
             Self::SwitchNvosAdmin => "switch_nvos/",
             Self::MqttAuth => "mqtt/",
+            Self::VaultIssuedClientCredentials => "services/",
             Self::MachineIdentityEncryptionKey => "machine_identity/",
         }
     }
@@ -464,6 +469,7 @@ impl CredentialPrefix {
             Self::RackFirmware,
             Self::SwitchNvosAdmin,
             Self::MqttAuth,
+            Self::VaultIssuedClientCredentials,
             Self::MachineIdentityEncryptionKey,
         ]
     }
@@ -488,6 +494,9 @@ impl CredentialKey {
             Self::RackFirmware { .. } => CredentialPrefix::RackFirmware,
             Self::SwitchNvosAdmin { .. } => CredentialPrefix::SwitchNvosAdmin,
             Self::MqttAuth { .. } => CredentialPrefix::MqttAuth,
+            Self::VaultIssuedClientCredentials { .. } => {
+                CredentialPrefix::VaultIssuedClientCredentials
+            }
             Self::MachineIdentityEncryptionKey { .. } => {
                 CredentialPrefix::MachineIdentityEncryptionKey
             }
@@ -579,12 +588,20 @@ impl CredentialKey {
                     Cow::from("mqtt/dsx-exchange-consumer/auth")
                 }
             },
+            CredentialKey::VaultIssuedClientCredentials { path } => Cow::from(path),
             CredentialKey::MachineIdentityEncryptionKey { key_id } => {
                 Cow::from(format!("machine_identity/encryption_keys/{key_id}"))
             }
             CredentialKey::Bgp { credential_type } => match credential_type {
                 BgpCredentialType::SiteWideLeafPassword => Cow::from("bgp/leaf/site/auth"),
             },
+        }
+    }
+
+    pub fn vault_issued_client_credentials_path(&self) -> Option<&str> {
+        match self {
+            CredentialKey::VaultIssuedClientCredentials { path } => Some(path),
+            _ => None,
         }
     }
 }
@@ -618,6 +635,22 @@ mod tests {
         assert!(password.chars().any(|c| c.is_lowercase()));
         assert!(password.chars().any(|c| c.is_ascii_digit()));
         assert!(password.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn vault_issued_client_credentials_key_uses_direct_vault_path() {
+        let key = CredentialKey::VaultIssuedClientCredentials {
+            path: "services/dsx/clients/example-component/issue/creds".to_string(),
+        };
+
+        assert_eq!(
+            key.to_key_str(),
+            "services/dsx/clients/example-component/issue/creds"
+        );
+        assert_eq!(
+            key.vault_issued_client_credentials_path(),
+            Some("services/dsx/clients/example-component/issue/creds")
+        );
     }
 
     #[tokio::test]
@@ -877,6 +910,9 @@ mod tests {
             CredentialKey::MqttAuth {
                 credential_type: MqttCredentialType::Dpa,
             },
+            CredentialKey::VaultIssuedClientCredentials {
+                path: "services/dsx/clients/example-component/issue/creds".to_string(),
+            },
             CredentialKey::MachineIdentityEncryptionKey {
                 key_id: "k".to_string(),
             },
@@ -899,6 +935,6 @@ mod tests {
     #[test]
     fn prefix_all_is_complete() {
         let all = CredentialPrefix::all();
-        assert_eq!(all.len(), 15);
+        assert_eq!(all.len(), 16);
     }
 }

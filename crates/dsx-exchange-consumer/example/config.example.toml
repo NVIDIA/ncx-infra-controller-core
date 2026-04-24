@@ -12,6 +12,16 @@ topic_prefix = "BMS/v1"
 # Maximum number of messages to buffer before dropping (default: 1024)
 queue_capacity = 1024
 
+[mqtt.auth]
+auth_mode = "oauth2"
+
+[mqtt.auth.oauth2]
+token_url = "https://ssa.example.com/token"
+scopes = ["mqtt"]
+# Optional: read auto-rotating SSA client credentials directly from a Vault
+# issue endpoint instead of the legacy static MQTT credential path.
+credentials_vault_path = "services/dsx/clients/example-component/issue/creds"
+
 # ==============================================================================
 # Cache Configuration - TTL settings (uses moka for automatic eviction)
 # ==============================================================================

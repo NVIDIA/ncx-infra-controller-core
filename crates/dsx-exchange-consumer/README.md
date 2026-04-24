@@ -48,6 +48,7 @@ CARBIDE_DSX_CONSUMER__CACHE__METADATA_TTL=1h
 | `mqtt.port` | `1884` | MQTT broker port |
 | `mqtt.topic_prefix` | `BMS/v1` | Topic prefix for subscriptions |
 | `mqtt.queue_capacity` | `1024` | Internal message queue size |
+| `mqtt.auth.oauth2.credentials_vault_path` | unset | Optional Vault issue endpoint returning auto-rotating `client_id` and `client_secret` |
 | `cache.metadata_ttl` | `1h` | TTL for metadata cache |
 | `cache.value_state_ttl` | `1h` | TTL for deduplication cache |
 

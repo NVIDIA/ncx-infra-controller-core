@@ -363,3 +363,4 @@ Extends `StateControllerConfig` with:
 | `scopes` | `Vec<String>` | `[]` | OAuth2 scopes to request. |
 | `http_timeout` | `Duration` | `30s` | Token endpoint HTTP timeout. |
 | `username` | `String` | `"oauth2token"` | Username in MQTT CONNECT packet. |
+| `credentials_vault_path` | `Option<String>` | — | Optional Vault issue endpoint returning `client_id` and `client_secret`; when unset, the legacy static credential path is used. |
