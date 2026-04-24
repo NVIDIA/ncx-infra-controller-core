@@ -18,7 +18,7 @@
 use ::db::DatabaseError;
 
 use super::db;
-use crate::state_controller::io::StateControllerIO;
+use crate::io::StateControllerIO;
 
 /// Allows to request state handling for objects of a certain type
 #[derive(Debug, Clone)]

@@ -46,6 +46,7 @@ use model::route_server::RouteServerSourceType;
 use opentelemetry::metrics::Meter;
 use sqlx::postgres::PgSslMode;
 use sqlx::{ConnectOptions, PgPool};
+use sqlx_query_tracing::SQLX_STATEMENTS_LOG_LEVEL;
 use tokio::sync::Semaphore;
 use tokio::sync::oneshot::Sender;
 use tokio::task::JoinSet;
@@ -67,7 +68,6 @@ use crate::logging::log_limiter::LogLimiter;
 use crate::logging::service_health_metrics::{
     ServiceHealthContext, start_export_service_health_metrics,
 };
-use crate::logging::sqlx_query_tracing::SQLX_STATEMENTS_LOG_LEVEL;
 use crate::machine_update_manager::MachineUpdateManager;
 use crate::measured_boot::metrics_collector::MeasuredBootMetricsCollector;
 use crate::mqtt_state_change_hook::hook::MqttStateChangeHook;

@@ -23,18 +23,14 @@ use opentelemetry::metrics::Meter;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::state_controller::config::IterationConfig;
-use crate::state_controller::controller::StateController;
-use crate::state_controller::controller::periodic_enqueuer::{
-    EnqueuerMetricsEmitter, PeriodicEnqueuer,
-};
-use crate::state_controller::controller::processor::{ProcessorMetricsEmitter, StateProcessor};
-use crate::state_controller::io::StateControllerIO;
-use crate::state_controller::metrics::MetricHolder;
-use crate::state_controller::state_change_emitter::StateChangeEmitter;
-use crate::state_controller::state_handler::{
-    NoopStateHandler, StateHandler, StateHandlerContextObjects,
-};
+use crate::config::IterationConfig;
+use crate::controller::StateController;
+use crate::controller::periodic_enqueuer::{EnqueuerMetricsEmitter, PeriodicEnqueuer};
+use crate::controller::processor::{ProcessorMetricsEmitter, StateProcessor};
+use crate::io::StateControllerIO;
+use crate::metrics::MetricHolder;
+use crate::state_change_emitter::StateChangeEmitter;
+use crate::state_handler::{NoopStateHandler, StateHandler, StateHandlerContextObjects};
 
 /// The return value of `[Builder::build_internal]`
 struct BuildOrSpawn<IO: StateControllerIO> {
@@ -98,7 +94,7 @@ impl<IO: StateControllerIO> Default for Builder<IO> {
 impl<IO: StateControllerIO> Builder<IO> {
     /// Builds a [`StateController`] with all configured options with the intention
     /// of calling the `run_single_iteration` whenever required
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn build_for_manual_iterations(
         self,
         cancel_token: CancellationToken,

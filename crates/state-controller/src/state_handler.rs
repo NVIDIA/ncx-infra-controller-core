@@ -26,7 +26,7 @@ use model::machine::ManagedHostState;
 use model::resource_pool::ResourcePoolError;
 use sqlx::{PgPool, PgTransaction};
 
-use crate::state_controller::db_write_batch::DbWriteBatch;
+use crate::db_write_batch::DbWriteBatch;
 
 /// The collection of generic objects which are referenced in StateHandlerContext
 pub trait StateHandlerContextObjects: Send + Sync + 'static {
@@ -232,7 +232,7 @@ impl<S> std::fmt::Display for StateHandlerOutcome<S> {
 #[derive(Debug, thiserror::Error)]
 pub enum StateHandlerError {
     #[error("Unable to perform database transaction: {0}")]
-    TransactionError(#[from] sqlx::Error),
+    TransactionError(#[source] Box<sqlx::Error>),
     #[error("Failed to advance state: {0}")]
     GenericError(eyre::Report),
     #[error("State for object {object_id} can not be advanced. Missing data: {missing}")]
@@ -241,10 +241,10 @@ pub enum StateHandlerError {
         missing: &'static str,
     },
     #[error("{0}")]
-    DBError(#[from] DatabaseError),
+    DBError(#[source] Box<DatabaseError>),
 
     #[error("Error releasing from resource pool: {0}")]
-    PoolReleaseError(#[from] ResourcePoolError),
+    PoolReleaseError(#[source] Box<ResourcePoolError>),
 
     #[error("Invalid host state {1} for DPU {0}.")]
     InvalidHostState(MachineId, Box<ManagedHostState>),
@@ -256,7 +256,7 @@ pub enum StateHandlerError {
     },
 
     #[error("Failed to create redfish client: {0}")]
-    RedfishClientCreationError(#[from] RedfishClientCreationError),
+    RedfishClientCreationError(#[source] Box<RedfishClientCreationError>),
 
     #[error("The state handler for object {object_id} in state \"{state}\" timed out")]
     Timeout { object_id: String, state: String },
@@ -291,13 +291,13 @@ pub enum StateHandlerError {
     },
 
     #[error("Spdm error: {0}")]
-    SpdmError(#[from] model::attestation::spdm::SpdmHandlerError),
+    SpdmError(#[source] Box<model::attestation::spdm::SpdmHandlerError>),
 
     #[error("Rack Manager error: {0}")]
-    RackManagerError(#[from] RackManagerError),
+    RackManagerError(#[source] Box<RackManagerError>),
 
     #[error("DPF error: {0}")]
-    DpfError(#[from] carbide_dpf::DpfError),
+    DpfError(#[source] Box<carbide_dpf::DpfError>),
 }
 
 impl StateHandlerError {
@@ -335,6 +335,48 @@ impl StateHandlerError {
             StateHandlerError::RackManagerError(_) => "rack_manager_error",
             StateHandlerError::DpfError(_) => "dpf_error",
         }
+    }
+}
+
+impl From<sqlx::Error> for StateHandlerError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::TransactionError(Box::new(error))
+    }
+}
+
+impl From<DatabaseError> for StateHandlerError {
+    fn from(error: DatabaseError) -> Self {
+        Self::DBError(Box::new(error))
+    }
+}
+
+impl From<ResourcePoolError> for StateHandlerError {
+    fn from(error: ResourcePoolError) -> Self {
+        Self::PoolReleaseError(Box::new(error))
+    }
+}
+
+impl From<RedfishClientCreationError> for StateHandlerError {
+    fn from(error: RedfishClientCreationError) -> Self {
+        Self::RedfishClientCreationError(Box::new(error))
+    }
+}
+
+impl From<model::attestation::spdm::SpdmHandlerError> for StateHandlerError {
+    fn from(error: model::attestation::spdm::SpdmHandlerError) -> Self {
+        Self::SpdmError(Box::new(error))
+    }
+}
+
+impl From<RackManagerError> for StateHandlerError {
+    fn from(error: RackManagerError) -> Self {
+        Self::RackManagerError(Box::new(error))
+    }
+}
+
+impl From<carbide_dpf::DpfError> for StateHandlerError {
+    fn from(error: carbide_dpf::DpfError) -> Self {
+        Self::DpfError(Box::new(error))
     }
 }
 

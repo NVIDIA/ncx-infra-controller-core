@@ -21,9 +21,9 @@ use chrono::{DateTime, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::{FromRow, Row};
 
-use crate::state_controller::controller::periodic_enqueuer::PeriodicEnqueuer;
-use crate::state_controller::io::StateControllerIO;
-use crate::state_controller::state_handler::StateHandlerError;
+use crate::controller::periodic_enqueuer::PeriodicEnqueuer;
+use crate::io::StateControllerIO;
+use crate::state_handler::StateHandlerError;
 
 mod builder;
 pub mod db;
@@ -104,13 +104,13 @@ impl<IO: StateControllerIO> StateController<IO> {
     }
 
     /// Enqueues state handling tasks for all objects and processes them
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn run_single_iteration(&mut self) {
         self.run_single_iteration_ext(true).await
     }
 
     /// Enqueues state handling tasks for all objects and processes them
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn run_single_iteration_ext(&mut self, allow_requeue: bool) {
         // Delete stale object metrics - e.g. from predicted hosts
         // They make assertions on actually still valid metrics more tricky

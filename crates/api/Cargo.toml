@@ -65,6 +65,8 @@ spancounter = { path = "../spancounter" }
 nras = { path = "../nras" }
 carbide-dpf = { path = "../dpf" }
 component-manager = { path = "../component-manager" }
+sqlx-query-tracing = { path = "../sqlx-query-tracing" }
+state-controller = { path = "../state-controller" }
 # DO NOT PUT DEPENDENCIES OTHER THAN LOCAL DEPS HERE, THEY SHOULD ALL HAVE 'path =' IN THEM.
 
 #these are alphabetized
@@ -211,6 +213,7 @@ carbide-sqlx-testing = { path = "../sqlx-testing", default-features = false }
 carbide-prost-builder = { path = "../prost-builder" }
 carbide-redfish = { path = "../redfish", features = [ "test-support" ] }
 carbide-utils = { path = "../utils", features = ["test-support"] }
+state-controller = { path = "../state-controller", features = ["test-support"] }
 prometheus-text-parser = { path = "../prometheus-text-parser" }
 prost = { workspace = true }
 tower-test = { workspace = true }

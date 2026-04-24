@@ -23,19 +23,19 @@ use ::db::DatabaseError;
 use model::controller_outcome::PersistentStateHandlerOutcome;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
+use sqlx_query_tracing::SqlxQueryDataAggregation;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::db;
-use crate::logging::sqlx_query_tracing::{self, SqlxQueryDataAggregation};
-use crate::state_controller::config::IterationConfig;
-use crate::state_controller::db_write_batch::DbWriteBatch;
-use crate::state_controller::io::StateControllerIO;
-use crate::state_controller::metrics::{
+use crate::config::IterationConfig;
+use crate::db_write_batch::DbWriteBatch;
+use crate::io::StateControllerIO;
+use crate::metrics::{
     IterationMetrics, MetricHolder, ObjectHandlerMetrics, StateProcessorMetricEmitter,
 };
-use crate::state_controller::state_change_emitter::{StateChangeEmitter, StateChangeEvent};
-use crate::state_controller::state_handler::{
+use crate::state_change_emitter::{StateChangeEmitter, StateChangeEvent};
+use crate::state_handler::{
     FromStateHandlerResult, StateHandler, StateHandlerContext, StateHandlerContextObjects,
     StateHandlerError, StateHandlerOutcome,
 };
@@ -721,18 +721,14 @@ async fn process_object<IO: StateControllerIO>(
                 io.persist_outcome(&mut txn, &object_id, db_outcome).await?;
             }
 
-            txn.commit()
-                .await
-                .map_err(StateHandlerError::TransactionError)?;
+            txn.commit().await.map_err(StateHandlerError::from)?;
         } else if !matches!(handler_outcome, Ok(StateHandlerOutcome::Deleted { .. })) {
             // Whatever is the reason, outcome must be stored in db.
             let _ = txn.rollback().await;
             let mut txn = pool.begin().await?;
             let db_outcome = PersistentStateHandlerOutcome::from_result(handler_outcome.as_ref());
             io.persist_outcome(&mut txn, &object_id, db_outcome).await?;
-            txn.commit()
-                .await
-                .map_err(StateHandlerError::TransactionError)?;
+            txn.commit().await.map_err(StateHandlerError::from)?;
         }
 
         // Only emit the next state as metric if the transaction was actually
@@ -748,7 +744,7 @@ async fn process_object<IO: StateControllerIO>(
     if let Some(next_state) = &metrics.common.next_state {
         state_change_emitter.emit(StateChangeEvent {
             object_id: &object_id,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             previous_state: metrics.common.initial_state.as_ref(),
             new_state: next_state,
             timestamp: chrono::Utc::now(),

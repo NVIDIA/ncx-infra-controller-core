@@ -24,11 +24,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use utils::periodic_timer::PeriodicTimer;
 
-use crate::state_controller::config::IterationConfig;
-use crate::state_controller::controller::{
-    ControllerIteration, ControllerIterationId, IterationError, db,
-};
-use crate::state_controller::io::StateControllerIO;
+use crate::config::IterationConfig;
+use crate::controller::{ControllerIteration, ControllerIterationId, IterationError, db};
+use crate::io::StateControllerIO;
 
 /// Periodically enqueues state handling tasks for all objects that are managed by the
 /// state controller.

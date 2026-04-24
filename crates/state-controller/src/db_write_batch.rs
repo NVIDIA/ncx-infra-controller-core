@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use sqlx::PgTransaction;
 
-use crate::state_controller::state_handler::StateHandlerError;
+use crate::state_handler::StateHandlerError;
 
 /// A DbWriteBatch exists to allow state controllers to enqueue write operations until the end of
 /// processing, so that they don't need to hold a database connection open across long-running work.

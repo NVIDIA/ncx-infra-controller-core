@@ -32,19 +32,17 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use utils::test_support::test_meter::TestMeter;
 
-use crate::state_controller::config::IterationConfig;
-use crate::state_controller::controller::{self, Enqueuer, QueuedObject, StateController};
-use crate::state_controller::io::StateControllerIO;
-use crate::state_controller::metrics::NoopMetricsEmitter;
-use crate::state_controller::state_change_emitter::{
-    StateChangeEmitterBuilder, StateChangeEvent, StateChangeHook,
-};
-use crate::state_controller::state_handler::{
+use crate::config::IterationConfig;
+use crate::controller::{self, Enqueuer, QueuedObject, StateController};
+use crate::io::StateControllerIO;
+use crate::metrics::NoopMetricsEmitter;
+use crate::state_change_emitter::{StateChangeEmitterBuilder, StateChangeEvent, StateChangeHook};
+use crate::state_handler::{
     StateHandler, StateHandlerContext, StateHandlerContextObjects, StateHandlerError,
     StateHandlerOutcome,
 };
 
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_start_iteration(pool: sqlx::PgPool) -> eyre::Result<()> {
     create_test_state_controller_tables(&pool).await;
     let mut join_set = JoinSet::new();
@@ -87,7 +85,7 @@ async fn test_start_iteration(pool: sqlx::PgPool) -> eyre::Result<()> {
     Ok(())
 }
 
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_delete_outdated_iterations(pool: sqlx::PgPool) -> eyre::Result<()> {
     create_test_state_controller_tables(&pool).await;
     let mut join_set = JoinSet::new();
@@ -153,7 +151,7 @@ async fn test_delete_outdated_iterations(pool: sqlx::PgPool) -> eyre::Result<()>
     Ok(())
 }
 
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_queue_objects(pool: sqlx::PgPool) -> sqlx::Result<()> {
     create_test_state_controller_tables(&pool).await;
 
@@ -710,7 +708,7 @@ impl StateControllerIO for PanicInListObjectsStateControllerIO {
     }
 }
 
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_state_controller_handle_set_wait_all_propagates_panic(
     pool: sqlx::PgPool,
 ) -> eyre::Result<()> {
@@ -777,7 +775,7 @@ impl StateHandler for TestConcurrencyStateHandler {
     }
 }
 
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_multiple_state_controllers_schedule_object_only_once(
     pool: sqlx::PgPool,
 ) -> eyre::Result<()> {
@@ -912,7 +910,7 @@ impl StateHandler for CyclicTransitionStateHandler {
 /// Tests whether the amount of emitted metrics is stable
 /// The test as checked in is mostly a smoke test
 /// To get better test coverage, extend `TEST_TIME` to 3 or more minutes.
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_state_handler_metrics_are_stable(pool: sqlx::PgPool) -> eyre::Result<()> {
     let test_meter = TestMeter::default();
 
@@ -1006,7 +1004,7 @@ impl StateChangeHook<String, TestObjectControllerState> for ChannelHook {
     }
 }
 
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_state_change_emitter_emits_events_on_transitions(
     pool: sqlx::PgPool,
 ) -> eyre::Result<()> {
@@ -1073,7 +1071,7 @@ async fn test_state_change_emitter_emits_events_on_transitions(
     Ok(())
 }
 
-#[crate::sqlx_test]
+#[carbide_macros::sqlx_test]
 async fn test_state_controller_manual_enqueuing(pool: sqlx::PgPool) -> eyre::Result<()> {
     create_test_state_controller_tables(&pool).await;
     let mut join_set = JoinSet::new();

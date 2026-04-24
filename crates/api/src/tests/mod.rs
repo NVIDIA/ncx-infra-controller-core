@@ -107,7 +107,6 @@ mod service_health_metrics;
 mod site_explorer;
 mod sku;
 mod spdm;
-mod state_controller;
 mod static_address_management;
 mod storage;
 mod switch;

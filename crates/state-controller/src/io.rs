@@ -20,8 +20,8 @@ use model::StateSla;
 use model::controller_outcome::PersistentStateHandlerOutcome;
 use sqlx::PgConnection;
 
-use crate::state_controller::metrics::MetricsEmitter;
-use crate::state_controller::state_handler::StateHandlerContextObjects;
+use crate::metrics::MetricsEmitter;
+use crate::state_handler::StateHandlerContextObjects;
 
 /// This trait defines on what objects a state controller instance will act,
 /// and how it loads the objects state.

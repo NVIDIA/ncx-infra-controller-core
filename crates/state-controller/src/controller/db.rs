@@ -21,8 +21,7 @@ use db::work_lock_manager::{AcquireLockError, WorkLockManagerHandle};
 use db::{BIND_LIMIT, DatabaseError};
 use sqlx::{PgConnection, PgPool};
 
-use crate::api::TransactionVending;
-use crate::state_controller::controller::{
+use crate::controller::{
     ControllerIteration, ControllerIterationId, LockedControllerIteration, QueuedObject,
 };
 
@@ -39,7 +38,7 @@ async fn create_iteration(
 }
 
 /// Loads the given amount iterations, starting by the newest iteration
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub async fn fetch_iterations(
     txn: &mut PgConnection,
     table_id: &str,
@@ -90,7 +89,7 @@ pub async fn lock_and_start_iteration(
     let work_lock = work_lock_manager_handle
         .try_acquire_lock(format!("lock_iteration::{table_id}"))
         .await?;
-    let mut txn = pool.txn_begin().await?;
+    let mut txn = ::db::Transaction::begin(pool).await?;
     let iteration_data = create_iteration(&mut txn, table_id).await?;
     delete_old_iterations(&mut txn, table_id, iteration_data.id).await?;
     txn.commit().await?;
@@ -163,7 +162,7 @@ pub async fn queue_objects(
 }
 
 /// Fetches all objects which have been queued for execution
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub async fn fetch_queued_objects(
     txn: &mut PgConnection,
     table_id: &str,

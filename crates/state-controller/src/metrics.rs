@@ -24,13 +24,13 @@ use ::utils::metrics::SharedMetricsHolder;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
-use crate::state_controller::io::StateControllerIO;
-use crate::state_controller::state_handler::StateHandlerError;
+use crate::io::StateControllerIO;
+use crate::state_handler::StateHandlerError;
 
 #[derive(Debug, Hash, PartialEq, Eq, serde::Serialize, Clone)]
-pub(crate) struct FullState {
-    pub(crate) state: &'static str,
-    pub(crate) substate: &'static str,
+pub struct FullState {
+    pub state: &'static str,
+    pub substate: &'static str,
 }
 
 /// The result of the state handler processing the state of a single object
