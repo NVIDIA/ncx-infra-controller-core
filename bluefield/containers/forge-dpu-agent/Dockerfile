@@ -21,10 +21,9 @@ RUN apt-get update && apt-get install -y \
      libudev1 \
      bash \
      curl
-COPY mft-4.35.0-159-aarch64-deb /tmp/mft
 
 # Working flint extraction
-COPY mstflint_arm64.deb /tmp/mstflint.deb
+COPY mft-4.35.0-159-aarch64-deb/DEBS/mft_4.35.0-159_arm64.deb /tmp/mstflint.deb
 RUN mkdir -p /extract && dpkg-deb -x /tmp/mstflint.deb /extract
 RUN mkdir -p /deps && \
     # Locate the binary (usually in /usr/bin/ inside the extraction folder)
