@@ -616,6 +616,7 @@ impl ApiClient {
         dpf_enabled: Option<bool>,
         bmc_ip_address: Option<String>,
         bmc_retain_credentials: Option<bool>,
+        disable_lockdown: Option<bool>,
     ) -> Result<(), CarbideCliError> {
         let get_req = match (bmc_mac_address, id) {
             (Some(_), Some(_)) => {
@@ -700,6 +701,7 @@ impl ApiClient {
             // Patch doesn't expose `--dpu-mode` yet; preserve the existing
             // server-side value.
             dpu_mode: expected_machine.dpu_mode,
+            disable_lockdown: disable_lockdown.or(expected_machine.disable_lockdown),
         };
 
         Ok(self.0.update_expected_machine(request).await?)
@@ -735,6 +737,7 @@ impl ApiClient {
                     bmc_ip_address: machine.bmc_ip_address,
                     bmc_retain_credentials: machine.bmc_retain_credentials,
                     dpu_mode: machine.dpu_mode.map(|m| m as i32),
+                    disable_lockdown: machine.disable_lockdown,
                 })
                 .collect(),
         };

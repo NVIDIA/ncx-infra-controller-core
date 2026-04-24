@@ -49,6 +49,11 @@ pub struct ExpectedMachineJson {
     /// means to use the site-level `force_dpu_nic_mode` flag).
     #[serde(default)]
     pub dpu_mode: Option<rpc::forge::DpuMode>,
+    /// If true, do not lock down the server while ingesting the managed host into a Ready state
+    /// within the state machine. If unset or false, preserve the default behavior of locking down
+    /// the server after configuring the BIOS.
+    #[serde(default)]
+    pub disable_lockdown: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -5415,6 +5415,10 @@ message ExpectedMachine {
   // default" -- the site-wide `force_dpu_nic_mode` config flag still applies
   // when no per-host override is set, so existing deployments keep working.
   optional DpuMode dpu_mode = 16;
+  // If true, do not lock down the server while ingesting the managed host
+  // into a Ready state within the state machine. If unset or false, preserve
+  // the default behavior of locking down the server after configuring the BIOS.
+  optional bool disable_lockdown = 17;
 }
 
 message ExpectedMachineRequest {
