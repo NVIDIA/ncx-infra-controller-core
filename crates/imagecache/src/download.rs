@@ -62,6 +62,8 @@ pub async fn download_and_hash(
     max_size: u64,
     temp_dir: &Path,
 ) -> Result<DownloadResult, ImageCacheError> {
+    check_remote_size(client, url, auth_type, auth_token, max_size).await?;
+
     let mut request = client.get(url);
     request = apply_auth(request, auth_type, auth_token);
 

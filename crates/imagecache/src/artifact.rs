@@ -17,10 +17,13 @@
 
 use rpc::forge::IpxeTemplateArtifactCacheStrategy;
 
-pub fn is_eligible(cache_strategy: i32, cache_as_needed: bool) -> bool {
-    match IpxeTemplateArtifactCacheStrategy::try_from(cache_strategy) {
-        Ok(IpxeTemplateArtifactCacheStrategy::CachedOnly) => true,
-        Ok(IpxeTemplateArtifactCacheStrategy::CacheAsNeeded) => cache_as_needed,
+pub fn is_eligible(
+    cache_strategy: IpxeTemplateArtifactCacheStrategy,
+    cache_as_needed: bool,
+) -> bool {
+    match cache_strategy {
+        IpxeTemplateArtifactCacheStrategy::CachedOnly => true,
+        IpxeTemplateArtifactCacheStrategy::CacheAsNeeded => cache_as_needed,
         _ => false,
     }
 }
@@ -32,11 +35,11 @@ mod tests {
     #[test]
     fn cached_only_is_always_eligible() {
         assert!(is_eligible(
-            IpxeTemplateArtifactCacheStrategy::CachedOnly as i32,
+            IpxeTemplateArtifactCacheStrategy::CachedOnly,
             false
         ));
         assert!(is_eligible(
-            IpxeTemplateArtifactCacheStrategy::CachedOnly as i32,
+            IpxeTemplateArtifactCacheStrategy::CachedOnly,
             true
         ));
     }
@@ -44,11 +47,11 @@ mod tests {
     #[test]
     fn cache_as_needed_depends_on_flag() {
         assert!(!is_eligible(
-            IpxeTemplateArtifactCacheStrategy::CacheAsNeeded as i32,
+            IpxeTemplateArtifactCacheStrategy::CacheAsNeeded,
             false
         ));
         assert!(is_eligible(
-            IpxeTemplateArtifactCacheStrategy::CacheAsNeeded as i32,
+            IpxeTemplateArtifactCacheStrategy::CacheAsNeeded,
             true
         ));
     }
@@ -56,11 +59,11 @@ mod tests {
     #[test]
     fn local_only_is_never_eligible() {
         assert!(!is_eligible(
-            IpxeTemplateArtifactCacheStrategy::LocalOnly as i32,
+            IpxeTemplateArtifactCacheStrategy::LocalOnly,
             true
         ));
         assert!(!is_eligible(
-            IpxeTemplateArtifactCacheStrategy::LocalOnly as i32,
+            IpxeTemplateArtifactCacheStrategy::LocalOnly,
             false
         ));
     }
@@ -68,11 +71,11 @@ mod tests {
     #[test]
     fn remote_only_is_never_eligible() {
         assert!(!is_eligible(
-            IpxeTemplateArtifactCacheStrategy::RemoteOnly as i32,
+            IpxeTemplateArtifactCacheStrategy::RemoteOnly,
             true
         ));
         assert!(!is_eligible(
-            IpxeTemplateArtifactCacheStrategy::RemoteOnly as i32,
+            IpxeTemplateArtifactCacheStrategy::RemoteOnly,
             false
         ));
     }

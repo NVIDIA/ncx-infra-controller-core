@@ -26,10 +26,6 @@ authors.workspace = true
 name = "carbide-imagecache"
 path = "src/main.rs"
 
-[[bin]]
-name = "carbide-imagecache-clear-urls"
-path = "src/clear_urls.rs"
-
 [dependencies]
 # [begin-local-dependencies]
 carbide-rpc = { path = "../rpc" }

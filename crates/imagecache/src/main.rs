@@ -27,6 +27,7 @@ use tracing_subscriber::EnvFilter;
 mod api_client;
 mod artifact;
 mod cache_loop;
+mod clear_urls;
 mod config;
 mod download;
 mod error;
@@ -41,6 +42,8 @@ use config::CacheMode;
 struct Args {
     #[clap(long, default_value = "false", help = "Print version number and exit")]
     pub version: bool,
+    #[clap(long, default_value = "false", help = "artifact local URLs")]
+    pub clear_urls: bool,
 }
 
 #[tokio::main]
@@ -48,6 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opts = Args::parse();
     if opts.version {
         println!("{}", carbide_version::version!());
+        return Ok(());
+    }
+    if opts.clear_urls {
+        clear_urls::clear_urls().await?;
         return Ok(());
     }
 

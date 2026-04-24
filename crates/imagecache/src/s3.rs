@@ -26,11 +26,8 @@ use crate::config::S3Config;
 use crate::error::ImageCacheError;
 use crate::storage::StorageBackend;
 
-/// 64 MiB multipart chunk size. The rust-s3 default (8 MiB) creates ~1152
-/// concurrent requests for a 9 GiB file, exhausting file descriptors.
-/// S3 minimum is 5 MiB; maximum parts per upload is 10,000.
-/// 64 MiB keeps a 10 GiB upload under 160 parts.
-const MULTIPART_CHUNK_SIZE: usize = 64 * 1024 * 1024;
+/// Multipart chunk size = we read and send this much at a time
+const MULTIPART_CHUNK_SIZE: usize = 8 * 1024 * 1024;
 
 pub struct S3Client {
     bucket: Box<Bucket>,
@@ -133,26 +130,6 @@ impl StorageBackend for S3Client {
         key: &str,
         file_path: &Path,
     ) -> Result<(), ImageCacheError> {
-        let file_size = tokio::fs::metadata(file_path).await?.len() as usize;
-
-        // Small files: single PUT (under the 5 GiB S3 limit)
-        if file_size <= MULTIPART_CHUNK_SIZE {
-            let data = tokio::fs::read(file_path).await?;
-            let response = self
-                .bucket
-                .put_object(key, &data)
-                .await
-                .map_err(|e| ImageCacheError::S3(format!("PUT failed for key {key}: {e}")))?;
-            let code = response.status_code();
-            if !(200..300).contains(&code) {
-                return Err(ImageCacheError::S3(format!(
-                    "PUT returned status {code} for key {key}"
-                )));
-            }
-            return Ok(());
-        }
-
-        // Large files: sequential multipart upload
         let content_type = "application/octet-stream";
         let msg = self
             .bucket

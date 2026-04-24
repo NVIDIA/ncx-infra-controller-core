@@ -39,8 +39,7 @@ fn env_required(name: &str) -> String {
     env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn clear_urls() -> Result<(), Box<dyn std::error::Error>> {
     let internal_api_url = env::var("CARBIDE_API_INTERNAL_URL")
         .unwrap_or_else(|_| "https://carbide-api.forge-system.svc.cluster.local:1079".to_string());
 

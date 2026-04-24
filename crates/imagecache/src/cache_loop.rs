@@ -77,7 +77,7 @@ pub async fn run_once<S: StorageBackend>(
         let os_name = &os_def.name;
 
         for art in &os_def.ipxe_template_artifacts {
-            if !artifact::is_eligible(art.cache_strategy, config.cache_as_needed) {
+            if !artifact::is_eligible(art.cache_strategy(), config.cache_as_needed) {
                 skipped_count += 1;
                 continue;
             }
@@ -229,15 +229,6 @@ async fn process_artifact<S: StorageBackend>(
         url = art.url,
         "Downloading artifact"
     );
-
-    download::check_remote_size(
-        ctx.http,
-        &art.url,
-        art.auth_type.as_deref(),
-        art.auth_token.as_deref(),
-        ctx.config.max_file_size,
-    )
-    .await?;
 
     let result = download::download_and_hash(
         ctx.http,
