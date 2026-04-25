@@ -72,6 +72,8 @@ spec:
               mountPath: /host-cpu-info
             - name: proc-mem-info
               mountPath: /host-mem-info
+            - name: forge-certs
+              mountPath: /opt/forge
       containers:
         - name: forge-dpu-agent
           securityContext:

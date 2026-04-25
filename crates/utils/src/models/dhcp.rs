@@ -207,6 +207,7 @@ pub struct DhcpTimestamps {
 }
 
 pub enum DhcpTimestampsFilePath {
+    HbnTmp,
     Hbn,
     Dpu,
     Test,
@@ -216,7 +217,8 @@ pub enum DhcpTimestampsFilePath {
 impl DhcpTimestampsFilePath {
     pub fn path_str(&self) -> &str {
         match self {
-            Self::Hbn => DHCP_TIMESTAMP_FILE_HBN_TMP,
+            Self::HbnTmp => DHCP_TIMESTAMP_FILE_HBN_TMP,
+            Self::Hbn => DHCP_TIMESTAMP_FILE_HBN,
             Self::Dpu => DHCP_TIMESTAMP_FILE_DPU,
             Self::Test => DHCP_TIMESTAMP_FILE_TEST,
             Self::NotSet => "Not set",
@@ -258,7 +260,7 @@ impl DhcpTimestamps {
             .open(self.path.path_str())?;
 
         serde_json::to_writer(timestamp_file, self)?;
-        if let DhcpTimestampsFilePath::Hbn = self.path {
+        if let DhcpTimestampsFilePath::HbnTmp = self.path {
             // Rename the file.
             fs::rename(DHCP_TIMESTAMP_FILE_HBN_TMP, DHCP_TIMESTAMP_FILE_HBN)?;
         }

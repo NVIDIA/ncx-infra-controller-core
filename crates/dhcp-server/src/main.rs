@@ -72,7 +72,7 @@ async fn run_dhcp_server(args: Args, cancel_token: CancellationToken) {
 
     let dhcp_timestamps = Arc::new(Mutex::new({
         let d = DhcpTimestamps::new(if let ServerMode::Dpu = args.mode {
-            DhcpTimestampsFilePath::Hbn
+            DhcpTimestampsFilePath::HbnTmp
         } else {
             DhcpTimestampsFilePath::NotSet
         });
@@ -602,7 +602,7 @@ async fn process(
         if let Err(e) = dhcp_timestamps.write() {
             tracing::error!(
                 "Failed writing to {}: {e}",
-                DhcpTimestampsFilePath::Hbn.path_str()
+                DhcpTimestampsFilePath::HbnTmp.path_str()
             );
         }
     }
