@@ -243,7 +243,8 @@ pub fn dpu_agent_service(reg: &CarbideServiceRegistryConfig) -> ServiceDefinitio
 
         config_values: Some(serde_json::json!({
             "dhcp_server": {
-                "service_name": "{{ (index .Services \"carbide-dhcp-server\").Name }}"
+                "service_name": "{{ (index .Services \"carbide-dhcp-server\").Name }}",
+                "interface_prepend": "d_"
             },
             "fmds": {
                 "service_name": "{{ (index .Services \"carbide-fmds\").Name }}"

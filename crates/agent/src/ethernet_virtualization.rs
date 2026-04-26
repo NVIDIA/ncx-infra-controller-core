@@ -536,10 +536,11 @@ pub async fn update_nvue(
         NvueUpdateFlavor::RestApi { nvue_client } => {
             let config = NvueConfig::from_yaml(&next_contents)
                 .map_err(|e| eyre::eyre!("Couldn't parse NVUE config as YAML: {e}"))?;
-            let _result = nvue_client
+            let revision_id = nvue_client
                 .push_config(&config)
                 .await
-                .map_err(|e| eyre::eyre!("Couldn't push new config to NVUE server: {e}"));
+                .map_err(|e| eyre::eyre!("Couldn't push new config to NVUE server: {e}"))?;
+            tracing::debug!(revision_id, "Applied NVUE config via REST API");
             Ok(true)
         }
     }
@@ -799,7 +800,9 @@ pub async fn update_interface_state(nc: &ManagedHostNetworkConfigResponse) -> ey
 /// Returns `Ok(false)` (matching the file-write path convention) to signal
 /// that no active DHCP service reload occurred.
 async fn stop_dhcp_via_grpc(grpc_addr: &str) -> eyre::Result<bool> {
-    crate::dhcp_server_grpc_client::stop_server(grpc_addr).await?;
+    crate::dhcp_server_grpc_client::stop_server(grpc_addr)
+        .await
+        .wrap_err_with(|| format!("stop_dhcp_via_grpc({grpc_addr})"))?;
     Ok(false)
 }
 
@@ -863,19 +866,24 @@ async fn update_dhcp_via_grpc(
         nameservers_v4,
         loopback_ip,
     )?;
-    let host_config = utils::models::dhcp::HostConfig::try_from(
+    let mut host_config = utils::models::dhcp::HostConfig::try_from(
         network_config.clone(),
         hbn_device_names.reps[0],
         hbn_device_names.virt_rep_begin,
         hbn_device_names.sf_id,
+        false,
     )?;
-    let interfaces: Vec<String> = host_config.host_ip_addresses.keys().cloned().collect();
 
-    let interfaces = if let Some(translation_mode) = interface_translation_mode {
-        translation_mode.translate_list(&interfaces)
-    } else {
-        interfaces
-    };
+    // Update the interface names if translation is needed.
+    if let Some(translation_mode) = interface_translation_mode {
+        host_config.host_ip_addresses = host_config
+            .host_ip_addresses
+            .into_iter()
+            .map(|(name, info)| (translation_mode.translate(&name), info))
+            .collect();
+    }
+
+    let interfaces: Vec<String> = host_config.host_ip_addresses.keys().cloned().collect();
 
     crate::dhcp_server_grpc_client::update_and_reload(
         grpc_addr,
@@ -883,7 +891,8 @@ async fn update_dhcp_via_grpc(
         Some(host_config),
         interfaces,
     )
-    .await?;
+    .await
+    .wrap_err_with(|| format!("update_dhcp_via_grpc({grpc_addr})"))?;
     Ok(true)
 }
 
@@ -913,14 +922,24 @@ pub async fn update_dhcp(
         if stop_server {
             return stop_dhcp_via_grpc(addr).await;
         }
-        return update_dhcp_via_grpc(
-            addr,
-            network_config,
-            service_addrs,
-            hbn_device_names,
-            interface_translation_mode,
-        )
-        .await;
+
+        let needed_state = needed_interface_state(
+            network_config.is_primary_dpu,
+            network_config.use_admin_network,
+        );
+
+        if needed_state == InterfaceState::Up {
+            return update_dhcp_via_grpc(
+                addr,
+                network_config,
+                service_addrs,
+                hbn_device_names,
+                interface_translation_mode,
+            )
+            .await;
+        }
+
+        return Ok(false);
     }
 
     let path_dhcp_relay = FPath(hbn_root.join(dhcp::RELAY_PATH));
@@ -1670,20 +1689,6 @@ impl InterfaceTranslationMode {
                 format!("{prefix}{input_interface_name}")
             }
         }
-    }
-
-    pub fn translate_list<S, I>(&self, input_interface_names: I) -> Vec<String>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        input_interface_names
-            .into_iter()
-            .map(|name| {
-                let name = name.as_ref();
-                self.translate(name)
-            })
-            .collect()
     }
 }
 
@@ -3159,7 +3164,7 @@ mod tests {
         let dhcp_host_config: HostConfig = serde_yaml::from_str(&super::read_limited(i.path())?)?;
         validate_host_config(
             dhcp_host_config,
-            HostConfig::try_from(network_config.clone(), "pf0hpf_sf", "pf0vf", "_sf")?,
+            HostConfig::try_from(network_config.clone(), "pf0hpf_sf", "pf0vf", "_sf", true)?,
         );
 
         // tenant host config.
@@ -3223,7 +3228,7 @@ mod tests {
         let dhcp_host_config: HostConfig = serde_yaml::from_str(&super::read_limited(i.path())?)?;
         validate_host_config(
             dhcp_host_config,
-            HostConfig::try_from(network_config, "pf0hpf_sf", "pf0vf", "_sf")?,
+            HostConfig::try_from(network_config, "pf0hpf_sf", "pf0vf", "_sf", true)?,
         );
 
         Ok(())
@@ -3345,6 +3350,27 @@ mod tests {
         let interface_name = "i0";
         let translated_interface_name = translation.translate(interface_name);
         assert_eq!(translated_interface_name.as_str(), "pre_i0");
+    }
+
+    #[test]
+    fn test_stop_server_matches_needed_state_down() {
+        // `update_dhcp` short-circuits to `stop_dhcp_via_grpc` when
+        // `use_admin_network && !is_primary_dpu`. That condition must remain
+        // identical to "needed_interface_state == Down". If either condition
+        // changes independently, the new `if needed_state == Up { ... } else
+        // { Ok(false) }` branch in update_dhcp becomes reachable and the
+        // invariant in this test pins the divergence.
+        for &is_primary in &[true, false] {
+            for &use_admin in &[true, false] {
+                let stop_server = use_admin && !is_primary;
+                let needed_down =
+                    needed_interface_state(is_primary, use_admin) == InterfaceState::Down;
+                assert_eq!(
+                    stop_server, needed_down,
+                    "stop_server flag must match needed_state==Down (is_primary_dpu={is_primary}, use_admin_network={use_admin})"
+                );
+            }
+        }
     }
 
     #[test]

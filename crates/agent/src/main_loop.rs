@@ -717,8 +717,11 @@ impl MainLoop {
 
                     let joined_result = match (update_result, dhcp_result) {
                         (Ok(a), Ok(b)) => Ok(a | b),
-                        (Err(e1), Err(e2)) => Err(eyre::eyre!("errors update: {e1}, dhcp: {e2}")),
-                        (Err(err), _) | (_, Err(err)) => Err(err),
+                        (Err(e1), Err(e2)) => Err(eyre::eyre!(
+                            "network update failed: update={e1:#}, dhcp={e2:#}"
+                        )),
+                        (Err(err), Ok(_)) => Err(err.wrap_err("network update failed (update)")),
+                        (Ok(_), Err(err)) => Err(err.wrap_err("network update failed (dhcp)")),
                     };
                     match joined_result {
                         Ok(has_changed) => {
@@ -815,7 +818,10 @@ impl MainLoop {
 
                     // In case of secondary DPU, the interface must be disabled if on admin network, else enabled.
                     // Note that the nvue config handles the blocking of traffic on the interface.  This is only so that the host link reflects the correct state.
-                    if let Err(err) = ethernet_virtualization::update_interface_state(&conf).await {
+                    if self.options.agent_platform_type.is_dpu_os()
+                        && let Err(err) =
+                            ethernet_virtualization::update_interface_state(&conf).await
+                    {
                         tracing::error!(error = format!("{err:#}"), "Updating interface state.");
                     }
                 }

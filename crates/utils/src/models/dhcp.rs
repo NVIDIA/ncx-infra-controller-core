@@ -132,6 +132,7 @@ impl HostConfig {
         physical_rep: &str,
         virt_rep_begin: &str,
         sf_id: &str,
+        is_dpu_os: bool,
     ) -> Result<Self, DhcpDataError> {
         let mut host_ip_addresses = BTreeMap::new();
         let virtualization_type = value.network_virtualization_type();
@@ -146,8 +147,10 @@ impl HostConfig {
         };
 
         for interface in interface_configs {
-            let interface_name = if virtualization_type == ::rpc::forge::VpcVirtualizationType::Fnn
-                && !interface.is_l2_segment
+            let interface_name = if (virtualization_type
+                == ::rpc::forge::VpcVirtualizationType::Fnn
+                && !interface.is_l2_segment)
+                || !is_dpu_os
             {
                 if interface.function_type() == InterfaceFunctionType::Physical {
                     // pf0hpf_sf/if
