@@ -138,7 +138,7 @@ releases:
       - values.yaml
       - values/carbide-prereqs-dynamic.yaml.gotmpl
     hooks:
-      - events: ["postsync"]
+      - events: ["postSync"]
         command: "bash"
         args:
           - -c
