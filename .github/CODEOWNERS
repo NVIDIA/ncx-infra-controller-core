@@ -16,5 +16,9 @@
 # Helm charts
 /helm/ @NVIDIA/dsx-sw-helm
 
+# Documentation
+/docs/ @CoCo-Ben
+/fern/ @CoCo-Ben
+
 # Network IP module
 /common/network/src/ip/ @DrewBloechl
