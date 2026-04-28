@@ -556,10 +556,43 @@ pub(crate) async fn component_power_control(
 
             (results, ips)
         }
-        rpc::component_power_control_request::Target::MachineIds(_list) => {
-            return Err(Status::unimplemented(
-                "machine power control should use AdminPowerControl",
-            ));
+        rpc::component_power_control_request::Target::MachineIds(list) => {
+            let mut txn = api.txn_begin().await?;
+            let mut resolved = Vec::with_capacity(list.machine_ids.len());
+            let mut results = Vec::with_capacity(list.machine_ids.len());
+            let mut ips = Vec::new();
+
+            for machine_id in &list.machine_ids {
+                let id_str = machine_id.to_string();
+                match crate::handlers::bmc_endpoint_explorer::validate_and_complete_bmc_endpoint_request(
+                    &mut txn,
+                    None,
+                    Some(*machine_id),
+                )
+                .await
+                {
+                    Ok((req, _)) => resolved.push((*machine_id, req)),
+                    Err(e) => results.push(error_result(&id_str, e.to_string())),
+                };
+            }
+            txn.commit().await?;
+
+            for (machine_id, bmc_endpoint_request) in resolved {
+                let id_str = machine_id.to_string();
+
+                if let Ok(ip) = bmc_endpoint_request.ip_address.parse() {
+                    ips.push(ip);
+                }
+
+                let outcome = compute_power_control(api, machine_id, action).await;
+
+                match outcome {
+                    Ok(()) => results.push(success_result(&id_str)),
+                    Err(e) => results.push(error_result(&id_str, e.message().into())),
+                }
+            }
+
+            (results, ips)
         }
     };
 
@@ -572,6 +605,134 @@ pub(crate) async fn component_power_control(
     Ok(Response::new(rpc::ComponentPowerControlResponse {
         results,
     }))
+}
+
+async fn compute_power_control(
+    api: &Api,
+    machine_id: carbide_uuid::machine::MachineId,
+    action: PowerAction,
+) -> Result<(), Status> {
+    let override_inserted = power_control_health_override(api, machine_id, true).await;
+
+    let result = machine_power_control(api, machine_id, action).await;
+
+    if override_inserted {
+        power_control_health_override(api, machine_id, false).await;
+    }
+
+    result
+}
+
+const MACHINE_POWER_OVERRIDE_SOURCE: &str = "component_power_control";
+const MACHINE_POWER_OVERRIDE_ALERT_ID: &str = "component-management-maintenance";
+const MACHINE_POWER_OVERRIDE_MESSAGE: &str = "Compute-Tray component power control in progress";
+
+/// Best-effort insert or removal of the health report override used to
+/// suppress external alerting during compute power control.
+/// Returns `true` when the operation succeeded.
+async fn power_control_health_override(
+    api: &Api,
+    machine_id: carbide_uuid::machine::MachineId,
+    insert: bool,
+) -> bool {
+    let result = if insert {
+        let req = rpc::InsertHealthReportOverrideRequest {
+            machine_id: Some(machine_id),
+            health_report_entry: Some(rpc::HealthReportEntry {
+                report: Some(::rpc::health::HealthReport {
+                    source: MACHINE_POWER_OVERRIDE_SOURCE.to_string(),
+                    triggered_by: None,
+                    observed_at: None,
+                    successes: vec![],
+                    alerts: vec![::rpc::health::HealthProbeAlert {
+                        id: MACHINE_POWER_OVERRIDE_ALERT_ID.to_string(),
+                        target: None,
+                        in_alert_since: None,
+                        message: MACHINE_POWER_OVERRIDE_MESSAGE.to_string(),
+                        tenant_message: None,
+                        classifications: vec![
+                            health_report::HealthAlertClassification::suppress_external_alerting()
+                                .to_string(),
+                        ],
+                    }],
+                }),
+                mode: rpc::HealthReportApplyMode::Replace as i32,
+            }),
+        };
+        crate::handlers::health::insert_health_report_override(api, Request::new(req))
+            .await
+            .map(|_| ())
+    } else {
+        let req = rpc::RemoveHealthReportOverrideRequest {
+            machine_id: Some(machine_id),
+            source: MACHINE_POWER_OVERRIDE_SOURCE.to_string(),
+        };
+        crate::handlers::health::remove_health_report_override(api, Request::new(req))
+            .await
+            .map(|_| ())
+    };
+
+    if let Err(e) = &result {
+        let action = if insert { "insert" } else { "remove" };
+        tracing::warn!(
+            %machine_id,
+            error = %e,
+            "failed to {action} health report override for power control"
+        );
+    }
+
+    result.is_ok()
+}
+
+async fn machine_power_control(
+    api: &Api,
+    machine_id: carbide_uuid::machine::MachineId,
+    action: PowerAction,
+) -> Result<(), Status> {
+    use rpc::admin_power_control_request::SystemPowerControl;
+
+    let (desired_power_state, redfish_action) = match action {
+        PowerAction::On => (rpc::PowerState::On as i32, SystemPowerControl::On),
+        PowerAction::ForceRestart => {
+            (rpc::PowerState::On as i32, SystemPowerControl::ForceRestart)
+        }
+        PowerAction::GracefulRestart => {
+            (rpc::PowerState::On as i32, SystemPowerControl::GracefulRestart)
+        }
+        PowerAction::AcPowercycle => {
+            (rpc::PowerState::On as i32, SystemPowerControl::AcPowercycle)
+        }
+        PowerAction::GracefulShutdown => {
+            (rpc::PowerState::Off as i32, SystemPowerControl::GracefulShutdown)
+        }
+        PowerAction::ForceOff => (rpc::PowerState::Off as i32, SystemPowerControl::ForceOff),
+    };
+
+    let power_req = rpc::PowerOptionUpdateRequest {
+        machine_id: Some(machine_id),
+        power_state: desired_power_state,
+    };
+    match crate::handlers::power_options::update_power_option(api, Request::new(power_req)).await {
+        Ok(_) => {}
+        Err(e) if e.code() == Code::InvalidArgument && e.message().contains("already set as") => {
+            tracing::debug!(
+                %machine_id,
+                desired_power_state,
+                "power option already in desired state, skipping"
+            );
+        }
+        Err(e) => return Err(e),
+    }
+
+    let admin_req = rpc::AdminPowerControlRequest {
+        bmc_endpoint_request: None,
+        machine_id: Some(machine_id.to_string()),
+        action: redfish_action as i32,
+    };
+    crate::handlers::bmc_endpoint_explorer::admin_power_control(api, Request::new(admin_req))
+        .await?;
+
+    Ok(())
 }
 
 /// Best-effort: flag BMC/PMC endpoints for re-exploration so the site
