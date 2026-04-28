@@ -87,6 +87,8 @@ Tenant isolation across network planes is reconciled by dedicated monitor proces
 
 A tenant's instance appears as `Configuring` until all applicable network planes confirm the desired configuration is in place.
 
+For a deeper look at each component and the state machine design, see [Architecture: Overview and Components](../architecture/overview.md).
+
 ## Where NICo fits
 
 NICo sits below Kubernetes and platform layers. It exposes clean REST and gRPC APIs that higher-level systems — BMaaS, VMaaS, orchestration engines, ISV control planes — can consume directly. It does not dictate how scheduling, tenancy policy, or workloads are managed above it.
