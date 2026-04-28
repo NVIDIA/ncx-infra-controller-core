@@ -643,7 +643,7 @@ async fn power_control_health_override(
     insert: bool,
 ) -> bool {
     let result = if insert {
-        let req = rpc::InsertHealthReportOverrideRequest {
+        let req = rpc::InsertMachineHealthReportRequest {
             machine_id: Some(machine_id),
             health_report_entry: Some(rpc::HealthReportEntry {
                 report: Some(::rpc::health::HealthReport {
@@ -666,15 +666,15 @@ async fn power_control_health_override(
                 mode: rpc::HealthReportApplyMode::Replace as i32,
             }),
         };
-        crate::handlers::health::insert_health_report_override(api, Request::new(req))
+        crate::handlers::health::insert_machine_health_report(api, Request::new(req))
             .await
             .map(|_| ())
     } else {
-        let req = rpc::RemoveHealthReportOverrideRequest {
+        let req = rpc::RemoveMachineHealthReportRequest {
             machine_id: Some(machine_id),
             source: MACHINE_POWER_OVERRIDE_SOURCE.to_string(),
         };
-        crate::handlers::health::remove_health_report_override(api, Request::new(req))
+        crate::handlers::health::remove_machine_health_report(api, Request::new(req))
             .await
             .map(|_| ())
     };

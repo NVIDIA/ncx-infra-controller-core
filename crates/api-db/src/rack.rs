@@ -209,7 +209,7 @@ pub async fn final_delete(txn: &mut PgConnection, rack_id: &RackId) -> DatabaseR
     Ok(())
 }
 
-pub async fn insert_health_report_override(
+pub async fn insert_health_report(
     txn: &mut PgConnection,
     rack_id: &RackId,
     mode: HealthReportApplyMode,
@@ -218,7 +218,7 @@ pub async fn insert_health_report_override(
     crate::health_report::insert_health_report(txn, "racks", rack_id, mode, health_report).await
 }
 
-pub async fn remove_health_report_override(
+pub async fn remove_health_report(
     txn: &mut PgConnection,
     rack_id: &RackId,
     mode: HealthReportApplyMode,
