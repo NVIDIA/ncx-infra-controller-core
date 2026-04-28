@@ -59,6 +59,34 @@ NICo REST is a collection of microservices that expose NICo's capabilities as a 
 
 ![NICo architecture diagram](../static/nico_arch_diagram.png)
 
+NICo is deployed as a Kubernetes cluster co-located in the datacenter it manages — the **Site Controller**. The cluster requires a minimum of three nodes for high availability. All NICo control plane services run on this cluster and communicate over gRPC.
+
+### NICo Core as the single source of truth
+
+NICo Core is the central control plane service and the only component that reads from and writes to the Postgres database, making it the single source of truth for all system state. Every other service — DHCP, PXE, hardware health — is stateless: they forward requests to NICo Core and derive their configuration from it rather than maintaining their own state.
+
+NICo Core implements **state machines** for every resource it manages: managed hosts, network segments, InfiniBand partitions, and NVLink partitions. State handlers run periodically (typically every 30 seconds) and are the *only* component that may change a resource's lifecycle state. API calls from operators or tenants queue an intent ("provision this host"), and the state machine drives the actual transition. This makes lifecycle management deterministic and automatically retries on transient failures — a temporarily unreachable BMC does not require operator intervention.
+
+### The DPU as the enforcement boundary
+
+Each managed host is a BlueField DPU paired with a host server. The DPU is the critical architectural element: it runs the `dpu-agent`, which maintains a persistent gRPC connection to NICo Core, polls for its desired network configuration every 30 seconds, applies it via HBN (Host-Based Networking with Containerized Cumulus, configured via NVUE), and reports its observed state back. NICo never marks a configuration as applied until the DPU confirms it.
+
+Because the DPU operates independently of the host OS, network isolation is enforced even if the host is compromised, unresponsive, or being sanitized. The host's primary networking path runs through the DPU — including a per-host DHCP server that runs on the DPU itself, so host DHCP traffic never reaches the underlay network.
+
+### Out-of-band management via Redfish
+
+NICo manages and monitors hosts exclusively through out-of-band channels. The **Site Explorer** component within NICo Core continuously crawls BMC endpoints over the OOB network using Redfish — collecting hardware inventory, firmware versions, power state, and boot configuration. This is how hosts are discovered, how DPUs are matched to their host servers via serial number correlation, and how provisioning sequences are triggered (power cycles, boot order changes, BIOS attribute configuration). The **Hardware Health** service independently scrapes BMC sensor data via Redfish on a 60-second interval and exports it as Prometheus metrics.
+
+### Networking isolation
+
+Tenant isolation across network planes is reconciled by dedicated monitor processes that continuously compare desired state against observed state:
+
+- **Ethernet** — the DPU agent applies L3 VXLAN/EVPN configuration directly on the DPU via HBN
+- **InfiniBand** — `IbFabricMonitor` reconciles P_Key partition assignments against UFM
+- **NVLink** — `NvlPartitionMonitor` manages logical partition assignments via NMX-M APIs
+
+A tenant's instance appears as `Configuring` until all applicable network planes confirm the desired configuration is in place.
+
 ## Where NICo fits
 
 NICo sits below Kubernetes and platform layers. It exposes clean REST and gRPC APIs that higher-level systems — BMaaS, VMaaS, orchestration engines, ISV control planes — can consume directly. It does not dictate how scheduling, tenancy policy, or workloads are managed above it.
