@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+use carbide_macros::sqlx_test;
 use sqlx::FromRow;
 
 use crate::FirmwareConfig;
@@ -23,7 +25,7 @@ struct AsStrings {
     pub versions: String,
 }
 
-#[super::sqlx_test]
+#[sqlx_test]
 pub async fn test_build_versions(pool: sqlx::PgPool) -> Result<(), eyre::Error> {
     use std::ops::DerefMut;
 
@@ -93,7 +95,11 @@ current_version_reported_as = "^2$"
     let mut txn = pool.begin().await?;
     desired_firmware::snapshot_desired_firmware(
         &mut txn,
-        config.map().into_values().collect::<Vec<_>>().as_slice(),
+        config
+            .create_snapshot()
+            .into_values()
+            .collect::<Vec<_>>()
+            .as_slice(),
     )
     .await?;
     txn.commit().await?;

@@ -30,6 +30,7 @@ use ::rpc::protos::dns::{
     UpdateDomainRequest,
 };
 use ::rpc::protos::{measured_boot as measured_boot_pb, mlx_device as mlx_device_pb};
+use carbide_nvlink_manager::nvlink::NmxmClientPool;
 use carbide_redfish::libredfish::RedfishClientPool;
 use carbide_site_explorer::EndpointExplorer;
 use carbide_uuid::machine::{MachineId, MachineInterfaceId};
@@ -42,7 +43,7 @@ use librms::RmsApi;
 use model::machine::Machine;
 use model::machine::machine_search_config::MachineSearchConfig;
 use model::resource_pool::common::CommonPools;
-use sqlx::{PgPool, PgTransaction};
+use sqlx::PgTransaction;
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -54,7 +55,6 @@ use crate::dynamic_settings::DynamicSettings;
 use crate::ethernet_virtualization::EthVirtData;
 use crate::ib::IBFabricManager;
 use crate::logging::log_limiter::LogLimiter;
-use crate::nvlink::NmxmClientPool;
 use crate::rack::bms_client::BmsDsxExchangeHandle;
 use crate::scout_stream::ConnectionRegistry;
 use crate::state_controller::controller::Enqueuer;
@@ -1441,6 +1441,13 @@ impl Forge for Api {
         crate::handlers::expected_machine::get_linked(self, request).await
     }
 
+    async fn get_all_unexpected_machines(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<rpc::UnexpectedMachineList>, Status> {
+        crate::handlers::expected_machine::get_all_unexpected_machines(self, request).await
+    }
+
     async fn delete_all_expected_machines(
         &self,
         request: Request<()>,
@@ -2200,6 +2207,13 @@ impl Forge for Api {
         request: Request<rpc::MachineValidationOnDemandRequest>,
     ) -> Result<Response<rpc::MachineValidationOnDemandResponse>, Status> {
         crate::handlers::machine_validation::on_demand_machine_validation(self, request).await
+    }
+
+    async fn on_demand_rack_maintenance(
+        &self,
+        request: Request<rpc::RackMaintenanceOnDemandRequest>,
+    ) -> Result<Response<rpc::RackMaintenanceOnDemandResponse>, Status> {
+        crate::handlers::rack::on_demand_rack_maintenance(self, request).await
     }
 
     async fn tpm_add_ca_cert(
@@ -3301,7 +3315,7 @@ pub(crate) fn log_request_data_redacted(s: impl AsRef<str>) {
 
 /// Logs the Machine ID in the current tracing span
 pub(crate) fn log_machine_id(machine_id: &MachineId) {
-    tracing::Span::current().record("forge.machine_id", machine_id.to_string());
+    tracing::Span::current().record("forge.machine_id", tracing::field::display(machine_id));
 }
 
 pub(crate) fn log_tenant_organization_id(organization_id: &str) {
@@ -3317,19 +3331,6 @@ pub(crate) fn truncate(mut s: String, len: usize) -> String {
         s.replace_range(len - 2..len, "..");
     }
     s
-}
-
-pub trait TransactionVending {
-    fn txn_begin(&self) -> impl Future<Output = Result<db::Transaction<'_>, DatabaseError>>;
-}
-
-impl TransactionVending for PgPool {
-    #[track_caller]
-    // This returns an `impl Future` instead of being async, so that we can use #[track_caller],
-    // which is unsupported with async fn's.
-    fn txn_begin(&self) -> impl Future<Output = Result<db::Transaction<'_>, DatabaseError>> {
-        db::Transaction::begin(self)
-    }
 }
 
 impl Api {

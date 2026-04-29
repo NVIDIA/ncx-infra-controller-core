@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,6 +58,8 @@ struct RedfishSimState {
     no_component_integrities: bool,
     firmware_for_component_error: bool,
     get_task_trigger_evidence_returns_interrupted: bool,
+    machine_setup_bios_job_id: Option<String>,
+    job_state_sequence: VecDeque<JobState>,
 }
 
 #[derive(Debug)]
@@ -129,6 +131,14 @@ impl RedfishSim {
             })),
             credential_manager: TestCredentialManager::default(),
         }
+    }
+
+    pub fn set_machine_setup_bios_job_id(&self, job_id: Option<String>) {
+        self.state.lock().unwrap().machine_setup_bios_job_id = job_id;
+    }
+
+    pub fn set_job_state_sequence(&self, states: Vec<JobState>) {
+        self.state.lock().unwrap().job_state_sequence = VecDeque::from(states);
     }
 }
 
@@ -251,7 +261,7 @@ impl Redfish for RedfishSimClient {
         host_state.actions.push(RedfishSimAction::MachineSetup {
             oem_manager_profiles: oem_manager_profiles.clone(),
         });
-        Ok(None)
+        Ok(state.machine_setup_bios_job_id.clone())
     }
 
     async fn machine_setup_status(
@@ -914,7 +924,11 @@ impl Redfish for RedfishSimClient {
     }
 
     async fn get_job_state(&self, _job_id: &str) -> Result<JobState, RedfishError> {
-        Ok(JobState::Unknown)
+        let mut state = self.state.lock().unwrap();
+        Ok(state
+            .job_state_sequence
+            .pop_front()
+            .unwrap_or(JobState::Unknown))
     }
 
     async fn get_collection(&self, _id: ODataId) -> Result<Collection, RedfishError> {

@@ -22,35 +22,6 @@
 #![cfg_attr(test, allow(txn_held_across_await))]
 #![cfg_attr(test, allow(txn_without_commit))]
 
-#[cfg(test)]
-/// test_assert will run an assertion if we are compiled to run tests, or will print an error otherwise.
-macro_rules! test_assert {
-    ($cond:expr $(,)?) => {
-        assert!($cond);
-    };
-    ($cond:expr, $($arg:tt)+) => {
-        assert!($cond, $($arg)+);
-    };
-}
-
-#[cfg(not(test))]
-/// test_assert will run an assertion if we are compiled to run tests, or will print an error otherwise.
-macro_rules! test_assert {
-    ($cond:expr $(,)?) => {
-        if !$cond {
-            tracing::error!(
-                assertion = stringify!($cond),
-                "test-only assertion failed"
-            );
-        }
-    };
-    ($cond:expr, $($arg:tt)+) => {
-        if !$cond {
-            tracing::error!($($arg)+);
-        }
-    };
-}
-
 // NOTE on pub vs non-pub mods:
 //
 // carbide-api is a CLI crate, not a lib. The only reason we have lib.rs is to export things so that
@@ -74,7 +45,6 @@ mod dpf_services;
 mod dynamic_settings;
 mod errors;
 mod ethernet_virtualization;
-mod firmware_downloader;
 mod handlers;
 mod ib;
 mod ib_fabric_monitor;
@@ -88,9 +58,6 @@ mod machine_validation;
 mod measured_boot;
 mod mqtt_state_change_hook;
 mod network_segment;
-mod nvl_partition_monitor;
-mod nvlink;
-mod preingestion_manager;
 mod rack;
 mod redfish;
 mod run;

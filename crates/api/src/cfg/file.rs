@@ -25,7 +25,12 @@ use std::sync::atomic::AtomicBool;
 use bmc_vendor::BMCVendor;
 use carbide_authn::config::{AllowedCertCriteria, TrustConfig};
 use carbide_firmware::FirmwareConfig;
+use carbide_nvlink_manager::config::NvLinkConfig;
+use carbide_preingestion_manager::PreingestionManagerConfig;
 use carbide_site_explorer::config::SiteExplorerConfig;
+use carbide_utils::config::{
+    as_duration, as_std_duration, deserialize_arc_atomic_bool, serialize_arc_atomic_bool,
+};
 use chrono::Duration;
 use duration_str::{deserialize_duration, deserialize_duration_chrono};
 use ipnetwork::{IpNetwork, Ipv4Network};
@@ -46,22 +51,19 @@ use model::resource_pool::define::ResourcePoolDef;
 use model::tenant::identity_config::SigningAlgorithm;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
-use utils::config::{
-    as_duration, as_std_duration, deserialize_arc_atomic_bool, serialize_arc_atomic_bool,
-};
 
 use crate::state_controller::config::IterationConfig;
 
 const MAX_IB_PARTITION_PER_TENANT: i32 = 31;
 
-static BF2_NIC: &str = "24.47.1026";
-static BF2_BMC: &str = "BF-25.10-9";
+static BF2_NIC: &str = "24.47.2682";
+static BF2_BMC: &str = "BF-25.10-20";
 static BF2_CEC: &str = "4-15";
-static BF2_UEFI: &str = "4.13.0-26-g337fea6bfd";
-static BF3_NIC: &str = "32.47.1026";
-static BF3_BMC: &str = "BF-25.10-9";
+static BF2_UEFI: &str = "4.13.2-12-g943a91640d";
+static BF3_NIC: &str = "32.47.2682";
+static BF3_BMC: &str = "BF-25.10-20";
 static BF3_CEC: &str = "00.02.0195.0000_n02";
-static BF3_UEFI: &str = "4.13.0-26-g337fea6bfd";
+static BF3_UEFI: &str = "4.13.2-12-g943a91640d";
 
 /// nico-api configuration file content
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -662,7 +664,7 @@ pub struct DpfConfig {
     pub bfb_url: String,
     /// Additional Helm services to deploy alongside DPF.
     #[serde(default)]
-    pub services: Option<Vec<DpfServiceConfig>>,
+    pub services: Box<DpfMandatoryServicesConfig>,
     /// Whether to create the bf.cfg ConfigMap during initialization.
     #[serde(default = "default_to_true")]
     pub bfcfg_enabled: bool,
@@ -680,7 +682,7 @@ impl Default for DpfConfig {
             flavor_name: default_dpf_flavor_name(),
             node_label_key: default_dpf_node_label_key(),
             bfb_url: String::new(),
-            services: None,
+            services: Box::default(),
             bfcfg_enabled: true,
             v2: false,
         }
@@ -702,6 +704,40 @@ fn default_dpf_node_label_key() -> String {
     "carbide.nvidia.com/controlled.node.v1".to_string()
 }
 
+/// Configuration for a mandatory Helm-based DPF service.
+/// Making it configurable means, a user can provide the link for his version of the service (for
+/// testing/dev purpose).
+/// There are following mandatory services:
+/// dpu-agent, fmds, dhcp-server, doca-hbn, dts and otel.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DpfMandatoryServicesConfig {
+    #[serde(default = "crate::dpf_services::default_dts_service")]
+    pub dts: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_doca_hbn_service")]
+    pub doca_hbn: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_dpu_agent_service")]
+    pub dpu_agent: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_dhcp_server_service")]
+    pub dhcp_server: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_fmds_service")]
+    pub fmds: DpfServiceConfig,
+    #[serde(default = "crate::dpf_services::default_otel_service")]
+    pub otel: DpfServiceConfig,
+}
+
+impl Default for DpfMandatoryServicesConfig {
+    fn default() -> Self {
+        Self {
+            dts: crate::dpf_services::default_dts_service(),
+            doca_hbn: crate::dpf_services::default_doca_hbn_service(),
+            dpu_agent: crate::dpf_services::default_dpu_agent_service(),
+            dhcp_server: crate::dpf_services::default_dhcp_server_service(),
+            fmds: crate::dpf_services::default_fmds_service(),
+            otel: crate::dpf_services::default_otel_service(),
+        }
+    }
+}
+
 /// Configuration for a single Helm-based DPF service.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DpfServiceConfig {
@@ -713,6 +749,10 @@ pub struct DpfServiceConfig {
     pub helm_chart: String,
     /// Version of the Helm chart.
     pub helm_version: String,
+    /// Url for docker image
+    pub docker_repo_url: String,
+    /// Version of docker image
+    pub docker_image_tag: String,
 }
 
 /// Machine identity (SPIFFE JWT-SVID) configuration.
@@ -1083,6 +1123,27 @@ impl CarbideConfig {
             .as_ref()
             .filter(|conf| conf.enabled)
             .map(|conf| conf.mqtt_broker_port)
+    }
+
+    /// Returns preingestion manager config.
+    pub fn preingestion_manager(&self) -> PreingestionManagerConfig {
+        PreingestionManagerConfig {
+            run_interval: self
+                .firmware_global
+                .run_interval
+                .to_std()
+                .unwrap_or(std::time::Duration::from_secs(30)),
+            concurrency_limit: self.firmware_global.concurrency_limit,
+            hgx_bmc_gpu_reboot_delay: self
+                .firmware_global
+                .hgx_bmc_gpu_reboot_delay
+                .to_std()
+                .unwrap_or(std::time::Duration::from_secs(30)),
+            max_concurrent_bfb_copies: self.firmware_global.max_concurrent_bfb_copies,
+            autoupdate: self.firmware_global.autoupdate,
+            no_reset_retries: self.firmware_global.no_reset_retries,
+            firmware: self.get_firmware_config(),
+        }
     }
 }
 
@@ -1536,62 +1597,6 @@ impl IBFabricConfig {
         let service_level = i32::deserialize(deserializer)?;
 
         IBServiceLevel::try_from(service_level).map_err(|e| serde::de::Error::custom(e.to_string()))
-    }
-}
-
-/// NvLink related configuration.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct NvLinkConfig {
-    /// Enables NvLink partitioning.
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// Defaults to 1 Minute if not specified.
-    #[serde(
-        default = "NvLinkConfig::default_monitor_run_interval",
-        deserialize_with = "deserialize_duration",
-        serialize_with = "as_std_duration"
-    )]
-    pub monitor_run_interval: std::time::Duration,
-
-    /// Timeout for pending NMX-M operations. Defaults to 10 seconds if not specified.
-    #[serde(
-        default = "NvLinkConfig::default_nmx_m_operation_timeout",
-        deserialize_with = "deserialize_duration",
-        serialize_with = "as_std_duration"
-    )]
-    pub nmx_m_operation_timeout: std::time::Duration,
-
-    /// NMX-M endpoint (name or IP address) used to create client connections,
-    /// include port number as well if required eg. https://127.0.0.1:4010
-    #[serde(default = "default_nmx_m_endpoint")]
-    pub nmx_m_endpoint: String,
-    /// Set to true if NMX-M doesn't adhere to security requirements. Defaults to false
-    pub allow_insecure: bool,
-}
-
-fn default_nmx_m_endpoint() -> String {
-    "localhost".to_string()
-}
-
-impl Default for NvLinkConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            monitor_run_interval: Self::default_monitor_run_interval(),
-            nmx_m_operation_timeout: Self::default_nmx_m_operation_timeout(),
-            nmx_m_endpoint: "localhost".to_string(),
-            allow_insecure: false,
-        }
-    }
-}
-
-impl NvLinkConfig {
-    pub const fn default_monitor_run_interval() -> std::time::Duration {
-        std::time::Duration::from_secs(60)
-    }
-    pub const fn default_nmx_m_operation_timeout() -> std::time::Duration {
-        std::time::Duration::from_secs(10)
     }
 }
 
@@ -3840,23 +3845,6 @@ mqtt_endpoint = "mqtt.forge"
                 subnet_ip: Ipv4Addr::UNSPECIFIED,
                 subnet_mask: 0_i32,
                 auth: MqttAuthConfig::default(),
-            }
-        );
-    }
-
-    #[test]
-    fn deserialize_serialize_nvlink_config() {
-        let value_json = r#"{"enabled": true, "allow_insecure": true, "monitor_run_interval": "33", "nmx_m_operation_timeout": "21", "nmx_m_endpoint": "localhost"}"#;
-
-        let nvlink_config: NvLinkConfig = serde_json::from_str(value_json).unwrap();
-        assert_eq!(
-            nvlink_config,
-            NvLinkConfig {
-                enabled: true,
-                monitor_run_interval: std::time::Duration::from_secs(33),
-                nmx_m_operation_timeout: std::time::Duration::from_secs(21),
-                nmx_m_endpoint: "localhost".to_string(),
-                allow_insecure: true,
             }
         );
     }

@@ -15,10 +15,6 @@
  * limitations under the License.
  */
 
-// Needed for nv-redfish that requires deep recursion for Redfish
-// object type tree.
-#![recursion_limit = "256"]
-
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt::Display;
@@ -31,6 +27,7 @@ use std::time::Instant;
 
 use carbide_firmware::FirmwareConfig;
 use carbide_network::sanitized_mac;
+use carbide_utils::periodic_timer::PeriodicTimer;
 use carbide_uuid::machine::MachineType;
 use carbide_uuid::power_shelf::{PowerShelfIdSource, PowerShelfType};
 use chrono::Utc;
@@ -59,7 +56,6 @@ use sqlx::PgPool;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
-use utils::periodic_timer::PeriodicTimer;
 use version_compare::Cmp;
 mod endpoint_explorer;
 pub use endpoint_explorer::EndpointExplorer;
@@ -88,11 +84,35 @@ use model::rack::Rack;
 pub use switch_creator::SwitchCreator;
 pub mod config;
 pub mod errors;
+use std::sync::atomic::AtomicBool;
 
+use carbide_ipmi::IPMITool;
+use carbide_redfish::libredfish::RedfishClientPool;
+use carbide_redfish::nv_redfish::NvRedfishClientPool;
 use errors::{SiteExplorerError, SiteExplorerResult};
 
 use self::metrics::{PairingBlockerReason, exploration_error_to_metric_label};
+use crate::config::SiteExplorerExploreMode;
 use crate::explored_endpoint_index::ExploredEndpointIndex;
+
+pub fn new_bmc_explorer(
+    redfish_client_pool: Arc<dyn RedfishClientPool>,
+    nv_redfish_client_pool: Arc<NvRedfishClientPool>,
+    ipmi_tool: Arc<dyn IPMITool>,
+    credential_manager: Arc<dyn CredentialManager>,
+    rotate_switch_nvos_credentials: Arc<AtomicBool>,
+    mode: SiteExplorerExploreMode,
+) -> Arc<BmcEndpointExplorer> {
+    BmcEndpointExplorer::new(
+        redfish_client_pool,
+        nv_redfish_client_pool,
+        ipmi_tool,
+        credential_manager,
+        rotate_switch_nvos_credentials,
+        mode,
+    )
+    .into()
+}
 
 /// Ensures a rack row exists for the given `rack_id`.
 ///
@@ -435,9 +455,11 @@ impl SiteExplorer {
 
             let previous_health_report = machine
                 .as_ref()
-                .and_then(|machine| machine.site_explorer_health_report.as_ref());
+                .and_then(|machine| machine.site_explorer_health_report());
             let mut new_health_report: health_report::HealthReport =
-                health_report::HealthReport::empty("site-explorer".to_string());
+                health_report::HealthReport::empty(
+                    health_report::HealthReport::SITE_EXPLORER_SOURCE.to_string(),
+                );
 
             if let Some(ref e) = ep.report.last_exploration_error {
                 metrics.increment_endpoint_explorations_failures_overall_count(
@@ -542,6 +564,21 @@ impl SiteExplorer {
                             ],
                         });
                 }
+            } else if matches!(machine_type, MachineType::Host) && machine_id.is_some() {
+                // Orphan: a Managed Host whose BMC MAC is no longer listed in
+                // `expected_machines`. Carbide keeps maintaining the host, but
+                // it will not be re-ingested if force-deleted. This alert is a warning
+                // only and does not block allocations.
+                new_health_report
+                    .alerts
+                    .push(health_report::HealthProbeAlert {
+                        id: "OrphanManagedHost".parse().unwrap(),
+                        target: None,
+                        in_alert_since: None,
+                        message: "This managed host is not listed in Expected Machines".to_string(),
+                        tenant_message: None,
+                        classifications: vec![],
+                    });
             }
 
             new_health_report.update_in_alert_since(previous_health_report);
@@ -1474,6 +1511,7 @@ impl SiteExplorer {
         // the number of expected machines we've actually "seen."
         metrics.endpoint_explorations_expected_machines_missing_overall_count =
             expected_count - index.all_matched_expected_machines().len();
+        let fw_config_snapshot = Arc::new(self.firmware_config.create_snapshot());
 
         for endpoint in explore_endpoint_data.into_iter() {
             let endpoint_explorer = self.endpoint_explorer.clone();
@@ -1481,7 +1519,7 @@ impl SiteExplorer {
 
             let bmc_target_port = self.config.override_target_port.unwrap_or(443);
             let bmc_target_addr = SocketAddr::new(endpoint.address, bmc_target_port);
-            let firmware_config = self.firmware_config.clone();
+            let fw_config_snapshot = fw_config_snapshot.clone();
             let database_connection = self.database_connection.clone();
 
             task_set.push(
@@ -1529,7 +1567,7 @@ impl SiteExplorer {
                                 tracing::error!(%error, "Can not generate MachineId for explored endpoint");
                             }
                             report.model = report.model();
-                            if let Some(fw_info) = firmware_config.find_fw_info_for_host_report(report)
+                            if let Some(fw_info) = fw_config_snapshot.find_fw_info_for_host_report(report)
                             {
                                 let components_without_version = report.parse_versions(&fw_info);
                                 if !components_without_version.is_empty() {
@@ -2169,41 +2207,81 @@ impl SiteExplorer {
         }
 
         let mut ingest_host = true;
+        let interface = match self
+            .find_machine_interface_for_ip(host_endpoint.address)
+            .await
+        {
+            Ok(interface) => Some(interface),
+            Err(e) => {
+                tracing::warn!(
+                    bmc_ip_address = %host_endpoint.address,
+                    error = %e,
+                    "Site Explorer could not find machine interface for host endpoint",
+                );
+                None
+            }
+        };
 
-        if !matches!(system.power_state, PowerState::On) {
+        // The cached `systems[].power_state` may be stale when this endpoint was
+        // not refreshed in the current iteration, so prefer a live Redfish power
+        // state check for uningested hosts. The exceptions are auth/lockout and
+        // unreachable failures, where another live read is either unsafe or very
+        // unlikely to help. `None` means we have no trustworthy reading; we fall
+        // back to the cached state for remediation decisions only and defer
+        // ingestion to a later run.
+        let fresh_power_state: Option<PowerState> =
+            match host_endpoint.report.last_exploration_error.as_ref() {
+                Some(err) if err.is_unauthorized() || err.is_unreachable() => None,
+                _ => match interface.as_ref() {
+                    Some(interface) => self
+                        .endpoint_explorer
+                        .redfish_get_power_state(bmc_target_addr, interface)
+                        .await
+                        .ok()
+                        .map(PowerState::from),
+                    None => None,
+                },
+            };
+
+        let effective_power_state = fresh_power_state.unwrap_or(system.power_state);
+
+        if fresh_power_state.is_none() {
+            ingest_host = false;
+        }
+
+        if !matches!(effective_power_state, PowerState::On) {
+            ingest_host = false;
+
             if host_endpoint.pause_remediation {
                 tracing::info!(
                     "Site Explorer found an uningested host (bmc_ip_address: {}) that is off, but remediation is paused — skipping power-on",
                     host_endpoint.address,
                 );
-            } else {
+            } else if fresh_power_state.is_some() {
                 tracing::warn!(
                     "Site Explorer found an uningested host (bmc_ip_address: {}) that isnt on: {:#?}",
                     host_endpoint.address,
-                    system.power_state
+                    effective_power_state
                 );
 
-                let interface = self
-                    .find_machine_interface_for_ip(host_endpoint.address)
-                    .await?;
-
-                self.endpoint_explorer
-                    .redfish_power_control(
-                        bmc_target_addr,
-                        &interface,
-                        libredfish::SystemPowerControl::On,
-                    )
-                    .await
-                    .map_err(|err| {
-                        tracing::error!(
-                            "Site Explorer failed to turn on host (bmc_ip_address: {}) through redfish: {}",
-                            host_endpoint.address,
-                            err
+                if let Some(interface) = interface.as_ref() {
+                    self.endpoint_explorer
+                        .redfish_power_control(
+                            bmc_target_addr,
+                            interface,
+                            libredfish::SystemPowerControl::On,
                         )
-                    }).ok();
+                        .await
+                        .map_err(|err| {
+                            tracing::error!(
+                                "Site Explorer failed to turn on host (bmc_ip_address: {}) through redfish: {}",
+                                host_endpoint.address,
+                                err
+                            )
+                        })
+                        .ok();
+                }
             }
-
-            ingest_host = false;
         }
 
         if host_endpoint.report.vendor.unwrap_or_default().is_nvidia() {

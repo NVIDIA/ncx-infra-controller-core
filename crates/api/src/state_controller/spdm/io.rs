@@ -126,6 +126,7 @@ impl StateControllerIO for SpdmStateControllerIO {
     }
 
     fn state_sla(
+        &self,
         _state: &Versioned<Self::ControllerState>,
         _object_state: &Self::State,
     ) -> StateSla {
