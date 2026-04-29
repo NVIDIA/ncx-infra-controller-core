@@ -57,7 +57,7 @@ use crate::host_machine_id::get_host_machine_id_retry;
 use crate::instrumentation::{create_metrics, get_dpu_agent_meter};
 use crate::machine_inventory_updater::MachineInventoryUpdaterConfig;
 use crate::network_monitor::{self, NetworkPingerType};
-use crate::util::{UrlResolver, get_host_boot_timestamp};
+use crate::util::get_host_boot_timestamp;
 use crate::{
     FMDS_MINIMUM_HBN_VERSION, HBNDeviceNames, NVUE_MINIMUM_HBN_VERSION, RunOptions, command_line,
     ethernet_virtualization, extension_services, hbn, health, instance_metadata_endpoint, lldp,
@@ -262,42 +262,11 @@ pub async fn setup_and_run(
 
     let periodic_config_reader = periodic_config_fetcher.reader();
 
-    let service_addrs = if !agent_config.machine.is_fake_dpu {
-        let mut url_resolver = UrlResolver::try_new()?;
-
-        let pxe_ips = url_resolver
-            .resolve("carbide-pxe.forge")
-            .await
-            .wrap_err("DNS resolver for carbide-pxe")?;
-
-        // This log should be removed after some time.
-        tracing::info!(?pxe_ips, "Pxe server resolved");
-
-        let ntpservers = match url_resolver.resolve("carbide-ntp.forge").await {
-            Ok(x) => {
-                // This log should be removed after some time.
-                tracing::info!(?x, "NTP servers resolved.");
-                x
-            }
-            Err(e) => {
-                tracing::error!(error = %e, "NTP servers couldn't be resolved. Dhcp-server won't send NTP server IPs in dhcpoffer/ack.");
-                vec![]
-            }
-        };
-
-        let nameservers = url_resolver.nameservers();
-        ServiceAddresses {
-            pxe_ips,
-            ntpservers,
-            nameservers,
-        }
-    } else {
-        ServiceAddresses {
-            pxe_ips: vec![IpAddr::from([127, 0, 0, 1])],
-            ntpservers: vec![],
-            nameservers: vec![IpAddr::from([127, 0, 0, 1])],
-        }
-    };
+    let service_addrs = ServiceAddresses::build(
+        &options.agent_platform_type,
+        agent_config.machine.is_fake_dpu,
+    )
+    .await?;
 
     let inventory_updater_config = MachineInventoryUpdaterConfig {
         dpu_agent_version: build_version.clone(),

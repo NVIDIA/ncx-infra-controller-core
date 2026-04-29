@@ -198,6 +198,7 @@ pub async fn start(cmdline: command_line::Options) -> eyre::Result<()> {
         Some(AgentCommand::InitContainer) => {
             download_cert().await?;
             enumerate_and_save_hardware()?;
+            util::save_host_nameservers()?;
         }
 
         // One-off health check.
