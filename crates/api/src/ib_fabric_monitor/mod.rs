@@ -1125,7 +1125,7 @@ async fn set_ib_port_down_alert(
     db::machine::insert_health_report_override(
         &mut conn,
         machine_id,
-        OverrideMode::Merge,
+        HealthReportApplyMode::Merge,
         &health_report,
         false, // overwrite existing
     )
@@ -1147,7 +1147,7 @@ async fn clear_ib_port_down_alert(
     db::machine::remove_health_report_override(
         &mut conn,
         machine_id,
-        OverrideMode::Merge,
+        HealthReportApplyMode::Merge,
         IB_PORT_DOWN_OVERRIDE_SOURCE,
     )
     .await
