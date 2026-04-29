@@ -34,6 +34,11 @@ impl BmcPasswordProvider for String {
     }
 }
 
+/// Service name constants for use across crates
+pub const DOCA_HBN_SERVICE_NAME: &str = "doca-hbn";
+pub const DHCP_SERVER_SERVICE_NAME: &str = "carbide-dhcp-server";
+pub const FMDS_SERVICE_NAME: &str = "carbide-fmds";
+
 /// Configuration for creating DPF operator resources (BFB, DPUFlavor,
 /// DPUDeployment, service templates, etc.) during initialization.
 #[derive(Debug, Clone)]
@@ -50,8 +55,6 @@ pub struct InitDpfResourcesConfig {
     /// Rendered bf.cfg template content for the DPU configuration ConfigMap.
     /// When set, a ConfigMap is created during initialization.
     pub bfcfg_template: Option<String>,
-    /// Custom fields for DPUFlavor
-    pub dpu_flavor: Option<DpuFlavorDefinition>,
 }
 
 impl Default for InitDpfResourcesConfig {
@@ -62,7 +65,6 @@ impl Default for InitDpfResourcesConfig {
             flavor_name: crate::flavor::DEFAULT_FLAVOR_NAME.to_string(),
             services: Vec::new(),
             bfcfg_template: None,
-            dpu_flavor: None,
         }
     }
 }
@@ -159,6 +161,8 @@ pub struct DpuServiceInterfaceTemplateDefinition {
     pub pf_id: i64,
     /// VF Interface ID
     pub vf_id: i64,
+    /// Chained service interfaces vector
+    pub chained_svc_if: Option<Vec<(String, String)>>,
 }
 
 /// Network interface for a DPU service.
@@ -197,14 +201,6 @@ impl ServiceDefinition {
             ..Default::default()
         }
     }
-}
-
-/// Definition of a DPUFlavor. This struct contains only customizable fields.
-#[derive(Debug, Clone, Default)]
-pub struct DpuFlavorDefinition {
-    pub carbide_hbn_reps: Option<String>,
-    pub carbide_hbn_sfs: Option<String>,
-    pub bridge_def: Option<DpuFlavorBridgeDefinition>,
 }
 
 #[derive(Debug, Clone, Default)]

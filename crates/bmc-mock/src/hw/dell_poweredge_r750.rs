@@ -19,10 +19,10 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use bmc_vendor::BMCVendor;
+use carbide_utils::models::arch::CpuArchitecture;
 use mac_address::MacAddress;
 use rpc::machine_discovery::{BlockDevice, CpuInfo, DiscoveryInfo, DmiData, MemoryDevice};
 use serde_json::json;
-use utils::models::arch::CpuArchitecture;
 
 use crate::{BootOptionKind, Callbacks, hw, redfish};
 
@@ -247,8 +247,7 @@ impl DellPowerEdgeR750<'_> {
                     chassis_id,
                     Self::sensor_layout(),
                 )),
-                assembly: None,
-                oem: None,
+                ..redfish::chassis::SingleChassisConfig::defaults()
             }],
         }
     }

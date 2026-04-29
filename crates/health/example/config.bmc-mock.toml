@@ -31,9 +31,6 @@ enabled = false
 enabled = true
 minimum_alerts_per_report = 2
 
-[processors.health_report]
-level = "warning"
-
 [processors.rack_leak]
 leaking_tray_threshold = 1
 
@@ -43,8 +40,8 @@ enabled = true
 [sinks.prometheus]
 enabled = true
 
-[sinks.health_override]
+[sinks.health_report]
 enabled = false
 
-[sinks.rack_health_override]
+[sinks.rack_health_report]
 enabled = false

@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use carbide_network::BaseMac;
+use carbide_utils::models::arch::CpuArchitecture;
 use carbide_uuid::machine::{MachineId, MachineType};
 use carbide_uuid::power_shelf::{PowerShelfId, PowerShelfIdSource, PowerShelfType};
 use carbide_uuid::switch::{SwitchId, SwitchIdSource, SwitchType};
@@ -32,8 +33,7 @@ use libredfish::RedfishError;
 pub use libredfish::model::oem::nvidia_dpu::NicMode;
 use mac_address::MacAddress;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use utils::models::arch::CpuArchitecture;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::DpuModel;
 use super::bmc_info::BmcInfo;
@@ -98,7 +98,7 @@ pub struct EndpointExplorationReport {
     /// Parsed versions, serializtion override means it will always be sorted
     #[serde(
         default,
-        serialize_with = "utils::ordered_map",
+        serialize_with = "carbide_utils::ordered_map",
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub versions: HashMap<FirmwareComponentType, String>,
@@ -377,18 +377,23 @@ pub enum PreingestionState {
     ScriptRunning,
     BfbRecoveryNeeded {
         reason: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        host_bmc_ip: Option<IpAddr>,
+        host_bmc_ip: IpAddr,
+        #[serde(default)]
+        pre_copy_powercycle: bool,
     },
-    BfbWaitingForPlatformPowercycle {
+    BfbPlatformPowercycle {
         host_bmc_ip: IpAddr,
         phase: BfbPlatformPowercyclePhase,
+        #[serde(default)]
+        post_install: bool,
     },
     BfbCopyInProgress {
         started_at: DateTime<Utc>,
+        host_bmc_ip: IpAddr,
     },
     BfbInstallationWait {
         started_at: DateTime<Utc>,
+        host_bmc_ip: IpAddr,
     },
     InitialReset {
         phase: InitialResetPhase,
@@ -878,12 +883,12 @@ impl EndpointExplorationReport {
         let sys_vendor = if let Some(x) = vendor {
             x.to_string()
         } else {
-            utils::DEFAULT_DMI_SYSTEM_MANUFACTURER.to_string()
+            carbide_utils::DEFAULT_DMI_SYSTEM_MANUFACTURER.to_string()
         };
         let product_name = if let Some(x) = model {
             x.to_string()
         } else {
-            utils::DEFAULT_DMI_SYSTEM_MODEL.to_string()
+            carbide_utils::DEFAULT_DMI_SYSTEM_MODEL.to_string()
         };
         // For DPUs the discovered data contains enough information to
         // calculate a MachineId
@@ -892,8 +897,8 @@ impl EndpointExplorationReport {
         // the same values here.
         DmiData {
             product_serial: serial_number.trim().to_string(),
-            chassis_serial: utils::DEFAULT_DPU_DMI_CHASSIS_SERIAL_NUMBER.to_string(),
-            board_serial: utils::DEFAULT_DPU_DMI_BOARD_SERIAL_NUMBER.to_string(),
+            chassis_serial: carbide_utils::DEFAULT_DPU_DMI_CHASSIS_SERIAL_NUMBER.to_string(),
+            board_serial: carbide_utils::DEFAULT_DPU_DMI_BOARD_SERIAL_NUMBER.to_string(),
             bios_version: "".to_string(),
             sys_vendor,
             board_name: "BlueField SoC".to_string(),
@@ -1214,6 +1219,15 @@ impl EndpointExplorationError {
             || matches!(self, EndpointExplorationError::AvoidLockout)
     }
 
+    pub fn is_unreachable(&self) -> bool {
+        matches!(
+            self,
+            EndpointExplorationError::ConnectionTimeout { .. }
+                | EndpointExplorationError::ConnectionRefused { .. }
+                | EndpointExplorationError::Unreachable { .. }
+        )
+    }
+
     pub fn is_redfish(&self) -> bool {
         matches!(self, EndpointExplorationError::RedfishError { .. })
             || matches!(
@@ -1281,12 +1295,21 @@ pub struct ComputerSystem {
     pub attributes: ComputerSystemAttributes,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pcie_devices: Vec<PCIeDevice>,
+    #[serde(default, deserialize_with = "base_mac_deserialize")]
     pub base_mac: Option<BaseMac>,
     #[serde(default)]
     pub power_state: PowerState,
     pub sku: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boot_order: Option<BootOrder>,
+}
+
+pub fn base_mac_deserialize<'a, D>(deserializer: D) -> Result<Option<BaseMac>, D::Error>
+where
+    D: Deserializer<'a>,
+{
+    let optional_value: Option<String> = Option::deserialize(deserializer)?;
+    Ok(optional_value.and_then(|v| v.parse().ok()))
 }
 
 impl ComputerSystem {
@@ -1335,6 +1358,7 @@ impl From<PowerState> for rpc::site_explorer::PowerState {
             PowerState::PoweringOff => rpc::site_explorer::PowerState::PoweringOff,
             PowerState::PoweringOn => rpc::site_explorer::PowerState::PoweringOn,
             PowerState::Paused => rpc::site_explorer::PowerState::Paused,
+            PowerState::Unknown => rpc::site_explorer::PowerState::Unknown,
         }
     }
 }
@@ -1347,6 +1371,7 @@ pub enum PowerState {
     PoweringOff,
     PoweringOn,
     Paused,
+    Unknown,
 }
 
 /// `Manager` definition. Matches redfish definition
@@ -1736,6 +1761,7 @@ impl From<libredfish::PowerState> for PowerState {
             libredfish::PowerState::PoweringOn => PowerState::PoweringOn,
             libredfish::PowerState::Paused => PowerState::Paused,
             libredfish::PowerState::Reset => PowerState::PoweringOn,
+            libredfish::PowerState::Unknown => PowerState::Unknown,
         }
     }
 }
@@ -2348,7 +2374,7 @@ mod tests {
         let report = EndpointExplorationReport {
             chassis: vec![Chassis {
                 id: "powershelf".to_string(),
-                manufacturer: Some("lite-on technology corp.".to_string()),
+                manufacturer: Some("doesnt-matter-in-this-case".to_string()),
                 ..Default::default()
             }],
             ..Default::default()
@@ -2393,5 +2419,80 @@ mod tests {
             ..Default::default()
         };
         assert!(!report.is_power_shelf());
+    }
+
+    #[test]
+    fn test_computer_system_with_invalid_base_mac_deserializes_as_none() {
+        let json = serde_json::json!({
+            "EthernetInterfaces": [],
+            "Id": "Bluefield",
+            "Manufacturer": "Nvidia",
+            "Model": "Bluefield-3 DPU",
+            "SerialNumber": "ABC1234",
+            "Attributes": {},
+            "PcieDevices": [],
+            "BaseMac": "pe:",
+            "PowerState": "On"
+        });
+
+        let system: ComputerSystem =
+            serde_json::from_value(json).expect("should deserialize despite invalid BaseMac");
+        assert_eq!(system.base_mac, None);
+    }
+
+    #[test]
+    fn test_computer_system_with_valid_base_mac_deserializes_correctly() {
+        let json = serde_json::json!({
+            "EthernetInterfaces": [],
+            "Id": "Bluefield",
+            "Manufacturer": "Nvidia",
+            "Model": "Bluefield-3 DPU",
+            "SerialNumber": "ABC1234",
+            "Attributes": {},
+            "PcieDevices": [],
+            "BaseMac": "A088C208804C",
+            "PowerState": "On"
+        });
+
+        let system: ComputerSystem =
+            serde_json::from_value(json).expect("should deserialize valid BaseMac");
+        assert_eq!(system.base_mac, Some("A088C208804C".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_computer_system_with_null_base_mac_deserializes_as_none() {
+        let json = serde_json::json!({
+            "EthernetInterfaces": [],
+            "Id": "Bluefield",
+            "Manufacturer": "Nvidia",
+            "Model": "Bluefield-3 DPU",
+            "SerialNumber": "ABC1234",
+            "Attributes": {},
+            "PcieDevices": [],
+            "BaseMac": null,
+            "PowerState": "On"
+        });
+
+        let system: ComputerSystem =
+            serde_json::from_value(json).expect("should deserialize null BaseMac");
+        assert_eq!(system.base_mac, None);
+    }
+
+    #[test]
+    fn test_computer_system_with_missing_base_mac_deserializes_as_none() {
+        let json = serde_json::json!({
+            "EthernetInterfaces": [],
+            "Id": "Bluefield",
+            "Manufacturer": "Nvidia",
+            "Model": "Bluefield-3 DPU",
+            "SerialNumber": "ABC1234",
+            "Attributes": {},
+            "PcieDevices": [],
+            "PowerState": "On"
+        });
+
+        let system: ComputerSystem =
+            serde_json::from_value(json).expect("should deserialize missing BaseMac");
+        assert_eq!(system.base_mac, None);
     }
 }

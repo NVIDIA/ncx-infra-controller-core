@@ -18,11 +18,11 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use carbide_utils::models::arch::CpuArchitecture;
 use mac_address::MacAddress;
 use rpc::machine_discovery::{BlockDevice, CpuInfo, DiscoveryInfo, DmiData, DpuData};
 use rpc::{NetworkInterface, PciDeviceProperties};
 use serde_json::json;
-use utils::models::arch::CpuArchitecture;
 
 use crate::{BootOptionKind, Callbacks, LogService, LogServices, hw, redfish};
 
@@ -72,22 +72,14 @@ impl Bluefield3<'_> {
                     part_number: Some(Cow::Borrowed(self.part_number())),
                     pcie_devices: Some(vec![]),
                     serial_number: Some(self.product_serial_number.to_string().into()),
-                    sensors: None,
-                    assembly: None,
-                    oem: None,
+                    ..redfish::chassis::SingleChassisConfig::defaults()
                 },
                 redfish::chassis::SingleChassisConfig {
                     id: "Bluefield_ERoT".into(),
                     chassis_type: "Component".into(),
                     manufacturer: Some(Cow::Borrowed("NVIDIA")),
-                    model: None,
-                    network_adapters: None,
-                    part_number: None,
-                    pcie_devices: None,
                     serial_number: Some("".into()),
-                    sensors: None,
-                    assembly: None,
-                    oem: None,
+                    ..redfish::chassis::SingleChassisConfig::defaults()
                 },
                 redfish::chassis::SingleChassisConfig {
                     id: "CPU_0".into(),
@@ -98,9 +90,7 @@ impl Bluefield3<'_> {
                     part_number: Some(format!("OPN: {}", self.opn()).into()),
                     serial_number: Some("Unspecified Serial Number".into()),
                     pcie_devices: Some(vec![]),
-                    sensors: None,
-                    assembly: None,
-                    oem: None,
+                    ..redfish::chassis::SingleChassisConfig::defaults()
                 },
                 redfish::chassis::SingleChassisConfig {
                     id: "Card1".into(),
@@ -115,8 +105,7 @@ impl Bluefield3<'_> {
                         "Card1",
                         Self::sensor_layout(),
                     )),
-                    assembly: None,
-                    oem: None,
+                    ..redfish::chassis::SingleChassisConfig::defaults()
                 },
             ],
         }

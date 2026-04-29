@@ -19,7 +19,6 @@
 
 use carbide_uuid::switch::SwitchId;
 use db::switch as db_switch;
-use model::rack::{RackFirmwareUpgradeState, RackFirmwareUpgradeStatus};
 use model::switch::{ReProvisioningState, Switch, SwitchControllerState};
 
 use crate::state_controller::state_handler::{
@@ -42,23 +41,115 @@ pub async fn handle_reprovisioning(
 
     match reprovisioning_state {
         ReProvisioningState::WaitingForRackFirmwareUpgrade => {
-            let is_current_cycle = |status: &RackFirmwareUpgradeStatus| -> bool {
-                match (&status.ended_at, &state.switch_reprovisioning_requested) {
-                    (Some(ended), Some(req)) => ended >= &req.requested_at,
-                    _ => true,
-                }
+            let requested_at = state
+                .switch_reprovisioning_requested
+                .as_ref()
+                .map(|request| request.requested_at)
+                .expect("WaitingForRackFirmwareUpgrade requires a rack reprovision request");
+            let Some(firmware_upgrade_status) = state.firmware_upgrade_status.as_ref() else {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for switch firmware upgrade status".into(),
+                ));
             };
+            if !firmware_upgrade_status.is_current_for(requested_at) {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for current rack firmware cycle".into(),
+                ));
+            }
+            if !firmware_upgrade_status.is_terminal() {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for switch firmware completion".into(),
+                ));
+            }
 
-            if let Some(status) = state.firmware_upgrade_status.as_ref()
-                && !status.is_in_progress()
-                && is_current_cycle(status)
-            {
-                match &status.status {
-                    RackFirmwareUpgradeState::Completed => {
-                        tracing::info!(
-                            "Switch {}: rack firmware upgrade completed — returning to Ready",
-                            switch_id
-                        );
+            match &firmware_upgrade_status.status {
+                model::rack::RackFirmwareUpgradeState::Completed => Ok(
+                    StateHandlerOutcome::transition(SwitchControllerState::ReProvisioning {
+                        reprovisioning_state: ReProvisioningState::WaitingForNVOSUpgrade,
+                    }),
+                ),
+                model::rack::RackFirmwareUpgradeState::Failed { cause } => {
+                    let mut txn = ctx.services.db_pool.begin().await?;
+                    db_switch::clear_switch_reprovisioning_requested(txn.as_mut(), *switch_id)
+                        .await?;
+                    Ok(
+                        StateHandlerOutcome::transition(SwitchControllerState::Error {
+                            cause: cause.clone(),
+                        })
+                        .with_txn(txn),
+                    )
+                }
+                model::rack::RackFirmwareUpgradeState::Started
+                | model::rack::RackFirmwareUpgradeState::InProgress => Ok(
+                    StateHandlerOutcome::wait("waiting for switch firmware completion".into()),
+                ),
+            }
+        }
+        ReProvisioningState::WaitingForNVOSUpgrade => {
+            let requested_at = state
+                .switch_reprovisioning_requested
+                .as_ref()
+                .map(|request| request.requested_at)
+                .expect("WaitingForNVOSUpgrade requires a rack reprovision request");
+            let Some(nvos_update_status) = state.nvos_update_status.as_ref() else {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for switch NVOS update status".into(),
+                ));
+            };
+            if !nvos_update_status.is_current_for(requested_at) {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for current rack NVOS cycle".into(),
+                ));
+            }
+            if !nvos_update_status.is_terminal() {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for switch NVOS completion".into(),
+                ));
+            }
+
+            match &nvos_update_status.status {
+                model::rack::SwitchNvosUpdateState::Completed => Ok(
+                    StateHandlerOutcome::transition(SwitchControllerState::ReProvisioning {
+                        reprovisioning_state: ReProvisioningState::WaitingForNMXCConfigure,
+                    }),
+                ),
+                model::rack::SwitchNvosUpdateState::Failed { cause } => {
+                    let mut txn = ctx.services.db_pool.begin().await?;
+                    db_switch::clear_switch_reprovisioning_requested(txn.as_mut(), *switch_id)
+                        .await?;
+                    Ok(
+                        StateHandlerOutcome::transition(SwitchControllerState::Error {
+                            cause: cause.clone(),
+                        })
+                        .with_txn(txn),
+                    )
+                }
+                model::rack::SwitchNvosUpdateState::Started
+                | model::rack::SwitchNvosUpdateState::InProgress => Ok(StateHandlerOutcome::wait(
+                    "waiting for switch NVOS completion".into(),
+                )),
+            }
+        }
+        ReProvisioningState::WaitingForNMXCConfigure => {
+            let Some(fabric_manager_status) = state.fabric_manager_status.as_ref() else {
+                return Ok(StateHandlerOutcome::wait(
+                    "waiting for switch fabric manager status".into(),
+                ));
+            };
+            if fabric_manager_status.display_status() != "running" {
+                if let Some(cause) = fabric_manager_status.error_message.as_ref() {
+                    let mut txn = ctx.services.db_pool.begin().await?;
+                    db_switch::clear_switch_reprovisioning_requested(txn.as_mut(), *switch_id)
+                        .await?;
+                    return Ok(
+                        StateHandlerOutcome::transition(SwitchControllerState::Error {
+                            cause: cause.clone(),
+                        })
+                        .with_txn(txn),
+                    );
+                }
+                if let Some(reason) = fabric_manager_status.reason.as_ref() {
+                    if !reason.is_empty() {
                         let mut txn = ctx.services.db_pool.begin().await?;
                         db_switch::clear_switch_reprovisioning_requested(txn.as_mut(), *switch_id)
                             .await?;
@@ -67,30 +158,12 @@ pub async fn handle_reprovisioning(
                                 .with_txn(txn),
                         );
                     }
-                    RackFirmwareUpgradeState::Failed { cause } => {
-                        tracing::warn!(
-                            "Switch {}: rack firmware upgrade failed: {}",
-                            switch_id,
-                            cause
-                        );
-                        let mut txn = ctx.services.db_pool.begin().await?;
-                        db_switch::clear_switch_reprovisioning_requested(txn.as_mut(), *switch_id)
-                            .await?;
-                        return Ok(
-                            StateHandlerOutcome::transition(SwitchControllerState::Error {
-                                cause: cause.clone(),
-                            })
-                            .with_txn(txn),
-                        );
-                    }
-                    _ => {}
+                    return Ok(StateHandlerOutcome::wait(reason.clone()));
                 }
             }
-
-            Ok(StateHandlerOutcome::wait(format!(
-                "Waiting for rack firmware upgrade to be completed (firmware_upgrade_status: {:?}) switch_id: {}",
-                state.firmware_upgrade_status, switch_id
-            )))
+            let mut txn = ctx.services.db_pool.begin().await?;
+            db_switch::clear_switch_reprovisioning_requested(txn.as_mut(), *switch_id).await?;
+            Ok(StateHandlerOutcome::transition(SwitchControllerState::Ready).with_txn(txn))
         }
     }
 }

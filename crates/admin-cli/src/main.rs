@@ -40,6 +40,7 @@ mod async_write;
 mod bmc_machine;
 mod boot_override;
 mod cfg;
+mod component_manager;
 mod compute_allocation;
 mod credential;
 mod debug_bundle;
@@ -56,12 +57,14 @@ mod expected_switch;
 mod extension_service;
 mod firmware;
 mod generate_shell_complete;
+mod health_utils;
 mod host;
 mod ib_partition;
 mod instance;
 mod instance_type;
 mod inventory;
 mod ip;
+mod ipxe_template;
 mod jump;
 mod machine;
 mod machine_interfaces;
@@ -76,6 +79,7 @@ mod network_security_group;
 mod network_segment;
 mod nvl_logical_partition;
 mod nvl_partition;
+mod operating_system;
 mod os_image;
 mod ping;
 mod power_shelf;
@@ -203,6 +207,7 @@ async fn main() -> color_eyre::Result<()> {
         CliCommand::BmcMachine(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::BootOverride(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::Credential(cmd) => cmd.dispatch(ctx).await?,
+        CliCommand::ComponentManager(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::ComputeAllocation(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::DevEnv(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::Domain(cmd) => cmd.dispatch(ctx).await?,
@@ -235,7 +240,9 @@ async fn main() -> color_eyre::Result<()> {
         CliCommand::NetworkSecurityGroup(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::NetworkSegment(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::NvlPartition(cmd) => cmd.dispatch(ctx).await?,
+        CliCommand::IpxeTemplate(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::OsImage(cmd) => cmd.dispatch(ctx).await?,
+        CliCommand::OperatingSystem(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::Ping(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::PowerShelf(cmd) => cmd.dispatch(ctx).await?,
         CliCommand::Rack(cmd) => cmd.dispatch(ctx).await?,
