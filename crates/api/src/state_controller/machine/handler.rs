@@ -24,6 +24,9 @@ use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use attestation::{
+    handle_spdm_attestation_failed_recovery, handle_spdm_poll_state, handle_spdm_trigger_state,
+};
 use carbide_firmware::{FirmwareConfig, FirmwareConfigSnapshot, FirmwareDownloader};
 use carbide_uuid::machine::MachineId;
 use chrono::{DateTime, Duration, Utc};
@@ -60,17 +63,18 @@ use model::machine::LockdownMode::{self, Enable};
 use model::machine::infiniband::{IbConfigNotSyncedReason, ib_config_synced};
 use model::machine::nvlink::nvlink_config_synced;
 use model::machine::{
-    BiosConfigInfo, BiosConfigState, BomValidating, BomValidatingContext, CleanupState,
-    CreateBossVolumeContext, CreateBossVolumeState, DpuDiscoveringState, DpuInitNextStateResolver,
-    DpuInitState, FailureCause, FailureDetails, FailureSource, HostPlatformConfigurationState,
-    HostReprovisionState, InitialResetPhase, InstallDpuOsState, InstanceNextStateResolver,
-    InstanceState, LockdownInfo, LockdownState, Machine, MachineLastRebootRequested,
-    MachineLastRebootRequestedMode, MachineNextStateResolver, MachineState, ManagedHostState,
-    ManagedHostStateSnapshot, MeasuringState, NetworkConfigUpdateState, NextStateBFBSupport,
-    PerformPowerOperation, PowerDrainState, ReprovisionState, RetryInfo, SecureEraseBossContext,
-    SecureEraseBossState, SetBootOrderInfo, SetBootOrderState, SetSecureBootState,
-    StateMachineArea, UefiSetupInfo, UefiSetupState, UnlockHostState, ValidationState,
-    dpf_based_dpu_provisioning_possible, get_display_ids,
+    AttestationMode, BiosConfigInfo, BiosConfigState, BomValidating, BomValidatingContext,
+    CleanupState, CreateBossVolumeContext, CreateBossVolumeState, DpuDiscoveringState,
+    DpuInitNextStateResolver, DpuInitState, FailureCause, FailureDetails, FailureSource,
+    HostPlatformConfigurationState, HostReprovisionState, InitialResetPhase, InstallDpuOsState,
+    InstanceNextStateResolver, InstanceState, LockdownInfo, LockdownState, Machine,
+    MachineLastRebootRequested, MachineLastRebootRequestedMode, MachineNextStateResolver,
+    MachineState, ManagedHostState, ManagedHostStateSnapshot, MeasuringState,
+    NetworkConfigUpdateState, NextStateBFBSupport, PerformPowerOperation, PowerDrainState,
+    ReprovisionState, RetryInfo, SecureEraseBossContext, SecureEraseBossState, SetBootOrderInfo,
+    SetBootOrderState, SetSecureBootState, SpdmMeasuringState, StateMachineArea, UefiSetupInfo,
+    UefiSetupState, UnlockHostState, ValidationState, dpf_based_dpu_provisioning_possible,
+    get_display_ids,
 };
 use model::power_manager::PowerHandlingOutcome;
 use model::resource_pool::common::CommonPools;
@@ -100,6 +104,7 @@ use crate::state_controller::state_handler::{
     StateHandler, StateHandlerContext, StateHandlerError, StateHandlerOutcome,
 };
 
+mod attestation;
 mod dpf;
 mod helpers;
 mod machine_validation;
@@ -425,7 +430,6 @@ impl MachineStateHandler {
                 builder.dpf_sdk.clone(),
             ),
             instance_handler: InstanceStateHandler::new(
-                builder.attestation_enabled,
                 builder.reachability_params,
                 builder.common_pools,
                 host_upgrade.clone(),
@@ -796,25 +800,11 @@ impl MachineStateHandler {
 
                 // Check if instance to be created.
                 if mh_snapshot.instance.is_some() {
-                    // Instance is requested by user. Let's configure it.
-                    let mut txn = ctx.services.db_pool.begin().await?;
-
-                    // Clear if any reprovision (dpu or host) is set due to race scenario.
-                    Self::clear_host_update_alert_and_reprov(mh_snapshot, &mut txn).await?;
-
-                    let mut next_state = ManagedHostState::Assigned {
-                        instance_state: InstanceState::DpaProvisioning,
-                    };
-
-                    if !ctx.services.site_config.is_dpa_enabled() {
-                        // If DPA is not enabled, we don't need to do any DPA provisioning.
-                        // So go directly to WaitingForDpaToBeReady state, where we will change
-                        // the network status of our DPUs.
-                        next_state = ManagedHostState::Assigned {
-                            instance_state: InstanceState::WaitingForDpaToBeReady,
-                        };
-                    }
-                    return Ok(StateHandlerOutcome::transition(next_state).with_txn(txn));
+                    return Ok(StateHandlerOutcome::transition(
+                        ManagedHostState::PreAssignedMeasuring {
+                            spdm_measuring_state: SpdmMeasuringState::TriggerMeasurements,
+                        },
+                    ));
                 }
 
                 if let Some(outcome) = handle_bom_validation_requested(
@@ -1434,8 +1424,9 @@ impl MachineStateHandler {
                                                 })),
                                             StateMachineArea::AssignedInstance => Ok(StateHandlerOutcome::transition(
                                                 ManagedHostState::PostAssignedMeasuring {
-                                                        measuring_state: MeasuringState::WaitingForMeasurements
-                                                })),
+                                                    attestation_mode: AttestationMode::MeasuredBoot { measuring_state: MeasuringState::WaitingForMeasurements }
+                                                }
+                                            )),
                                             _ => Err(StateHandlerError::InvalidState(
                                                 "Unimplemented StateMachineArea for FailureSource of  MeasurementsRetired, MeasurementsRevoked, MeasurementsCAValidationFailed"
                                                     .to_string(),
@@ -1450,6 +1441,9 @@ impl MachineStateHandler {
                         } else {
                             Ok(StateHandlerOutcome::do_nothing())
                         }
+                    }
+                    FailureCause::SpdmAttestationFailed { .. } => {
+                        handle_spdm_attestation_failed_recovery(ctx, host_machine_id, details).await
                     }
                     FailureCause::MachineValidation { .. }
                         if machine_id.machine_type().is_host() =>
@@ -1516,7 +1510,6 @@ impl MachineStateHandler {
                 }
                 Ok(StateHandlerOutcome::do_nothing())
             }
-
             ManagedHostState::HostReprovision { .. } => {
                 self.host_upgrade
                     .handle_host_reprovision(
@@ -1540,16 +1533,126 @@ impl MachineStateHandler {
             )
             .await
             .map(|v| map_measuring_outcome_to_state_handler_outcome(&v, measuring_state))?,
-            ManagedHostState::PostAssignedMeasuring { measuring_state } => handle_measuring_state(
-                measuring_state,
-                &mh_snapshot.host_snapshot.id,
-                &mut ctx.services.db_reader,
-                self.host_handler.host_handler_params.attestation_enabled,
-            )
-            .await
-            .map(|v| {
-                map_post_assigned_measuring_outcome_to_state_handler_outcome(&v, measuring_state)
-            })?,
+            ManagedHostState::PostAssignedMeasuring { attestation_mode } => {
+                match attestation_mode {
+                    AttestationMode::MeasuredBoot { measuring_state } => {
+                        if !self.host_handler.host_handler_params.attestation_enabled {
+                            return Ok(StateHandlerOutcome::transition(
+                                ManagedHostState::PostAssignedMeasuring {
+                                    attestation_mode: AttestationMode::SpdmAttestation {
+                                        spdm_measuring_state:
+                                            SpdmMeasuringState::TriggerMeasurements,
+                                    },
+                                },
+                            ));
+                        }
+                        handle_measuring_state(
+                            measuring_state,
+                            &mh_snapshot.host_snapshot.id,
+                            &mut ctx.services.db_reader,
+                            self.host_handler.host_handler_params.attestation_enabled,
+                        )
+                        .await
+                        .map(|v| {
+                            map_post_assigned_measuring_outcome_to_state_handler_outcome(
+                                &v,
+                                measuring_state,
+                            )
+                        })?
+                    }
+                    AttestationMode::SpdmAttestation {
+                        spdm_measuring_state,
+                    } => {
+                        let next_skip_state = ManagedHostState::WaitingForCleanup {
+                            cleanup_state: CleanupState::Init,
+                        };
+                        if !ctx.services.site_config.spdm.enabled {
+                            return Ok(StateHandlerOutcome::transition(next_skip_state));
+                        }
+                        match spdm_measuring_state {
+                            SpdmMeasuringState::TriggerMeasurements => {
+                                handle_spdm_trigger_state(
+                                    &ctx.services.db_pool,
+                                    ctx.services.redfish_client_pool.clone(),
+                                    mh_snapshot,
+                                    host_machine_id,
+                                    ManagedHostState::PostAssignedMeasuring {
+                                        attestation_mode: AttestationMode::SpdmAttestation {
+                                            spdm_measuring_state: SpdmMeasuringState::PollResult,
+                                        },
+                                    },
+                                    next_skip_state,
+                                )
+                                .await
+                            }
+                            SpdmMeasuringState::PollResult => {
+                                handle_spdm_poll_state(
+                                    &ctx.services.db_pool,
+                                    host_machine_id,
+                                    FailureSource::StateMachineArea(
+                                        StateMachineArea::AssignedInstance,
+                                    ),
+                                    next_skip_state,
+                                )
+                                .await
+                            }
+                        }
+                    }
+                }
+            }
+            ManagedHostState::PreAssignedMeasuring {
+                spdm_measuring_state,
+            } => {
+                let next_skip_state = ManagedHostState::StartAssignmentCycle;
+                if !ctx.services.site_config.spdm.enabled {
+                    return Ok(StateHandlerOutcome::transition(next_skip_state));
+                }
+                match spdm_measuring_state {
+                    SpdmMeasuringState::TriggerMeasurements => {
+                        handle_spdm_trigger_state(
+                            &ctx.services.db_pool,
+                            ctx.services.redfish_client_pool.clone(),
+                            mh_snapshot,
+                            host_machine_id,
+                            ManagedHostState::PreAssignedMeasuring {
+                                spdm_measuring_state: SpdmMeasuringState::PollResult,
+                            },
+                            next_skip_state,
+                        )
+                        .await
+                    }
+                    SpdmMeasuringState::PollResult => {
+                        handle_spdm_poll_state(
+                            &ctx.services.db_pool,
+                            host_machine_id,
+                            FailureSource::StateMachineArea(StateMachineArea::MainFlow),
+                            next_skip_state,
+                        )
+                        .await
+                    }
+                }
+            }
+            ManagedHostState::StartAssignmentCycle => {
+                // Instance is requested by user. Let's configure it.
+                let mut txn = ctx.services.db_pool.begin().await?;
+
+                // Clear if any reprovision (dpu or host) is set due to race scenario.
+                Self::clear_host_update_alert_and_reprov(mh_snapshot, &mut txn).await?;
+
+                let mut next_state = ManagedHostState::Assigned {
+                    instance_state: InstanceState::DpaProvisioning,
+                };
+
+                if !ctx.services.site_config.is_dpa_enabled() {
+                    // If DPA is not enabled, we don't need to do any DPA provisioning.
+                    // So go directly to WaitingForDpaToBeReady state, where we will change
+                    // the network status of our DPUs.
+                    next_state = ManagedHostState::Assigned {
+                        instance_state: InstanceState::WaitingForDpaToBeReady,
+                    };
+                }
+                Ok(StateHandlerOutcome::transition(next_state).with_txn(txn))
+            }
             ManagedHostState::BomValidating {
                 bom_validating_state,
             } => {
@@ -2296,7 +2399,9 @@ fn map_host_init_measuring_outcome_to_state_handler_outcome(
         }
         MeasuringOutcome::PassedOk => Ok(StateHandlerOutcome::transition(
             ManagedHostState::HostInit {
-                machine_state: MachineState::WaitingForDiscovery,
+                machine_state: MachineState::SpdmMeasuring {
+                    spdm_measuring_state: SpdmMeasuringState::TriggerMeasurements,
+                },
             },
         )),
     }
@@ -2452,12 +2557,16 @@ fn map_post_assigned_measuring_outcome_to_state_handler_outcome(
         )),
         MeasuringOutcome::WaitForGoldenValues => Ok(StateHandlerOutcome::transition(
             ManagedHostState::PostAssignedMeasuring {
-                measuring_state: MeasuringState::PendingBundle,
+                attestation_mode: AttestationMode::MeasuredBoot {
+                    measuring_state: MeasuringState::PendingBundle,
+                },
             },
         )),
         MeasuringOutcome::WaitForScoutToSendMeasurements => Ok(StateHandlerOutcome::transition(
             ManagedHostState::PostAssignedMeasuring {
-                measuring_state: MeasuringState::WaitingForMeasurements,
+                attestation_mode: AttestationMode::MeasuredBoot {
+                    measuring_state: MeasuringState::WaitingForMeasurements,
+                },
             },
         )),
         MeasuringOutcome::Unsuccessful((failure_details, machine_id)) => {
@@ -2472,8 +2581,10 @@ fn map_post_assigned_measuring_outcome_to_state_handler_outcome(
             }))
         }
         MeasuringOutcome::PassedOk => Ok(StateHandlerOutcome::transition(
-            ManagedHostState::WaitingForCleanup {
-                cleanup_state: CleanupState::Init,
+            ManagedHostState::PostAssignedMeasuring {
+                attestation_mode: AttestationMode::SpdmAttestation {
+                    spdm_measuring_state: SpdmMeasuringState::TriggerMeasurements,
+                },
             },
         )),
     }
@@ -4469,19 +4580,11 @@ async fn handle_host_boot_order_setup(
                         set_boot_order_info: Some(boot_order_info),
                     },
                 },
-                SetBootOrderOutcome::Done => {
-                    if host_handler_params.attestation_enabled {
-                        ManagedHostState::HostInit {
-                            machine_state: MachineState::Measuring {
-                                measuring_state: MeasuringState::WaitingForMeasurements,
-                            },
-                        }
-                    } else {
-                        ManagedHostState::HostInit {
-                            machine_state: MachineState::WaitingForDiscovery,
-                        }
-                    }
-                }
+                SetBootOrderOutcome::Done => ManagedHostState::HostInit {
+                    machine_state: MachineState::Measuring {
+                        measuring_state: MeasuringState::WaitingForMeasurements,
+                    },
+                },
                 SetBootOrderOutcome::WaitingForReboot(reason) => {
                     return Ok(StateHandlerOutcome::wait(reason));
                 }
@@ -4902,6 +5005,15 @@ impl StateHandler for HostMachineStateHandler {
                 )
                 .await?),
                 MachineState::Measuring { measuring_state } => {
+                    if !self.host_handler_params.attestation_enabled {
+                        return Ok(StateHandlerOutcome::transition(
+                            ManagedHostState::HostInit {
+                                machine_state: MachineState::SpdmMeasuring {
+                                    spdm_measuring_state: SpdmMeasuringState::TriggerMeasurements,
+                                },
+                            },
+                        ));
+                    }
                     match handle_measuring_state(
                         measuring_state,
                         &mh_snapshot.host_snapshot.id,
@@ -4925,6 +5037,42 @@ impl StateHandler for HostMachineStateHandler {
                             ))
                         }
                         Err(e) => Err(e),
+                    }
+                }
+                MachineState::SpdmMeasuring {
+                    spdm_measuring_state,
+                } => {
+                    let next_skip_state = ManagedHostState::HostInit {
+                        machine_state: MachineState::WaitingForDiscovery,
+                    };
+                    if !ctx.services.site_config.spdm.enabled {
+                        return Ok(StateHandlerOutcome::transition(next_skip_state));
+                    }
+                    match spdm_measuring_state {
+                        SpdmMeasuringState::TriggerMeasurements => {
+                            handle_spdm_trigger_state(
+                                &ctx.services.db_pool,
+                                ctx.services.redfish_client_pool.clone(),
+                                mh_snapshot,
+                                host_machine_id,
+                                ManagedHostState::HostInit {
+                                    machine_state: MachineState::SpdmMeasuring {
+                                        spdm_measuring_state: SpdmMeasuringState::PollResult,
+                                    },
+                                },
+                                next_skip_state,
+                            )
+                            .await
+                        }
+                        SpdmMeasuringState::PollResult => {
+                            handle_spdm_poll_state(
+                                &ctx.services.db_pool,
+                                host_machine_id,
+                                FailureSource::StateMachineArea(StateMachineArea::HostInit),
+                                next_skip_state,
+                            )
+                            .await
+                        }
                     }
                 }
                 MachineState::WaitingForDiscovery => {
@@ -5192,7 +5340,6 @@ impl StateHandler for HostMachineStateHandler {
 /// A `StateHandler` implementation for instances
 #[derive(Debug, Clone)]
 pub struct InstanceStateHandler {
-    attestation_enabled: bool,
     reachability_params: ReachabilityParams,
     common_pools: Option<Arc<CommonPools>>,
     host_upgrade: Arc<HostUpgradeState>,
@@ -5204,7 +5351,6 @@ pub struct InstanceStateHandler {
 impl InstanceStateHandler {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        attestation_enabled: bool,
         reachability_params: ReachabilityParams,
         common_pools: Option<Arc<CommonPools>>,
         host_upgrade: Arc<HostUpgradeState>,
@@ -5213,7 +5359,6 @@ impl InstanceStateHandler {
         dpf_sdk: Option<Arc<dyn DpfOperations>>,
     ) -> Self {
         InstanceStateHandler {
-            attestation_enabled,
             reachability_params,
             common_pools,
             host_upgrade,
@@ -6008,14 +6153,10 @@ impl StateHandler for InstanceStateHandler {
                     release_vpc_dpu_loopback(mh_snapshot, self.common_pools.as_deref(), &mut txn)
                         .await?;
 
-                    let next_state = if self.attestation_enabled {
-                        ManagedHostState::PostAssignedMeasuring {
+                    let next_state = ManagedHostState::PostAssignedMeasuring {
+                        attestation_mode: AttestationMode::MeasuredBoot {
                             measuring_state: MeasuringState::WaitingForMeasurements,
-                        }
-                    } else {
-                        ManagedHostState::WaitingForCleanup {
-                            cleanup_state: CleanupState::Init,
-                        }
+                        },
                     };
 
                     Ok(StateHandlerOutcome::transition(next_state).with_txn(txn))

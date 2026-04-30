@@ -1502,6 +1502,7 @@ dependencies = [
  "carbide-macros",
  "carbide-measured-boot",
  "carbide-network",
+ "carbide-rpc",
  "carbide-secrets",
  "carbide-sqlx-testing",
  "carbide-utils",
