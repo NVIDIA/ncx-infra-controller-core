@@ -340,7 +340,11 @@ impl From<ExpectedMachine> for rpc::forge::ExpectedMachine {
                 DpuMode::DpuMode => None,
                 other => Some(rpc::forge::DpuMode::from(other) as i32),
             },
-            host_lifecycle_profile: Some(rpc::forge::HostLifecycleProfile {
+            host_lifecycle_profile: (!expected_machine
+                .data
+                .host_lifecycle_profile
+                .is_empty())
+            .then_some(rpc::forge::HostLifecycleProfile {
                 disable_lockdown: expected_machine
                     .data
                     .host_lifecycle_profile
@@ -610,7 +614,7 @@ mod tests {
             data,
         };
         let back: rpc::forge::ExpectedMachine = em.into();
-        assert_eq!(back.host_lifecycle_profile.unwrap().disable_lockdown, None);
+        assert!(back.host_lifecycle_profile.is_none());
     }
 
     #[test]
