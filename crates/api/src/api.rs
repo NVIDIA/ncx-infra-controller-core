@@ -3347,7 +3347,7 @@ impl Api {
         self.database_connection.clone().into()
     }
 
-    pub fn pg_pool(&self) -> &PgPool {
+    pub fn pg_pool(&self) -> &sqlx::PgPool {
         &self.database_connection
     }
 

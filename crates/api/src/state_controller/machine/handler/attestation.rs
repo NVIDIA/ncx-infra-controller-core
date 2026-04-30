@@ -20,7 +20,9 @@ use std::sync::Arc;
 use carbide_redfish::libredfish::RedfishClientPool;
 use carbide_uuid::machine::MachineId;
 use chrono::Utc;
-use model::attestation::spdm::{SpdmAttestationState, SpdmDeviceAttestationDetails};
+use model::attestation::spdm::{
+    SpdmAttestationState, SpdmDeviceAttestationDetails, SpdmHandlerError,
+};
 use model::machine::{
     AttestationMode, FailureCause, FailureDetails, FailureSource, MachineState, ManagedHostState,
     ManagedHostStateSnapshot, SpdmMeasuringState, StateMachineArea,
@@ -105,7 +107,7 @@ pub(crate) async fn handle_spdm_trigger_state(
         std::time::Duration::MAX,
     )
     .await
-    .map_err(|e| StateHandlerError::SpdmError(format!("{}", e)))?;
+    .map_err(|e| SpdmHandlerError::TriggerMeasurementFail(e.to_string()))?;
 
     // if 0 devices scheduled - this means it is unsupported
     // so we just proceed to the next state

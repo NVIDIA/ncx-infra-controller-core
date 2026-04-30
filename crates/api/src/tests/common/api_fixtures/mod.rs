@@ -34,7 +34,6 @@ use carbide_nvlink_manager::config::NvLinkConfig;
 use carbide_nvlink_manager::nvlink::NmxmClientPool;
 use carbide_nvlink_manager::nvlink::test_support::NmxmSimClient;
 use carbide_redfish::libredfish::test_support::{RedfishSim, RedfishSimTestOverrides};
-use carbide_redfish::nv_redfish::NvRedfishClientPool;
 use carbide_site_explorer::SiteExplorer;
 use carbide_site_explorer::config::{SiteExplorerConfig, SiteExplorerExploreMode};
 use carbide_utils::test_support::test_meter::TestMeter;

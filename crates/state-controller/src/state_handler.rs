@@ -291,7 +291,7 @@ pub enum StateHandlerError {
     },
 
     #[error("Spdm error: {0}")]
-    SpdmError(String),
+    SpdmError(#[source] Box<model::attestation::spdm::SpdmHandlerError>),
 
     #[error("Rack Manager error: {0}")]
     RackManagerError(#[source] Box<RackManagerError>),

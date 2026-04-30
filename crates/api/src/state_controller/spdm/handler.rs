@@ -263,15 +263,13 @@ impl StateHandler for SpdmAttestationStateHandler {
             }
             SpdmAttestationState::NrasVerification => {
                 let client = self.verifier.client(self.nras_config.clone());
-                let raw_attest_outcome = perform_attestation(client.as_ref(), snapshot)
-                    .await
-                    .map_err(|e| StateHandlerError::SpdmError(format!("{}", e)))?;
+                let raw_attest_outcome = perform_attestation(client.as_ref(), snapshot).await?;
 
                 let processed_response = self
                     .verifier
                     .parse_attestation_outcome(&self.nras_config, &raw_attest_outcome)
                     .await
-                    .map_err(|e| StateHandlerError::SpdmError(format!("{}", e)))?;
+                    .map_err(SpdmHandlerError::from)?;
 
                 if processed_response.attestation_passed {
                     Ok(StateHandlerOutcome::transition(
