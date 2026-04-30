@@ -30,7 +30,6 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use dns_record::DnsResourceRecordReply;
 use errors::RpcDataConversionError;
-use forge_agent_control_response as fac;
 use mac_address::{MacAddress, MacParseError};
 use prost::{Message, UnknownEnumValue};
 use serde::ser::Error;
@@ -891,23 +890,6 @@ impl clap::ValueEnum for forge::RouteServerSourceType {
             Self::AdminApi => clap::builder::PossibleValue::new("admin_api"),
             Self::ConfigFile => clap::builder::PossibleValue::new("config_file"),
         })
-    }
-}
-
-impl From<&fac::Action> for fac::LegacyAction {
-    fn from(action: &fac::Action) -> Self {
-        match action {
-            fac::Action::Noop(_) => Self::Noop,
-            fac::Action::Reset(_) => Self::Reset,
-            fac::Action::Discovery(_) => Self::Discovery,
-            fac::Action::Rebuild(_) => Self::Rebuild,
-            fac::Action::Retry(_) => Self::Retry,
-            fac::Action::Measure(_) => Self::Measure,
-            fac::Action::LogError(_) => Self::Logerror,
-            fac::Action::MachineValidation(_) => Self::MachineValidation,
-            fac::Action::MlxAction(_) => Self::MlxAction,
-            fac::Action::FirmwareUpgrade(_) => Self::FirmwareUpgrade,
-        }
     }
 }
 
