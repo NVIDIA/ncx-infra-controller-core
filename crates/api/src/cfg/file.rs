@@ -618,6 +618,25 @@ pub struct CarbideConfig {
     /// The default routing-profile to use when a tenant is created.
     #[serde(default = "default_tenant_routing_profile")]
     pub default_tenant_routing_profile_type: String,
+
+    /// External tool links surfaced in the admin web UI's "Tools"
+    /// sidebar. Each entry's `name` must be unique. The section is
+    /// hidden when the list is empty.
+    #[serde(default)]
+    pub tools: Vec<ToolLink>,
+}
+
+/// One external tool link rendered in the admin web UI's "Tools"
+/// sidebar.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ToolLink {
+    /// Stable identifier, must be unique within `tools`. Used
+    /// to look up well-known integrations.
+    pub name: String,
+    /// Label rendered in the sidebar.
+    pub display_name: String,
+    /// Absolute URL the link points to.
+    pub url: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1004,6 +1023,22 @@ impl CarbideConfig {
             &self.host_models,
             &self.dpu_config.dpu_models,
         )
+    }
+
+    /// Returns an error when two `tools` entries share a `name`,
+    /// since names are used as stable identifiers (e.g. `name = "grafana"`
+    /// is referenced by the per-machine "Logs" deep link).
+    pub fn validate_tools(&self) -> eyre::Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for tool in &self.tools {
+            if !seen.insert(tool.name.as_str()) {
+                return Err(eyre::eyre!(
+                    "duplicate tools entry with name = {:?}; tool names must be unique",
+                    tool.name
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// validate_supernic_firmware_profiles checks that each profile's inner

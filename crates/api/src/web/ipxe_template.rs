@@ -33,7 +33,7 @@ fn ipxe_template_scope_fmt(scope: &i32) -> Cow<'static, str> {
 }
 
 mod filters {
-    pub use super::super::filters::option_fmt;
+    pub use super::super::filters::{option_fmt, tools_section_html};
 
     pub fn ipxe_template_scope_fmt(scope: &i32) -> askama::Result<super::Cow<'static, str>> {
         Ok(super::ipxe_template_scope_fmt(scope))

@@ -24,6 +24,7 @@ use hyper::http::StatusCode;
 use rpc::forge::forge_server::Forge;
 use serde::Deserialize;
 
+use super::filters;
 use crate::api::Api;
 
 #[derive(Template)]

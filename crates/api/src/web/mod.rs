@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use askama::Template;
@@ -49,7 +49,25 @@ use tower_http::normalize_path::NormalizePath;
 use crate::CarbideError;
 use crate::api::Api;
 use crate::auth::AuthContext;
-use crate::cfg::file::CarbideConfig;
+use crate::cfg::file::{CarbideConfig, ToolLink};
+
+/// Process-global tool list. Static because `base.html` is rendered
+/// by more than 70 page structs and threading a field through all of them
+/// (and through every test fixture) is far more invasive than a
+/// write-once `OnceLock` read by Askama filters.
+static TOOLS: OnceLock<Vec<ToolLink>> = OnceLock::new();
+
+/// Initialize the global tool list. Call once during startup
+/// before serving any web requests. Subsequent calls are ignored.
+pub fn init_tools(tools: Vec<ToolLink>) {
+    let _ = TOOLS.set(tools);
+}
+
+/// Returns the configured tool links, or an empty slice when
+/// `init_tools` has not been called (e.g. unit tests).
+pub fn tools_list() -> &'static [ToolLink] {
+    TOOLS.get().map(Vec::as_slice).unwrap_or(&[])
+}
 
 /// Reusable template for rendering metadata (name, description, labels, version)
 /// in entity detail pages. Render with `{{ metadata_detail|safe }}`.

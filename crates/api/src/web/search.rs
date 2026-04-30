@@ -31,6 +31,7 @@ use rpc::forge::IdentifySerialResponse;
 use rpc::forge::forge_server::Forge;
 use uuid::Uuid;
 
+use super::filters;
 use crate::api::Api;
 
 pub async fn find(

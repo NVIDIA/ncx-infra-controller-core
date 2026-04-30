@@ -28,7 +28,7 @@ use rpc::forge as forgerpc;
 use rpc::forge::forge_server::Forge;
 use uuid::Uuid;
 
-//use super::filters;
+use super::filters;
 use crate::api::Api;
 
 #[derive(serde::Serialize, Template)]

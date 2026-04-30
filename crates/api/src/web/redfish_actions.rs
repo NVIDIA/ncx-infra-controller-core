@@ -212,6 +212,8 @@ pub mod filters {
     use itertools::Itertools;
     use rpc::forge::OptionalRedfishActionResult;
 
+    pub use super::super::filters::tools_section_html;
+
     pub fn date_fmt(value: &rpc::Timestamp) -> ::askama::Result<String> {
         Ok(to_time::<String>(Some(*value), None).unwrap_or_default())
     }

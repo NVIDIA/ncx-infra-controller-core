@@ -26,6 +26,8 @@ use rpc::forge as forgerpc;
 use rpc::forge::forge_server::Forge;
 
 mod filters {
+    pub use super::super::filters::tools_section_html;
+
     pub fn resource_pool_allocated_fmt(
         pool: &super::forgerpc::ResourcePool,
     ) -> askama::Result<String> {

@@ -25,6 +25,7 @@ use axum::response::{Html, IntoResponse, Response};
 use carbide_uuid::machine::MachineId;
 use hyper::http::StatusCode;
 
+use super::filters;
 use super::health::{HealthHistoryRecord, HealthHistoryTable, fetch_health_history};
 use crate::api::Api;
 
