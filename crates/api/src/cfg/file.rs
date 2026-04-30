@@ -28,6 +28,9 @@ use carbide_firmware::FirmwareConfig;
 use carbide_nvlink_manager::config::NvLinkConfig;
 use carbide_preingestion_manager::PreingestionManagerConfig;
 use carbide_site_explorer::config::SiteExplorerConfig;
+use carbide_utils::config::{
+    as_duration, as_std_duration, deserialize_arc_atomic_bool, serialize_arc_atomic_bool,
+};
 use chrono::Duration;
 use duration_str::{deserialize_duration, deserialize_duration_chrono};
 use ipnetwork::{IpNetwork, Ipv4Network};
@@ -48,22 +51,19 @@ use model::resource_pool::define::ResourcePoolDef;
 use model::tenant::identity_config::SigningAlgorithm;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
-use utils::config::{
-    as_duration, as_std_duration, deserialize_arc_atomic_bool, serialize_arc_atomic_bool,
-};
 
 use crate::state_controller::config::IterationConfig;
 
 const MAX_IB_PARTITION_PER_TENANT: i32 = 31;
 
-static BF2_NIC: &str = "24.47.1026";
-static BF2_BMC: &str = "BF-25.10-9";
+static BF2_NIC: &str = "24.47.2682";
+static BF2_BMC: &str = "BF-25.10-20";
 static BF2_CEC: &str = "4-15";
-static BF2_UEFI: &str = "4.13.0-26-g337fea6bfd";
-static BF3_NIC: &str = "32.47.1026";
-static BF3_BMC: &str = "BF-25.10-9";
+static BF2_UEFI: &str = "4.13.2-12-g943a91640d";
+static BF3_NIC: &str = "32.47.2682";
+static BF3_BMC: &str = "BF-25.10-20";
 static BF3_CEC: &str = "00.02.0195.0000_n02";
-static BF3_UEFI: &str = "4.13.0-26-g337fea6bfd";
+static BF3_UEFI: &str = "4.13.2-12-g943a91640d";
 
 /// nico-api configuration file content
 #[derive(Clone, Debug, Deserialize, Serialize)]

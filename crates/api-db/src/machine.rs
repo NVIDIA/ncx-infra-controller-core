@@ -264,7 +264,9 @@ pub async fn find(
     }
 
     if search_config.only_maintenance {
-        builder.push(" AND m.health_report_overrides->'merges'->'maintenance'->'alerts'->0->>'id' = 'Maintenance' ");
+        builder.push(
+            " AND m.health_reports->'merges'->'maintenance'->'alerts'->0->>'id' = 'Maintenance' ",
+        );
     }
 
     if search_config.only_quarantine {
@@ -828,42 +830,6 @@ pub async fn update_nvlink_status_observation(
     Ok(())
 }
 
-async fn update_health_report(
-    txn: &mut PgConnection,
-    machine_id: &MachineId,
-    column_name: &str,
-    health_report: &HealthReport,
-) -> Result<(), DatabaseError> {
-    let query = format!(
-        "UPDATE machines SET {column_name} = $1::json WHERE id = $2 AND
-            (
-                ({column_name}->>'observed_at' IS NULL)
-                OR (({column_name}->>'observed_at')::timestamp <= $3::timestamp)
-            ) RETURNING id"
-    );
-    let observed_at = health_report.observed_at.unwrap_or_else(chrono::Utc::now);
-    let _id: (MachineId,) = match sqlx::query_as(&query)
-        .bind(sqlx::types::Json(&health_report))
-        .bind(machine_id)
-        .bind(observed_at)
-        .fetch_one(&mut *txn)
-        .await
-        .map_err(|e| DatabaseError::new("update health report", e))
-    {
-        Ok(result) => result,
-        Err(e) if e.is_not_found() => {
-            // This function is intended to be able to capture why the update sometimes fails in unit-test
-            // even though all prerequisite data is present.
-            // It compiles to a no-op in production environments.
-            debug_failed_machine_status_update(txn, machine_id, column_name, health_report).await;
-            return Err(e);
-        }
-        Err(e) => return Err(e),
-    };
-
-    Ok(())
-}
-
 #[cfg(test)]
 async fn debug_failed_machine_status_update(
     txn: &mut PgConnection,
@@ -908,15 +874,16 @@ pub async fn update_dpu_agent_health_report(
     machine_id: &MachineId,
     health_report: &HealthReport,
 ) -> Result<(), DatabaseError> {
-    update_health_report(txn, machine_id, "dpu_agent_health_report", health_report).await
-}
-
-pub async fn update_hardware_health_report(
-    txn: &mut PgConnection,
-    machine_id: &MachineId,
-    health_report: &HealthReport,
-) -> Result<(), DatabaseError> {
-    update_health_report(txn, machine_id, "hardware_health_report", health_report).await
+    let mut health_report = health_report.clone();
+    health_report.source = HealthReport::DPU_AGENT_SOURCE.to_string();
+    crate::health_report::insert_health_report(
+        txn,
+        "machines",
+        machine_id,
+        HealthReportApplyMode::Merge,
+        &health_report,
+    )
+    .await
 }
 
 pub async fn update_machine_validation_health_report(
@@ -924,11 +891,25 @@ pub async fn update_machine_validation_health_report(
     machine_id: &MachineId,
     health_report: &HealthReport,
 ) -> Result<(), DatabaseError> {
-    update_health_report(
+    if health_report.alerts.is_empty() {
+        return crate::health_report::remove_health_report(
+            txn,
+            "machines",
+            machine_id,
+            HealthReportApplyMode::Merge,
+            HealthReport::MACHINE_VALIDATION_SOURCE,
+        )
+        .await;
+    }
+
+    let mut health_report = health_report.clone();
+    health_report.source = HealthReport::MACHINE_VALIDATION_SOURCE.to_string();
+    crate::health_report::insert_health_report(
         txn,
+        "machines",
         machine_id,
-        "machine_validation_health_report",
-        health_report,
+        HealthReportApplyMode::Merge,
+        &health_report,
     )
     .await
 }
@@ -938,11 +919,25 @@ pub async fn update_site_explorer_health_report(
     machine_id: &MachineId,
     health_report: &HealthReport,
 ) -> Result<(), DatabaseError> {
-    update_health_report(
+    if health_report.alerts.is_empty() {
+        return crate::health_report::remove_health_report(
+            txn,
+            "machines",
+            machine_id,
+            HealthReportApplyMode::Merge,
+            HealthReport::SITE_EXPLORER_SOURCE,
+        )
+        .await;
+    }
+
+    let mut health_report = health_report.clone();
+    health_report.source = HealthReport::SITE_EXPLORER_SOURCE.to_string();
+    crate::health_report::insert_health_report(
         txn,
+        "machines",
         machine_id,
-        "site_explorer_health_report",
-        health_report,
+        HealthReportApplyMode::Merge,
+        &health_report,
     )
     .await
 }
@@ -952,16 +947,30 @@ pub async fn update_sku_validation_health_report(
     machine_id: &MachineId,
     health_report: &HealthReport,
 ) -> Result<(), DatabaseError> {
-    update_health_report(
+    if health_report.alerts.is_empty() {
+        return crate::health_report::remove_health_report(
+            txn,
+            "machines",
+            machine_id,
+            HealthReportApplyMode::Merge,
+            HealthReport::SKU_VALIDATION_SOURCE,
+        )
+        .await;
+    }
+
+    let mut health_report = health_report.clone();
+    health_report.source = HealthReport::SKU_VALIDATION_SOURCE.to_string();
+    crate::health_report::insert_health_report(
         txn,
+        "machines",
         machine_id,
-        "sku_validation_health_report",
-        health_report,
+        HealthReportApplyMode::Merge,
+        &health_report,
     )
     .await
 }
 
-pub async fn insert_health_report_override(
+pub async fn insert_health_report(
     txn: &mut PgConnection,
     machine_id: &MachineId,
     mode: HealthReportApplyMode,
@@ -973,7 +982,7 @@ pub async fn insert_health_report_override(
         // if a merge with the same source already exists -- but I'm not sure what
         // it's used for, since others seem to do a remove + insert. Do we need
         // to support this still? Might be nice to explain it somewhere.
-        let column_name = "health_report_overrides";
+        let column_name = "health_reports";
         let path = match mode {
             HealthReportApplyMode::Merge => format!("merges,\"{}\"", health_report.source),
             HealthReportApplyMode::Replace => "replace".to_string(),
@@ -1004,7 +1013,7 @@ pub async fn insert_health_report_override(
     }
 }
 
-pub async fn remove_health_report_override(
+pub async fn remove_health_report(
     txn: &mut PgConnection,
     machine_id: &MachineId,
     mode: HealthReportApplyMode,
@@ -1688,7 +1697,7 @@ pub async fn find_machine_ids(
     qb.push(" WHERE TRUE");
 
     if search_config.only_maintenance {
-        qb.push(" AND health_report_overrides->'merges'->'maintenance'->'alerts'->0->>'id' = 'Maintenance'");
+        qb.push(" AND health_reports->'merges'->'maintenance'->'alerts'->0->>'id' = 'Maintenance'");
     }
 
     if search_config.only_quarantine {
@@ -1728,9 +1737,9 @@ pub async fn find_machine_ids(
     }
 
     if let Some(ovrrd_str) = &search_config.only_with_health_alert {
-        qb.push(" AND health_report_overrides->'merges' ? ");
+        qb.push(" AND health_reports->'merges' ? ");
         qb.push_bind(ovrrd_str.clone());
-        qb.push(" AND jsonb_array_length(health_report_overrides->'merges'->");
+        qb.push(" AND jsonb_array_length(health_reports->'merges'->");
         qb.push_bind(ovrrd_str);
         qb.push("->'alerts') > 0");
     }

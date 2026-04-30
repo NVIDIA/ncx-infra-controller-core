@@ -1994,12 +1994,16 @@ dependencies = [
  "carbide-version",
  "clap",
  "eyre",
+ "futures-util",
  "governor",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "ipnetwork",
+ "netlink-packet-route",
  "nonzero_ext",
  "prost 0.14.1",
+ "rtnetlink",
  "tokio",
  "tonic 0.14.2",
  "tonic-prost",
@@ -2372,7 +2376,6 @@ dependencies = [
  "carbide-firmware",
  "carbide-redfish",
  "carbide-secrets",
- "carbide-site-explorer",
  "carbide-ssh",
  "carbide-utils",
  "chrono",
@@ -2594,7 +2597,6 @@ dependencies = [
  "carbide-network",
  "carbide-redfish",
  "carbide-secrets",
- "carbide-ssh",
  "carbide-utils",
  "carbide-uuid",
  "chrono",
@@ -5968,7 +5970,7 @@ dependencies = [
 [[package]]
 name = "libredfish"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.43.11#696fcdef426d728a66e88e93a3ec6d7b29c1775f"
+source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.43.12#a22f6daa885028871f2f3762534f87b7cba95eaf"
 dependencies = [
  "async-trait",
  "chrono",

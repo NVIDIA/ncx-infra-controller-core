@@ -27,6 +27,7 @@ use std::time::Instant;
 
 use carbide_firmware::FirmwareConfig;
 use carbide_network::sanitized_mac;
+use carbide_utils::periodic_timer::PeriodicTimer;
 use carbide_uuid::machine::MachineType;
 use carbide_uuid::power_shelf::{PowerShelfIdSource, PowerShelfType};
 use chrono::Utc;
@@ -55,7 +56,6 @@ use sqlx::PgPool;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
-use utils::periodic_timer::PeriodicTimer;
 use version_compare::Cmp;
 mod endpoint_explorer;
 pub use endpoint_explorer::EndpointExplorer;
@@ -455,9 +455,11 @@ impl SiteExplorer {
 
             let previous_health_report = machine
                 .as_ref()
-                .and_then(|machine| machine.site_explorer_health_report.as_ref());
+                .and_then(|machine| machine.site_explorer_health_report());
             let mut new_health_report: health_report::HealthReport =
-                health_report::HealthReport::empty("site-explorer".to_string());
+                health_report::HealthReport::empty(
+                    health_report::HealthReport::SITE_EXPLORER_SOURCE.to_string(),
+                );
 
             if let Some(ref e) = ep.report.last_exploration_error {
                 metrics.increment_endpoint_explorations_failures_overall_count(

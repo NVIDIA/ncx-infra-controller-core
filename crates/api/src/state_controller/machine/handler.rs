@@ -122,6 +122,33 @@ pub const MAX_FIRMWARE_UPGRADE_RETRIES: u32 = 5;
 #[cfg(test)]
 pub const MAX_FIRMWARE_UPGRADE_RETRIES: u32 = 2; // Faster for tests
 
+// Compute the API-side deadline for a scout firmware upgrade from scout's
+// timeout envelope: fixed script download timeout, script execution timeout,
+// one artifact download timeout per file artifact, and report/slack time.
+// Saturating arithmetic prevents overflow from malformed configs, and the
+// final cap prevents the API from waiting indefinitely for an absurd task.
+fn scout_firmware_upgrade_deadline(
+    started_at: DateTime<Utc>,
+    execution_timeout_seconds: u32,
+    artifact_download_timeout_seconds: u32,
+    file_artifact_count: usize,
+) -> DateTime<Utc> {
+    // Must match crates/scout/src/firmware_upgrade.rs::SCRIPT_DOWNLOAD_TIMEOUT.
+    const SCRIPT_DOWNLOAD_TIMEOUT_SECONDS: i64 = 30;
+    const DEADLINE_SLACK: Duration = Duration::minutes(30);
+    const MAX_DEADLINE_DURATION_SECONDS: i64 = 5 * 60 * 60;
+
+    let artifact_download_seconds = i64::from(artifact_download_timeout_seconds)
+        .saturating_mul(i64::try_from(file_artifact_count).unwrap_or(i64::MAX));
+    let deadline_seconds = SCRIPT_DOWNLOAD_TIMEOUT_SECONDS
+        .saturating_add(i64::from(execution_timeout_seconds))
+        .saturating_add(artifact_download_seconds)
+        .saturating_add(DEADLINE_SLACK.num_seconds())
+        .min(MAX_DEADLINE_DURATION_SECONDS);
+
+    started_at + Duration::seconds(deadline_seconds)
+}
+
 /// Reachability params to check if DPU is up or not.
 #[derive(Copy, Clone, Debug)]
 pub struct ReachabilityParams {
@@ -446,10 +473,8 @@ impl MachineStateHandler {
             }
 
             // Update DPU network health Prometheus metrics
-            // TODO: This needs to be fixed for multi-dpu
             ctx.metrics.dpus_healthy += if dpu_snapshot
-                .dpu_agent_health_report
-                .as_ref()
+                .dpu_agent_health_report()
                 .map(|health| health.alerts.is_empty())
                 .unwrap_or(false)
             {
@@ -457,7 +482,7 @@ impl MachineStateHandler {
             } else {
                 0
             };
-            if let Some(report) = dpu_snapshot.dpu_agent_health_report.as_ref() {
+            if let Some(report) = dpu_snapshot.dpu_agent_health_report() {
                 for alert in report.alerts.iter() {
                     *ctx.metrics
                         .dpu_health_probe_alerts
@@ -537,7 +562,7 @@ impl MachineStateHandler {
         mh_snaphost: &ManagedHostStateSnapshot,
         txn: &mut PgConnection,
     ) -> Result<(), StateHandlerError> {
-        db::machine::remove_health_report_override(
+        db::machine::remove_health_report(
             txn,
             &mh_snaphost.host_snapshot.id,
             health_report::HealthReportApplyMode::Merge,
@@ -556,7 +581,7 @@ impl MachineStateHandler {
         txn: &mut PgConnection,
         host_machine_id: &MachineId,
     ) -> Result<(), StateHandlerError> {
-        db::machine::remove_health_report_override(
+        db::machine::remove_health_report(
             txn,
             host_machine_id,
             health_report::HealthReportApplyMode::Merge,
@@ -601,7 +626,7 @@ impl MachineStateHandler {
 
         // If it's been more than 5 minutes since DPU reported status, consider it unhealthy
         for dpu_snapshot in &mh_snapshot.dpu_snapshots {
-            if let Some(dpu_health) = dpu_snapshot.dpu_agent_health_report.as_ref() {
+            if let Some(dpu_health) = dpu_snapshot.dpu_agent_health_report() {
                 if !dpu_health.alerts.is_empty() {
                     continue;
                 }
@@ -612,8 +637,8 @@ impl MachineStateHandler {
                         let message = format!("Last seen over {} ago", self.dpu_up_threshold);
                         let dpu_machine_id = &dpu_snapshot.id;
                         let health_report = health_report::HealthReport::heartbeat_timeout(
-                            "forge-dpu-agent".to_string(),
-                            "forge-dpu-agent".to_string(),
+                            health_report::HealthReport::DPU_AGENT_SOURCE.to_string(),
+                            health_report::HealthReport::DPU_AGENT_SOURCE.to_string(),
                             message,
                             true,
                             false,
@@ -836,7 +861,7 @@ impl MachineStateHandler {
                         return Ok(outcome
                             .in_transaction(&ctx.services.db_pool, move |txn| {
                                 async move {
-                                    db::machine::insert_health_report_override(
+                                    db::machine::insert_health_report(
                                         txn,
                                         &host_machine_id,
                                         health_report::HealthReportApplyMode::Merge,
@@ -901,7 +926,7 @@ impl MachineStateHandler {
 
                     // Mark the Host as in update.
                     let mut txn = ctx.services.db_pool.begin().await?;
-                    db::machine::insert_health_report_override(
+                    db::machine::insert_health_report(
                         &mut txn,
                         host_machine_id,
                         health_report::HealthReportApplyMode::Merge,
@@ -1584,7 +1609,7 @@ impl MachineStateHandler {
             );
 
             let mut txn = ctx.services.db_pool.begin().await?;
-            db::machine::insert_health_report_override(
+            db::machine::insert_health_report(
                 &mut txn,
                 host_machine_id,
                 HealthReportApplyMode::Merge,
@@ -3511,12 +3536,15 @@ impl DpuMachineStateHandler {
                     }
                 };
 
-                if let Some(outcome) = check_fw_component_version(
-                    ctx,
-                    dpu_snapshot,
-                    &self.hardware_models.create_snapshot(),
-                )
-                .await?
+                // fixme: in case of DPF ingested machine, the fw version compare should be done
+                // with the image with which the ingestion is done.
+                if !state.host_snapshot.dpf.used_for_ingestion
+                    && let Some(outcome) = check_fw_component_version(
+                        ctx,
+                        dpu_snapshot,
+                        &self.hardware_models.create_snapshot(),
+                    )
+                    .await?
                 {
                     return Ok(outcome);
                 }
@@ -4387,7 +4415,7 @@ fn managed_host_network_config_version_synced_and_dpu_healthy(dpu_snapshot: &Mac
         return false;
     }
 
-    let Some(dpu_health) = &dpu_snapshot.dpu_agent_health_report else {
+    let Some(dpu_health) = dpu_snapshot.dpu_agent_health_report() else {
         return false;
     };
 
@@ -5592,7 +5620,7 @@ impl StateHandler for InstanceStateHandler {
                                         crate::machine_update_manager::machine_update_module::create_host_update_health_report_hostfw();
                             let machine_id = *host_machine_id;
                             // The health report alert gets generated here, the machine update manager retains responsibilty for clearing it when we're done.
-                            db::machine::insert_health_report_override(
+                            db::machine::insert_health_report(
                                 &mut txn,
                                 &machine_id,
                                 HealthReportApplyMode::Merge,
@@ -5606,7 +5634,7 @@ impl StateHandler for InstanceStateHandler {
                             let health_override = crate::machine_update_manager::machine_update_module::create_host_update_health_report_dpufw();
                             let machine_id = *host_machine_id;
                             // Mark the Host as in update.
-                            db::machine::insert_health_report_override(
+                            db::machine::insert_health_report(
                                 &mut txn,
                                 &machine_id,
                                 HealthReportApplyMode::Merge,
@@ -5930,13 +5958,12 @@ impl StateHandler for InstanceStateHandler {
                             // This is ok to defer into pending_db_writes because we're passing
                             // `no_overwrite: false`, meaning we will overwrite any overrides
                             // already in place.
-                            ctx.pending_db_writes.push(
-                                MachineWriteOp::InsertHealthReportOverride {
+                            ctx.pending_db_writes
+                                .push(MachineWriteOp::InsertMachineHealthReport {
                                     machine_id: *host_machine_id,
                                     mode: health_report::HealthReportApplyMode::Merge,
                                     health_report,
-                                },
-                            );
+                                });
 
                             tracing::info!(
                                 machine_id = %host_machine_id,
@@ -7089,7 +7116,10 @@ impl HostUpgradeState {
                         format!("{PXE_URL}/public/firmware/{relative}")
                     };
 
+                    let upgrade_task_id = uuid::Uuid::new_v4().to_string();
+                    let file_artifact_count = to_install.files.len();
                     let task = serde_json::json!({
+                        "upgrade_task_id": &upgrade_task_id,
                         "component_type": firmware_type.to_string(),
                         "target_version": to_install.version,
                         "script": {
@@ -7106,18 +7136,18 @@ impl HostUpgradeState {
                         }).collect::<Vec<_>>(),
                     });
 
-                    // Scout respects its own execution/download timeouts; slack covers clock
-                    // skew and the round-trip for the report RPC to reach us.
-                    const DEADLINE_SLACK: chrono::TimeDelta = chrono::TimeDelta::minutes(30);
+                    // Scout uses a fixed timeout for the script download and applies the artifact
+                    // download timeout per file
                     let started_at = Utc::now();
-                    let deadline = started_at
-                        + chrono::TimeDelta::seconds(
-                            i64::from(scout_config.execution_timeout_seconds)
-                                + i64::from(scout_config.artifact_download_timeout_seconds),
-                        )
-                        + DEADLINE_SLACK;
+                    let deadline = scout_firmware_upgrade_deadline(
+                        started_at,
+                        scout_config.execution_timeout_seconds,
+                        scout_config.artifact_download_timeout_seconds,
+                        file_artifact_count,
+                    );
                     return Ok(StateHandlerOutcome::transition(scenario.actual_new_state(
                         HostReprovisionState::WaitingForScoutUpgrade {
+                            upgrade_task_id,
                             component_type: firmware_type,
                             target_version: to_install.version,
                             started_at,
@@ -10506,6 +10536,31 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+
+    #[test]
+    fn scout_firmware_upgrade_deadline_accounts_for_each_artifact() {
+        let started_at = chrono::DateTime::<Utc>::from_str("2026-04-28T00:00:00Z").unwrap();
+
+        let deadline = scout_firmware_upgrade_deadline(started_at, 300, 120, 3);
+
+        assert_eq!(
+            deadline,
+            started_at
+                + Duration::seconds(30)
+                + Duration::seconds(300)
+                + Duration::seconds(120 * 3)
+                + Duration::minutes(30)
+        );
+    }
+
+    #[test]
+    fn scout_firmware_upgrade_deadline_is_capped() {
+        let started_at = chrono::DateTime::<Utc>::from_str("2026-04-28T00:00:00Z").unwrap();
+
+        let deadline = scout_firmware_upgrade_deadline(started_at, u32::MAX, u32::MAX, usize::MAX);
+
+        assert_eq!(deadline, started_at + Duration::hours(5));
+    }
 
     /// Verify that `oem_manager_profiles` from the site config is forwarded to `machine_setup`.
     ///

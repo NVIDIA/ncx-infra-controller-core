@@ -55,6 +55,7 @@ mod machine_validation;
 mod mlx_device;
 mod register;
 mod stream;
+mod tpm;
 
 struct DevEnv {
     in_qemu: bool,
@@ -345,7 +346,7 @@ async fn handle_action(
     match action {
         Action::Discovery => {
             // This is temporary. All cleanup must be done when API call Reset.
-            deprovision::run_no_api().await?;
+            deprovision::run_no_api(&config.tpm_path).await?;
             let retry = registration::DiscoveryRetry {
                 secs: config.discovery_retry_secs,
                 max: config.discovery_retries_max,
@@ -484,7 +485,7 @@ async fn handle_firmware_upgrade_action(
         result.exit_code,
     );
 
-    report_firmware_upgrade_status(config, machine_id, &result).await?;
+    report_firmware_upgrade_status(config, machine_id, task.upgrade_task_id, &result).await?;
 
     if !result.success {
         return Err(CarbideClientError::GenericError(format!(
@@ -498,6 +499,7 @@ async fn handle_firmware_upgrade_action(
 async fn report_firmware_upgrade_status(
     config: &Options,
     machine_id: &MachineId,
+    upgrade_task_id: String,
     result: &firmware_upgrade::FirmwareUpgradeResult,
 ) -> Result<(), CarbideClientError> {
     let mut client = client::create_forge_client(config).await?;
@@ -508,6 +510,7 @@ async fn report_firmware_upgrade_status(
         stdout: truncate(&result.stdout, MAX_FIRMWARE_UPGRADE_STATUS_FIELD_SIZE),
         stderr: truncate(&result.stderr, MAX_FIRMWARE_UPGRADE_STATUS_FIELD_SIZE),
         error: truncate(&result.error, MAX_FIRMWARE_UPGRADE_STATUS_FIELD_SIZE),
+        upgrade_task_id,
     });
     client.report_scout_firmware_upgrade_status(request).await?;
     Ok(())

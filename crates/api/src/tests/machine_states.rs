@@ -47,7 +47,7 @@ use model::machine::{
     ValidationState,
 };
 use rpc::forge::forge_server::Forge;
-use rpc::forge::{HealthReportEntry, InsertHealthReportOverrideRequest, TpmCaCert, TpmCaCertId};
+use rpc::forge::{HealthReportEntry, InsertMachineHealthReportRequest, TpmCaCert, TpmCaCertId};
 use rpc::forge_agent_control_response::Action;
 use rpc::machine_discovery::AttestKeyInfo;
 use rpc::{DiscoveryData, DiscoveryInfo};
@@ -547,9 +547,7 @@ async fn test_dpu_heartbeat(pool: sqlx::PgPool) -> sqlx::Result<()> {
     let dpu_machine = mh.dpu().db_machine(&mut txn).await;
     assert!(
         dpu_machine
-            .dpu_agent_health_report
-            .as_ref()
-            .as_ref()
+            .dpu_agent_health_report()
             .unwrap()
             .alerts
             .is_empty()
@@ -606,18 +604,12 @@ async fn test_dpu_heartbeat(pool: sqlx::PgPool) -> sqlx::Result<()> {
     let dpu_machine = mh.dpu().db_machine(&mut txn).await;
     assert!(
         !dpu_machine
-            .dpu_agent_health_report
-            .as_ref()
-            .as_ref()
+            .dpu_agent_health_report()
             .unwrap()
             .alerts
             .is_empty(),
         "DPU is not healthy: {:?}",
-        dpu_machine
-            .dpu_agent_health_report
-            .as_ref()
-            .as_ref()
-            .unwrap()
+        dpu_machine.dpu_agent_health_report().unwrap()
     );
 
     // The up count reflects the heartbeat timeout.
@@ -1449,7 +1441,7 @@ async fn test_measurement_host_init_failed_to_waiting_for_measurements_to_pendin
     .await;
 
     env.api
-        .insert_health_report_override(Request::new(InsertHealthReportOverrideRequest {
+        .insert_machine_health_report(Request::new(InsertMachineHealthReportRequest {
             health_report_entry: Some(HealthReportEntry {
                 report: Some(
                     HealthReport::empty(format!("{HARDWARE_HEALTH_OVERRIDE_PREFIX}health")).into(),
