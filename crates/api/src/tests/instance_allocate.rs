@@ -1111,3 +1111,66 @@ async fn test_zero_dpu_instance_surfaces_underlay_ip_in_status(
 
     Ok(())
 }
+
+// Extension services run on the DPU agent; on a zero-DPU host there's no DPU
+// to schedule them on, so the allocation should be rejected up front (rather
+// than letting the instance get stuck reporting "Unknown" extension service
+// status forever).
+#[crate::sqlx_test]
+async fn test_reject_zero_dpu_instance_with_extension_services(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let env = create_test_env_for_instance_allocation(pool.clone(), None).await;
+    let config = ManagedHostConfig::with_dpus(vec![]);
+
+    let zero_dpu_host = api_fixtures::site_explorer::new_host(&env, config).await?;
+
+    let result = crate::handlers::instance::allocate(
+        env.api.as_ref(),
+        tonic::Request::new(forge::InstanceAllocationRequest {
+            machine_id: Some(zero_dpu_host.host_snapshot.id),
+            instance_type_id: None,
+            config: Some(forge::InstanceConfig {
+                tenant: Some(forge::TenantConfig {
+                    tenant_organization_id: "2829bbe3-c169-4cd9-8b2a-19a8b1618a93".to_string(),
+                    hostname: None,
+                    tenant_keyset_ids: vec![],
+                }),
+                network_security_group_id: None,
+                os: Some(forge::InstanceOperatingSystemConfig {
+                    phone_home_enabled: false,
+                    run_provisioning_instructions_on_every_boot: false,
+                    user_data: None,
+                    variant: Some(forge::instance_operating_system_config::Variant::Ipxe(
+                        forge::InlineIpxe {
+                            ipxe_script: "exit".to_string(),
+                            user_data: None,
+                        },
+                    )),
+                }),
+                network: None,
+                infiniband: None,
+                dpu_extension_services: Some(forge::InstanceDpuExtensionServicesConfig {
+                    service_configs: vec![forge::InstanceDpuExtensionServiceConfig {
+                        service_id: "test-service".to_string(),
+                        version: "1.0.0".to_string(),
+                    }],
+                }),
+                nvlink: None,
+            }),
+            instance_id: None,
+            metadata: None,
+            allow_unhealthy_machine: false,
+        }),
+    )
+    .await;
+
+    match result {
+        Err(e) if e.code() == tonic::Code::InvalidArgument => {}
+        _ => panic!(
+            "Expected zero-DPU host to reject instance allocation with dpu_extension_services (no DPU to schedule them on), got: {result:?}"
+        ),
+    };
+
+    Ok(())
+}
