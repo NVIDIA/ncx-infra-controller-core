@@ -1087,7 +1087,7 @@ async fn clear_ib_cleanup_alert(
         .await
         .map_err(|e| DatabaseError::new("acquire connection", e))?;
 
-    db::machine::remove_health_report_override(
+    db::machine::remove_health_report(
         &mut conn,
         machine_id,
         HealthReportApplyMode::Merge,
@@ -1122,7 +1122,7 @@ async fn set_ib_port_down_alert(
         alerts: vec![alert],
     };
 
-    db::machine::insert_health_report_override(
+    db::machine::insert_health_report(
         &mut conn,
         machine_id,
         HealthReportApplyMode::Merge,
@@ -1144,7 +1144,7 @@ async fn clear_ib_port_down_alert(
         .await
         .map_err(|e| DatabaseError::new("acquire connection", e))?;
 
-    db::machine::remove_health_report_override(
+    db::machine::remove_health_report(
         &mut conn,
         machine_id,
         HealthReportApplyMode::Merge,
