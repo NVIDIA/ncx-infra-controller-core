@@ -31,7 +31,7 @@ use rpc::forge::{
     RemoveMachineHealthReportRequest,
 };
 
-use super::filters;
+use super::{Base, filters};
 use crate::api::Api;
 use crate::auth::AuthContext;
 
@@ -399,3 +399,5 @@ pub(super) async fn fetch_health_history(
 
     Ok(records)
 }
+
+impl super::Base for MachineHealth {}

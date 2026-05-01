@@ -26,7 +26,7 @@ use carbide_uuid::rack::RackId;
 use hyper::http::StatusCode;
 use rpc::forge::forge_server::Forge;
 
-use super::filters;
+use super::{Base, filters};
 use crate::api::Api;
 
 #[derive(Template)]
@@ -309,3 +309,6 @@ async fn fetch_rack_state_history(api: &Api, rack_id: &RackId) -> Vec<RackStateH
         }
     }
 }
+
+impl super::Base for Racks {}
+impl super::Base for RackDetail {}

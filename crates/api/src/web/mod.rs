@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use askama::Template;
@@ -49,7 +49,31 @@ use tower_http::normalize_path::NormalizePath;
 use crate::CarbideError;
 use crate::api::Api;
 use crate::auth::AuthContext;
-use crate::cfg::file::CarbideConfig;
+use crate::cfg::file::{CarbideConfig, ToolLink};
+
+/// Process-global tool list. Static because `base.html` is rendered
+/// by more than 70 page structs and threading a field through all of them
+/// (and through every test fixture) is far more invasive than a
+/// write-once `OnceLock` read via the `Base` trait.
+static TOOLS: OnceLock<Vec<ToolLink>> = OnceLock::new();
+
+/// Initialize the global tool list. Call once during startup
+/// before serving any web requests. Subsequent calls are ignored.
+pub fn init_tools(tools: Vec<ToolLink>) {
+    let _ = TOOLS.set(tools);
+}
+
+/// Implemented by every page struct whose template extends `base.html`.
+/// Exposes the global tool list to the shared "Tools" sidebar via
+/// `Self::tools()`.
+pub trait Base {
+    /// Configured external tool links rendered in the admin UI's
+    /// "Tools" sidebar. Empty when no tools are configured or
+    /// when `init_tools` has not been called (e.g. unit tests).
+    fn tools() -> &'static [ToolLink] {
+        TOOLS.get().map(Vec::as_slice).unwrap_or(&[])
+    }
+}
 
 /// Reusable template for rendering metadata (name, description, labels, version)
 /// in entity detail pages. Render with `{{ metadata_detail|safe }}`.
@@ -813,6 +837,8 @@ struct Index {
     carbide_config: CarbideConfig,
     bmc_proxy: String,
 }
+
+impl Base for Index {}
 
 pub async fn root(state: AxumState<Arc<Api>>) -> impl IntoResponse {
     let request = tonic::Request::new(forgerpc::DpuAgentUpgradePolicyRequest { new_policy: None });

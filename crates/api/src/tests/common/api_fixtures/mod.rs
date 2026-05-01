@@ -1057,6 +1057,7 @@ fn host_firmware_example() -> HashMap<String, Firmware> {
 pub fn get_config() -> CarbideConfig {
     CarbideConfig {
         default_tenant_routing_profile_type: "EXTERNAL".to_string(),
+        web_ui_sidebar_tools: vec![],
         bgp_leaf_session_password: None,
         rack_validation_config: crate::cfg::file::RackValidationConfig {
             enabled: true,

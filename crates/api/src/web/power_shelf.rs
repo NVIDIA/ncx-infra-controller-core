@@ -26,7 +26,7 @@ use carbide_uuid::power_shelf::PowerShelfId;
 use hyper::http::StatusCode;
 use rpc::forge::forge_server::Forge;
 
-use super::filters;
+use super::{Base, filters};
 use crate::api::Api;
 
 fn capitalize(s: &str) -> String {
@@ -253,3 +253,6 @@ async fn fetch_power_shelves(api: &Api) -> Result<rpc::forge::PowerShelfList, to
     }
     Ok(rpc::forge::PowerShelfList { power_shelves })
 }
+
+impl super::Base for PowerShelfShow {}
+impl super::Base for PowerShelfDetail {}

@@ -31,8 +31,8 @@ use rpc::forge::forge_server::Forge;
 use rpc::forge::{self as forgerpc, HealthReportApplyMode, MachineInventorySoftwareComponent};
 use serde::Deserialize;
 
-use super::filters;
 use super::state_history::StateHistoryTable;
+use super::{Base, filters};
 use crate::api::Api;
 use crate::web::action_status::{self, ActionStatus};
 
@@ -1015,3 +1015,6 @@ pub async fn set_dpu_first_boot_order(
 
     Redirect::to(&redirect_url).into_response()
 }
+
+impl super::Base for MachineShow {}
+impl<'a> super::Base for MachineDetail<'a> {}

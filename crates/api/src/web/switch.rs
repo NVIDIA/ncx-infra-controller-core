@@ -26,7 +26,7 @@ use carbide_uuid::switch::SwitchId;
 use hyper::http::StatusCode;
 use rpc::forge::forge_server::Forge;
 
-use super::filters;
+use super::{Base, filters};
 use crate::api::Api;
 
 #[derive(Template)]
@@ -247,3 +247,6 @@ async fn fetch_switch(api: &Api, switch_id: &str) -> Result<Option<rpc::forge::S
 
     Ok(response.switches.into_iter().next())
 }
+
+impl super::Base for SwitchShow {}
+impl super::Base for SwitchDetail {}

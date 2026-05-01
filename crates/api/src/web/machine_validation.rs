@@ -24,6 +24,7 @@ use hyper::http::StatusCode;
 use rpc::forge::forge_server::Forge;
 use rpc::forge::{self as forgerpc};
 
+use super::Base;
 use super::machine::ValidationRun;
 use crate::api::Api;
 
@@ -424,3 +425,10 @@ pub async fn external_configs(AxumState(state): AxumState<Arc<Api>>) -> Response
 
     (StatusCode::OK, Html(tmpl.render().unwrap())).into_response()
 }
+
+impl super::Base for ValidationResultDetailDisplay {}
+impl super::Base for ValidationResults {}
+impl super::Base for ValidateTests {}
+impl super::Base for ValidateTestDetailsDisplay {}
+impl super::Base for ValidationRunDisplay {}
+impl super::Base for ValidationExternalConfigs {}
