@@ -623,7 +623,7 @@ pub struct CarbideConfig {
     /// sidebar. Each entry's `name` must be unique. The section is
     /// hidden when the list is empty.
     #[serde(default)]
-    pub tools: Vec<ToolLink>,
+    pub web_ui_sidebar_tools: Vec<ToolLink>,
 }
 
 /// One external tool link rendered in the admin web UI's "Tools"
@@ -1028,9 +1028,9 @@ impl CarbideConfig {
     /// Returns an error when two `tools` entries share a `name`,
     /// since names are used as stable identifiers (e.g. `name = "grafana"`
     /// is referenced by the per-machine "Logs" deep link).
-    pub fn validate_tools(&self) -> eyre::Result<()> {
+    pub fn validate_web_ui_sidebar_tools(&self) -> eyre::Result<()> {
         let mut seen = std::collections::HashSet::new();
-        for tool in &self.tools {
+        for tool in &self.web_ui_sidebar_tools {
             if !seen.insert(tool.name.as_str()) {
                 return Err(eyre::eyre!(
                     "duplicate tools entry with name = {:?}; tool names must be unique",

@@ -152,11 +152,11 @@ pub fn parse_carbide_config(
     }
 
     // Validate that admin-UI tool entries have unique names.
-    config.validate_tools()?;
+    config.validate_web_ui_sidebar_tools()?;
 
     // Publish the configured tool list to the web layer so the
     // admin-UI sidebar and per-machine "Logs" deep link can read it.
-    crate::web::init_tools(config.tools.clone());
+    crate::web::init_tools(config.web_ui_sidebar_tools.clone());
 
     // Validate that the firmware profile config keys match their inner
     // part_number and psid values. Mismatches are logged as warnings.
