@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -214,3 +215,6 @@ pub async fn detail(
     let tmpl: SkuDetail = sku.into();
     (StatusCode::OK, Html(tmpl.render().unwrap())).into_response()
 }
+
+impl super::Base for SkuShow {}
+impl super::Base for SkuDetail {}

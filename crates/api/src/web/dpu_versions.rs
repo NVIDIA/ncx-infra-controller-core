@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::State as AxumState;
 use axum::response::{Html, IntoResponse};
@@ -143,3 +144,5 @@ pub async fn list_json(AxumState(state): AxumState<Arc<Api>>) -> impl IntoRespon
 
     (StatusCode::OK, Json(machines)).into_response()
 }
+
+impl super::Base for DpuVersions {}

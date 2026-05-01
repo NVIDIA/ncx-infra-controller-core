@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -309,3 +310,6 @@ async fn fetch_rack_state_history(api: &Api, rack_id: &RackId) -> Vec<RackStateH
         }
     }
 }
+
+impl super::Base for Racks {}
+impl super::Base for RackDetail {}

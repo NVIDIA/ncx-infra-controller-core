@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -721,3 +722,5 @@ fn mem_to_size(mem: &str) -> isize {
 fn short_state(s: &str) -> &str {
     s.split(' ').next().unwrap_or_default()
 }
+
+impl super::Base for ManagedHostShow {}

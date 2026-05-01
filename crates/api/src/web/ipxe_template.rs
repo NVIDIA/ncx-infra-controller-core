@@ -19,6 +19,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -33,7 +34,7 @@ fn ipxe_template_scope_fmt(scope: &i32) -> Cow<'static, str> {
 }
 
 mod filters {
-    pub use super::super::filters::{option_fmt, tools_section_html};
+    pub use super::super::filters::option_fmt;
 
     pub fn ipxe_template_scope_fmt(scope: &i32) -> askama::Result<super::Cow<'static, str>> {
         Ok(super::ipxe_template_scope_fmt(scope))
@@ -138,3 +139,6 @@ pub async fn detail(
     let detail: IpxeTemplateDetail = tmpl.into();
     (StatusCode::OK, Html(detail.render().unwrap())).into_response()
 }
+
+impl super::Base for IpxeTemplateShow {}
+impl super::Base for IpxeTemplateDetail {}

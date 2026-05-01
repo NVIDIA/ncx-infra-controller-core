@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
 use hyper::http::StatusCode;
@@ -424,3 +425,10 @@ pub async fn external_configs(AxumState(state): AxumState<Arc<Api>>) -> Response
 
     (StatusCode::OK, Html(tmpl.render().unwrap())).into_response()
 }
+
+impl super::Base for ValidationResultDetailDisplay {}
+impl super::Base for ValidationResults {}
+impl super::Base for ValidateTests {}
+impl super::Base for ValidateTestDetailsDisplay {}
+impl super::Base for ValidationRunDisplay {}
+impl super::Base for ValidationExternalConfigs {}

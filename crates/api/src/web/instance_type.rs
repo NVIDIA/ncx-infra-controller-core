@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{OriginalUri, Path as AxumPath, Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -376,3 +377,6 @@ pub async fn show_detail(
     // Away we go
     (StatusCode::OK, Html(tmpl.render().unwrap())).into_response()
 }
+
+impl super::Base for InstanceTypeShow {}
+impl super::Base for InstanceTypeDetailDisplay {}

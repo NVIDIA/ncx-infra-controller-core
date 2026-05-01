@@ -117,7 +117,15 @@
 				<li><a href="/admin/tenant_keyset">Keysets</a></li>
 				<li><a href="/admin/network-security-group">Network Security Groups</a></li>
 			</ul>
-			{{ ""|tools_section_html|safe }}
+			{% if !Self::tools().is_empty() %}
+			<hr />
+			<h3>Tools</h3>
+			<ul>
+				{% for tool in Self::tools() %}
+				<li><a href="{{ tool.url }}">{{ tool.display_name }}</a></li>
+				{% endfor %}
+			</ul>
+			{% endif %}
 		</nav>
 		<main>{% block content %}{% endblock %}</main>
 

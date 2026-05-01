@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::extract::{Path as AxumPath, Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Form, Json};
@@ -1015,3 +1016,6 @@ pub async fn set_dpu_first_boot_order(
 
     Redirect::to(&redirect_url).into_response()
 }
+
+impl super::Base for MachineShow {}
+impl<'a> super::Base for MachineDetail<'a> {}

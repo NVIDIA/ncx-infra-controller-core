@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Form, OriginalUri, Path as AxumPath, Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -618,3 +619,6 @@ pub async fn delete(
 
     Redirect::to("/admin/network-security-group").into_response()
 }
+
+impl super::Base for NetworkSecurityGroupShow {}
+impl super::Base for NetworkSecurityGroupDetailDisplay {}

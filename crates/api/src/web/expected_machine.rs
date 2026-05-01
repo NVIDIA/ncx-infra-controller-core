@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -244,3 +245,5 @@ pub async fn show_expected_machine_raw_json(AxumState(api): AxumState<Arc<Api>>)
 
     (StatusCode::OK, Json(result)).into_response()
 }
+
+impl super::Base for ExpectedMachines {}

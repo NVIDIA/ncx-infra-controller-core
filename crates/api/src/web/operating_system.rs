@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -25,7 +26,6 @@ use hyper::http::StatusCode;
 use rpc::forge as forgerpc;
 use rpc::forge::forge_server::Forge;
 
-use super::filters;
 use crate::api::Api;
 
 fn sanitize_os(os: &mut forgerpc::OperatingSystem) {
@@ -268,3 +268,6 @@ pub async fn detail(
     let detail: OsDetail = os.into();
     (StatusCode::OK, Html(detail.render().unwrap())).into_response()
 }
+
+impl super::Base for OperatingSystemShow {}
+impl super::Base for OsDetail {}

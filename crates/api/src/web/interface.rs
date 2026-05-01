@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -308,3 +309,6 @@ pub async fn detail(
     // TODO tmpl.domain_name = domain_name;
     (StatusCode::OK, Html(tmpl.render().unwrap())).into_response()
 }
+
+impl super::Base for InterfaceShow {}
+impl super::Base for InterfaceDetail {}

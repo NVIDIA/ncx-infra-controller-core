@@ -19,6 +19,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -253,3 +254,6 @@ async fn fetch_power_shelves(api: &Api) -> Result<rpc::forge::PowerShelfList, to
     }
     Ok(rpc::forge::PowerShelfList { power_shelves })
 }
+
+impl super::Base for PowerShelfShow {}
+impl super::Base for PowerShelfDetail {}

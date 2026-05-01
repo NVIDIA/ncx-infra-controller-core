@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::State as AxumState;
 use axum::response::{Html, IntoResponse, Response};
@@ -25,7 +26,6 @@ use hyper::http::StatusCode;
 use rpc::forge as forgerpc;
 use rpc::forge::forge_server::Forge;
 
-use super::filters;
 use crate::api::Api;
 
 #[derive(Template)]
@@ -78,3 +78,5 @@ pub async fn fetch_ib_fabric_ids(api: Arc<Api>) -> Result<Vec<String>, tonic::St
 
     Ok(ib_fabric_ids)
 }
+
+impl super::Base for IbFabricShow {}

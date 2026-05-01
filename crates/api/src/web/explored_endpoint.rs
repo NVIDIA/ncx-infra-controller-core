@@ -20,6 +20,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::extract::{Path as AxumPath, Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Form, Json};
@@ -1178,3 +1179,7 @@ fn lockdown_status_to_string(status: Option<&LockdownStatus>) -> String {
         },
     }
 }
+
+impl super::Base for ExploredEndpointsShow {}
+impl super::Base for ExploredEndpointsShowPaired {}
+impl<'a> super::Base for ExploredEndpointDetail<'a> {}

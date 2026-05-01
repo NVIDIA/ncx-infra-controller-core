@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::extract::State as AxumState;
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Extension, Json};
@@ -212,8 +213,6 @@ pub mod filters {
     use itertools::Itertools;
     use rpc::forge::OptionalRedfishActionResult;
 
-    pub use super::super::filters::tools_section_html;
-
     pub fn date_fmt(value: &rpc::Timestamp) -> ::askama::Result<String> {
         Ok(to_time::<String>(Some(*value), None).unwrap_or_default())
     }
@@ -272,3 +271,5 @@ pub mod filters {
             .collect::<Result<Vec<_>, _>>()
     }
 }
+
+impl super::Base for RedfishBrowser {}

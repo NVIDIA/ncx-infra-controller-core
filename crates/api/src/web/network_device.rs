@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::State as AxumState;
 use axum::response::{Html, IntoResponse, Response};
@@ -126,3 +127,5 @@ async fn fetch_network_devices(
         .sort_unstable_by(|d1, d2| d1.name.cmp(&d2.name));
     Ok(topology.network_devices)
 }
+
+impl super::Base for NetworkDeviceShow {}

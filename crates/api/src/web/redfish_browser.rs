@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Extension;
 use axum::extract::{Query as AxumQuery, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -225,3 +226,5 @@ async fn find_machine_id(
 pub mod filters {
     pub use super::super::filters::*;
 }
+
+impl super::Base for RedfishBrowser {}

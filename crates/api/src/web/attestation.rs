@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::extract::{Path as AxumPath, Query as AxumQuery, State as AxumState};
 use axum::response::{Html, IntoResponse};
 use carbide_uuid::measured_boot::MeasurementReportId;
@@ -475,3 +476,6 @@ fn extract_pcr_slot_idx(potential_idx: &str) -> Result<Option<String>, (StatusCo
 
     Ok(None)
 }
+
+impl super::Base for AttestationSummary {}
+impl super::Base for AttestationResults {}

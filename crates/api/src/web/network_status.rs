@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Query, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -282,3 +283,5 @@ async fn fetch_network_status(
 
     Ok((pages, result))
 }
+
+impl super::Base for NetworkStatus {}

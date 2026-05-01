@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::State as AxumState;
 use axum::response::{Html, IntoResponse, Response};
@@ -95,3 +96,5 @@ async fn fetch_expected_power_shelves(
 
     Ok(power_shelves)
 }
+
+impl super::Base for ExpectedPowerShelves {}

@@ -19,6 +19,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::extract::{self, Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
 use carbide_uuid::machine::{MachineId, MachineType};
@@ -399,3 +400,5 @@ pub(super) async fn fetch_health_history(
 
     Ok(records)
 }
+
+impl super::Base for MachineHealth {}

@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -634,3 +635,6 @@ pub async fn detail(
     instance_detail.interfaces = instance_detail_interfaces;
     (StatusCode::OK, Html(instance_detail.render().unwrap())).into_response()
 }
+
+impl super::Base for InstanceShow {}
+impl super::Base for InstanceDetail {}

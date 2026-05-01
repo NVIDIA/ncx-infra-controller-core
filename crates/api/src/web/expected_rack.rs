@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::State as AxumState;
 use axum::response::{Html, IntoResponse, Response};
@@ -162,3 +163,5 @@ async fn fetch_expected_racks(
 
     Ok(rows)
 }
+
+impl super::Base for ExpectedRacks {}

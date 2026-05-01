@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::State as AxumState;
 use axum::response::{Html, IntoResponse, Response};
@@ -26,8 +27,6 @@ use rpc::forge as forgerpc;
 use rpc::forge::forge_server::Forge;
 
 mod filters {
-    pub use super::super::filters::tools_section_html;
-
     pub fn resource_pool_allocated_fmt(
         pool: &super::forgerpc::ResourcePool,
     ) -> askama::Result<String> {
@@ -90,3 +89,5 @@ async fn fetch_resource_pools(api: Arc<Api>) -> Result<Vec<forgerpc::ResourcePoo
     out.pools.sort_unstable_by(|p1, p2| p1.name.cmp(&p2.name));
     Ok(out.pools)
 }
+
+impl super::Base for ResourcePoolShow {}

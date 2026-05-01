@@ -18,13 +18,13 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::extract::{Query as AxumQuery, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
 use hyper::http::StatusCode;
 use rpc::forge::forge_server::Forge;
 use serde::Deserialize;
 
-use super::filters;
 use crate::api::Api;
 
 #[derive(Template)]
@@ -98,3 +98,5 @@ pub async fn query(
 
     (StatusCode::OK, Html(browser.render().unwrap())).into_response()
 }
+
+impl super::Base for NmxmBrowser {}

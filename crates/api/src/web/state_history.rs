@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -250,3 +251,5 @@ define_show_state_history_handlers!(
     object_type_display = "Switch",
     object_url_path = "switch",
 );
+
+impl super::Base for StateHistory {}

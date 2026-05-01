@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use askama::Template;
+use super::Base;
 use axum::Json;
 use axum::extract::{Path as AxumPath, State as AxumState};
 use axum::response::{Html, IntoResponse, Response};
@@ -28,7 +29,6 @@ use rpc::forge as forgerpc;
 use rpc::forge::forge_server::Forge;
 use uuid::Uuid;
 
-use super::filters;
 use crate::api::Api;
 
 #[derive(serde::Serialize, Template)]
@@ -381,3 +381,6 @@ async fn fetch_logical_partitions(
 
     Ok(show_partitions)
 }
+
+impl super::Base for LogicalPartitionShow {}
+impl super::Base for LogicalPartitionDetail {}

@@ -307,30 +307,6 @@ pub fn colorize_output(ansi_text: &str) -> ::askama::Result<String> {
     Ok(html)
 }
 
-/// Renders the entire admin-UI "Tools" sidebar section (including
-/// the leading `<hr>` and `<h3>` heading) from the globally
-/// configured tool list. Returns an empty string when no tools
-/// are configured, hiding the section.
-///
-/// Used as `{{ ""|tools_section_html|safe }}` in `base.html`.
-pub fn tools_section_html(_: &str) -> ::askama::Result<String> {
-    let tools = super::tools_list();
-    if tools.is_empty() {
-        return Ok(String::new());
-    }
-
-    let mut out = String::from("<hr />\n<h3>Tools</h3>\n<ul>\n");
-    for tool in tools {
-        out.push_str("\t<li><a href=\"");
-        askama_escape::Html.write_escaped(&mut out, &tool.url)?;
-        out.push_str("\">");
-        askama_escape::Html.write_escaped(&mut out, &tool.display_name)?;
-        out.push_str("</a></li>\n");
-    }
-    out.push_str("</ul>");
-    Ok(out)
-}
-
 /// Formats a state handler outcome
 pub fn controller_state_reason_fmt(
     reason: &Option<::rpc::forge::ControllerStateReason>,
