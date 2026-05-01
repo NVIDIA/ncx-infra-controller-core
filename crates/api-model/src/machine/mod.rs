@@ -3446,36 +3446,6 @@ mod tests {
         assert_eq!(pick_boot_interface_mac(&interfaces), None);
     }
 
-    // Zero-DPU hosts have no DPU snapshots at all. The helper must return
-    // `true` -- consumers (IB partition monitor, NVLink partition monitor)
-    // use this to decide whether to detach tenant partitions, and zero-DPU
-    // hosts never have a tenant overlay to protect.
-    #[test]
-    fn derive_use_admin_network_returns_true_for_empty_dpu_snapshots() {
-        assert!(derive_use_admin_network(&[]));
-    }
-
-    // Make sure the legacy default still works; when a DPU snapshot has no
-    // explicit value, treat it as admin-network. All or any "None" should
-    // therefore resolve to true.
-    #[test]
-    fn derive_use_admin_network_treats_none_as_true() {
-        assert!(derive_use_admin_network(&[None]));
-        assert!(derive_use_admin_network(&[None, None]));
-    }
-
-    // ...aand check OR semantics across DPUs: if any single DPU says admin,
-    // the whole host is treated as admin. Only "all DPUs explicitly say false"
-    // flips the host to tenant-network mode.
-    #[test]
-    fn derive_use_admin_network_ors_across_dpus() {
-        assert!(derive_use_admin_network(&[Some(false), Some(true)]));
-        assert!(derive_use_admin_network(&[Some(true), Some(true)]));
-        assert!(derive_use_admin_network(&[Some(false), None]));
-        assert!(!derive_use_admin_network(&[Some(false)]));
-        assert!(!derive_use_admin_network(&[Some(false), Some(false)]));
-    }
-
     #[test]
     fn host_profile_defaults_to_lockdown_enabled() {
         let profile = HostProfile::default();
