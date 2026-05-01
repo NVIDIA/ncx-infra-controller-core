@@ -1659,6 +1659,8 @@ pub async fn create_test_env_with_overrides(
 
     let fake_endpoint_explorer = MockEndpointExplorer {
         reports: Arc::new(std::sync::Mutex::new(Default::default())),
+        power_states: Arc::new(std::sync::Mutex::new(Default::default())),
+        redfish_power_control_calls: Arc::new(std::sync::Mutex::new(Default::default())),
         set_nic_mode_calls: Arc::new(std::sync::Mutex::new(Default::default())),
     };
 

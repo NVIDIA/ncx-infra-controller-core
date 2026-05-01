@@ -186,6 +186,8 @@ pub struct Endpoint<'a> {
     last_redfish_reboot: Option<chrono::DateTime<chrono::Utc>>,
     old_report: Option<(ConfigVersion, &'a EndpointExplorationReport)>,
     pub(crate) expected: Option<&'a ExpectedEntity>,
+    preingestion_state: PreingestionState,
+    pause_ingestion_and_poweron: bool,
     pause_remediation: bool,
     boot_interface_mac: Option<MacAddress>,
 }
@@ -1454,6 +1456,8 @@ impl SiteExplorer {
                 last_redfish_reboot: endpoint.last_redfish_reboot,
                 old_report: Some((endpoint.report_version, &endpoint.report)),
                 pause_remediation: endpoint.pause_remediation,
+                preingestion_state: endpoint.preingestion_state.clone(),
+                pause_ingestion_and_poweron: endpoint.pause_ingestion_and_poweron,
                 boot_interface_mac: endpoint.boot_interface_mac,
                 expected: index.matched_expected(&address),
             });
@@ -1465,6 +1469,8 @@ impl SiteExplorer {
             .iter()
             .take(remaining_explore_endpoints)
         {
+            let pause_ingestion_and_poweron =
+                pause_ingestion_and_poweron(index.expected(), &iface.mac_address);
             explore_endpoint_data.push(Endpoint {
                 address: *address,
                 iface,
@@ -1473,6 +1479,8 @@ impl SiteExplorer {
                 last_redfish_reboot: None,
                 old_report: None,
                 pause_remediation: false, // New endpoints haven't been explored yet, so pause_remediation defaults to false
+                preingestion_state: PreingestionState::Initial,
+                pause_ingestion_and_poweron,
                 boot_interface_mac: None, // boot_interface_mac not yet discovered for new endpoints
                 expected: index.matched_expected(address),
             });
@@ -1497,6 +1505,8 @@ impl SiteExplorer {
                     last_redfish_reboot: endpoint.last_redfish_reboot,
                     old_report: Some((endpoint.report_version, &endpoint.report)),
                     pause_remediation: endpoint.pause_remediation,
+                    preingestion_state: endpoint.preingestion_state.clone(),
+                    pause_ingestion_and_poweron: endpoint.pause_ingestion_and_poweron,
                     boot_interface_mac: endpoint.boot_interface_mac,
                     expected: index.matched_expected(&address),
                 });
@@ -1773,6 +1783,17 @@ impl SiteExplorer {
             return;
         }
 
+        if !matches!(
+            &endpoint.preingestion_state,
+            PreingestionState::Initial | PreingestionState::Complete
+        ) {
+            tracing::info!(
+                "Site explorer will not remediate error for {endpoint} because endpoint is in preingestion state {:?}: {error}",
+                endpoint.preingestion_state,
+            );
+            return;
+        }
+
         match self
             .is_managed_host_created_for_endpoint(endpoint.address)
             .await
@@ -1790,6 +1811,39 @@ impl SiteExplorer {
                 return;
             }
         };
+
+        // Power on machine endpoints in the initial preingestion state automatically unless ingestion was explicitly paused.
+        if matches!(&endpoint.preingestion_state, PreingestionState::Initial)
+            && matches!(endpoint.expected, Some(ExpectedEntity::Machine(_)))
+            && !endpoint.pause_ingestion_and_poweron
+            && let Ok(power_state) = self.redfish_get_power_state(endpoint).await
+            && !matches!(power_state, PowerState::On)
+        {
+            tracing::warn!(
+                "Site Explorer found a host (bmc_ip_address: {}) that isnt on. Turning it on now.",
+                endpoint.address,
+            );
+
+            if self
+                .redfish_power(endpoint, libredfish::SystemPowerControl::On)
+                .await
+                .inspect_err(|err| {
+                    tracing::error!(%err, "Site Explorer failed to power on host through Redfish")
+                })
+                .is_ok()
+            {
+                if let Ok(mut txn) = self.txn_begin().await {
+                    db::explored_endpoints::request_exploration_for_addresses(
+                        &[endpoint.address],
+                        &mut txn,
+                    )
+                    .await
+                    .ok();
+                    txn.commit().await.ok();
+                }
+                return;
+            }
+        }
 
         // Dont let site explorer issue either a force-restart or bmc-reset more than the rate limit.
         let reset_rate_limit = self.config.reset_rate_limit;
@@ -1826,7 +1880,7 @@ impl SiteExplorer {
         if (error.is_dpu_redfish_bios_response_invalid())
             && time_since_redfish_reboot > reset_rate_limit
             && self
-                .force_restart(endpoint)
+                .redfish_power(endpoint, libredfish::SystemPowerControl::ForceRestart)
                 .await
                 .map_err(|err| {
                     tracing::error!(
@@ -1948,6 +2002,49 @@ impl SiteExplorer {
         }
     }
 
+    async fn redfish_get_power_state(
+        &self,
+        endpoint: &Endpoint<'_>,
+    ) -> SiteExplorerResult<PowerState> {
+        let bmc_target_port = self.config.override_target_port.unwrap_or(443);
+        let bmc_target_addr = SocketAddr::new(endpoint.address, bmc_target_port);
+
+        self.endpoint_explorer
+            .redfish_get_power_state(bmc_target_addr, endpoint.iface)
+            .await
+            .map(PowerState::from)
+            .map_err(|err| SiteExplorerError::EndpointExplorationError {
+                action: "redfish_get_power_state",
+                err,
+            })
+    }
+
+    async fn redfish_power(
+        &self,
+        endpoint: &Endpoint<'_>,
+        action: libredfish::SystemPowerControl,
+    ) -> SiteExplorerResult<()> {
+        let is_reboot = matches!(&action, libredfish::SystemPowerControl::ForceRestart);
+        let bmc_target_port = self.config.override_target_port.unwrap_or(443);
+        let bmc_target_addr = SocketAddr::new(endpoint.address, bmc_target_port);
+
+        self.endpoint_explorer
+            .redfish_power_control(bmc_target_addr, endpoint.iface, action)
+            .await
+            .map_err(|err| SiteExplorerError::EndpointExplorationError {
+                action: "redfish_power",
+                err,
+            })?;
+
+        if is_reboot {
+            let mut txn = self.txn_begin().await?;
+            db::explored_endpoints::set_last_redfish_reboot(endpoint.address, &mut txn).await?;
+            txn.commit().await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn is_viking_bmc(&self, endpoint: &Endpoint<'_>) -> bool {
         let bmc_target_port = self.config.override_target_port.unwrap_or(443);
         let bmc_target_addr = SocketAddr::new(endpoint.address, bmc_target_port);
@@ -1981,39 +2078,8 @@ impl SiteExplorer {
                 ))
             })?;
 
-        self.force_restart(endpoint).await
-    }
-
-    pub async fn force_restart(&self, endpoint: &Endpoint<'_>) -> SiteExplorerResult<()> {
-        tracing::info!(
-            "SiteExplorer is initiating a reboot through Redfish to IP {}",
-            endpoint.address
-        );
-        let bmc_target_port = self.config.override_target_port.unwrap_or(443);
-        let bmc_target_addr = SocketAddr::new(endpoint.address, bmc_target_port);
-        match self
-            .endpoint_explorer
-            .redfish_power_control(
-                bmc_target_addr,
-                endpoint.iface,
-                libredfish::SystemPowerControl::ForceRestart,
-            )
+        self.redfish_power(endpoint, libredfish::SystemPowerControl::ForceRestart)
             .await
-        {
-            Ok(()) => {
-                let mut txn = self.txn_begin().await?;
-
-                db::explored_endpoints::set_last_redfish_reboot(endpoint.address, &mut txn).await?;
-
-                txn.commit().await?;
-
-                Ok(())
-            }
-            Err(e) => Err(SiteExplorerError::internal(format!(
-                "site-explorer failed to reboot {}: {:#?}",
-                endpoint.address, e
-            ))),
-        }
     }
 
     async fn is_managed_host_created_for_endpoint(
