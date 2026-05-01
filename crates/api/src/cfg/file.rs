@@ -34,6 +34,7 @@ use carbide_utils::config::{
 };
 use chrono::Duration;
 use duration_str::{deserialize_duration, deserialize_duration_chrono};
+use figment::Figment;
 use ipnetwork::{IpNetwork, Ipv4Network};
 use itertools::Itertools;
 use libmlx::firmware::config::FirmwareFlasherProfile;
@@ -616,6 +617,19 @@ pub struct CarbideConfig {
     /// The default routing-profile to use when a tenant is created.
     #[serde(default = "default_tenant_routing_profile")]
     pub default_tenant_routing_profile_type: String,
+
+    /// The initial_objects.toml file for seeding the database
+    #[serde(default)]
+    pub initial_objects_file: Option<PathBuf>,
+
+    /// The Figment that produced this config, when one was used. Kept after
+    /// extraction so runtime code can attribute individual keys back to their
+    /// source files via `Figment::find_metadata`
+    ///
+    /// `None` for `CarbideConfig` values that didn't come from `parse_carbide_config`
+    /// (test fixtures, programmatic construction).
+    #[serde(skip)]
+    pub config_ctx: Option<Figment>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1482,6 +1496,14 @@ impl From<&StateControllerConfig> for IterationConfig {
             metric_hold_time: config.metric_hold_time,
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct InitialObjectsConfig {
+    /// Resource pools that allocate IPs, VNIs, etc.
+    /// Required, but wrapped in `Option` so partial configs
+    /// can be deserialized and merged.
+    pub pools: Option<HashMap<String, ResourcePoolDef>>,
 }
 
 impl DpaConfig {
@@ -2836,6 +2858,7 @@ mod tests {
         assert!(config.ib_fabrics.is_empty());
         assert!(config.vpc_peering_policy.is_none());
         assert!(config.site_explorer.enabled.load(AtomicOrdering::Relaxed));
+        assert!(config.initial_objects_file.is_none());
         assert!(
             config
                 .site_explorer
@@ -3824,5 +3847,72 @@ firmware_url = "https://firmware.example.com/fw-b.bin"
             .unwrap();
 
         assert!(config.supernic_firmware_profiles.is_empty());
+    }
+    #[test]
+    fn deserialize_initial_objects() {
+        let f = PathBuf::from(format!("{TEST_DATA_DIR}/initial_objects.toml"));
+        let config: InitialObjectsConfig = Toml::from_path(f.as_path()).unwrap();
+        let pools = config.pools.as_ref().unwrap();
+        assert_eq!(
+            pools.get("lo-ip").unwrap(),
+            &ResourcePoolDef {
+                ranges: Vec::new(),
+                prefix: Some("10.180.62.1/26".to_string()),
+                pool_type: resource_pool::ResourcePoolType::Ipv4,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("vlan-id").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "100".to_string(),
+                    end: "501".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("fnn-asn").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "4268000000".to_string(),
+                    end: "4268999999".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("vni").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "1024500".to_string(),
+                    end: "1024550".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
+        assert_eq!(
+            pools.get("vpc-vni").unwrap(),
+            &ResourcePoolDef {
+                ranges: vec![resource_pool::Range {
+                    auto_assign: true,
+                    start: "2024500".to_string(),
+                    end: "2024550".to_string()
+                }],
+                prefix: None,
+                pool_type: resource_pool::ResourcePoolType::Integer,
+                delegate_prefix_len: None,
+            }
+        );
     }
 }

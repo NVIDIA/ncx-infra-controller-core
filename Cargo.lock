@@ -1464,6 +1464,7 @@ dependencies = [
  "state-controller",
  "strum 0.26.3",
  "temp-dir",
+ "tempfile",
  "tera",
  "thiserror 2.0.17",
  "time",

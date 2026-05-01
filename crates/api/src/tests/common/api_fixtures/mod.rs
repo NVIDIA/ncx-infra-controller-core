@@ -1241,6 +1241,8 @@ pub fn get_config() -> CarbideConfig {
         external_static_pxe_url: None,
         supernic_firmware_profiles: HashMap::default(),
         component_manager: None,
+        initial_objects_file: None,
+        config_ctx: None,
     }
 }
 
