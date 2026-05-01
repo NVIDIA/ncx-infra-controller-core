@@ -426,9 +426,6 @@ async fn test_handle_redfish_error_powers_on_machine(
     let endpoints = db::explored_endpoints::find_all_by_ip(bmc_ip, &mut txn).await?;
     txn.commit().await?;
     assert_eq!(endpoints.len(), 1, "expected one explored endpoint");
-    let endpoint = endpoints
-        .first()
-        .expect("expected explored endpoint to be inserted");
     Ok(())
 }
 
