@@ -247,7 +247,7 @@ mod tests {
             legacy_data
                 .pair
                 .iter()
-                .any(|pair| pair.key == "ValidationId" && &pair.value == &validation_uuid)
+                .any(|pair| pair.key == "ValidationId" && pair.value == validation_uuid)
         );
         assert!(
             legacy_data
