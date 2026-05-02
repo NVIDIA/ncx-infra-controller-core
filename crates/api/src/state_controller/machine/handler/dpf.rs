@@ -171,6 +171,17 @@ async fn handle_dpf_provisioning(
     state: &ManagedHostStateSnapshot,
     dpf_sdk: &dyn DpfOperations,
 ) -> Result<StateHandlerOutcome<ManagedHostState>, StateHandlerError> {
+    let primary_dpu_id = state
+        .host_snapshot
+        .interfaces
+        .iter()
+        .find(|iface| iface.primary_interface)
+        .and_then(|iface| iface.attached_dpu_machine_id)
+        .ok_or_else(|| StateHandlerError::MissingData {
+            object_id: state.host_snapshot.id.to_string(),
+            missing: "primary_dpu",
+        })?;
+
     for dpu in &state.dpu_snapshots {
         let serial_number = dpu
             .hardware_info
@@ -183,8 +194,8 @@ async fn handle_dpf_provisioning(
             dpu_bmc_ip: bmc_ip(dpu)?.to_string(),
             host_bmc_ip: bmc_ip(&state.host_snapshot)?.to_string(),
             serial_number: serial_number.to_string(),
-            host_machine_id: state.host_snapshot.id.to_string(),
             dpu_machine_id: dpu.id.to_string(),
+            is_primary: dpu.id == primary_dpu_id,
         };
         dpf_sdk.register_dpu_device(device_info).await?;
     }
@@ -198,7 +209,6 @@ async fn handle_dpf_provisioning(
         node_id: dpf_id(&state.host_snapshot)?,
         host_bmc_ip: bmc_ip(&state.host_snapshot)?.to_string(),
         device_ids,
-        host_machine_id: state.host_snapshot.id.to_string(),
     };
     dpf_sdk.register_dpu_node(node_info).await?;
 

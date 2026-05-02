@@ -225,12 +225,11 @@ pub struct DpuDeviceInfo {
     pub host_bmc_ip: String,
     /// Serial number of the DPU.
     pub serial_number: String,
-    /// Caller-defined identifier for the host machine.
-    /// Passed through to the labeler for resource labels.
-    pub host_machine_id: String,
     /// Caller-defined identifier for the DPU machine.
     /// Passed through to the labeler for resource labels.
     pub dpu_machine_id: String,
+    /// is _primary dpu?
+    pub is_primary: bool,
 }
 
 /// Information about a DPU node (host with DPUs).
@@ -243,9 +242,6 @@ pub struct DpuNodeInfo {
     pub host_bmc_ip: String,
     /// Identifiers of each device attached to this node.
     pub device_ids: Vec<String>,
-    /// Caller-defined identifier for the host machine.
-    /// Passed through to the labeler for contextual node labels.
-    pub host_machine_id: String,
 }
 
 /// Phase of DPU lifecycle.

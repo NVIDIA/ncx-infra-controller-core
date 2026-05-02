@@ -154,8 +154,8 @@ impl ResourceLabeler for CarbideDPFLabeler {
                 info.host_bmc_ip.clone(),
             ),
             (
-                "carbide.nvidia.com/host-machine-id".to_string(),
-                info.host_machine_id.clone(),
+                "carbide.nvidia.com/is-primary-dpu".to_string(),
+                info.is_primary.to_string(),
             ),
             (
                 "carbide.nvidia.com/dpu-machine-id".to_string(),

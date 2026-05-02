@@ -722,8 +722,8 @@ async fn run_provisioning_flow(
             dpu_bmc_ip: dpu.dpu_bmc_ip.clone(),
             host_bmc_ip: host_bmc_ip.to_string(),
             serial_number: dpu.serial_number.clone(),
-            host_machine_id: String::new(),
             dpu_machine_id: String::new(),
+            is_primary: true,
         };
         sdk.register_dpu_device(info).await?;
         tracing::info!(device_name = %dpu.device_name, serial = %dpu.serial_number, "Registered device");
@@ -734,7 +734,6 @@ async fn run_provisioning_flow(
         node_id: node_id.to_string(),
         host_bmc_ip: host_bmc_ip.to_string(),
         device_ids: dpus.iter().map(|d| d.device_name.clone()).collect(),
-        host_machine_id: String::new(),
     };
     sdk.register_dpu_node(node_info).await?;
     tracing::info!(dpu_count = dpus.len(), "Node registered");
