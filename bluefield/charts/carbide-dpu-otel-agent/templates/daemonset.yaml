@@ -51,9 +51,6 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args:
-            - "--config-path=/etc/forge-dpu-otel-agent/config.toml"
-            - "run"
           {{- with toYaml .Values.serviceDaemonSet.resources }}
           resources:
             limits:
@@ -74,6 +71,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: OTEL_COPY_CERTS_DST_CA
+              value: /etc/ssl/certs/forge-dpu-otel-ca.pem
+            - name: OTEL_COPY_CERTS_DST_CERT
+              value: /etc/ssl/certs/forge-dpu-otel-agent.pem
+            - name: OTEL_COPY_CERTS_DST_KEY
+              value: /etc/ssl/private/forge-dpu-otel-agent.key
           volumeMounts:
             - name: config
               mountPath: /etc/forge-dpu-otel-agent/config.toml

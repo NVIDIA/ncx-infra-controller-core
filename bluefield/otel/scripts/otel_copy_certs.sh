@@ -12,9 +12,10 @@ SRC_CA="/opt/forge/forge_root.pem"
 SRC_CERT="/opt/forge/machine_cert.pem"
 SRC_KEY="/opt/forge/machine_cert.key"
 
-DST_CA="/etc/otelcol-contrib/certs/ca.pem"
-DST_CERT="/etc/otelcol-contrib/certs/otel-cert.pem"
-DST_KEY="/etc/otelcol-contrib/certs/private/otel-key.pem"
+# Override for layouts that store OTEL mTLS material elsewhere (e.g. Helm uses host /etc/ssl).
+DST_CA="${OTEL_COPY_CERTS_DST_CA:-/etc/otelcol-contrib/certs/ca.pem}"
+DST_CERT="${OTEL_COPY_CERTS_DST_CERT:-/etc/otelcol-contrib/certs/otel-cert.pem}"
+DST_KEY="${OTEL_COPY_CERTS_DST_KEY:-/etc/otelcol-contrib/certs/private/otel-key.pem}"
 
 # Get modification time of a file in seconds since epoch
 file_mtime() {

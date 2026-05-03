@@ -10,16 +10,30 @@ ARG IMG=nvcr.io/nvidia/distroless/cc
 ARG DEBUG_DISTROLESS=true
 ARG DISTROLESS_DEBUG_TAG=${DEBUG_DISTROLESS:+"dev"} # 'dev' provides a busybox shell
 
-FROM debian:12-slim AS udev
+FROM --platform=linux/arm64 debian:bookworm-slim AS runtime-deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libudev1
+    bash \
+    coreutils \
+    libudev1 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN bins="/bin/bash /bin/mv /bin/date /bin/rm /usr/bin/env /usr/bin/stat /usr/bin/install" \
+ && mkdir -p /rootfs \
+ && for bin in $bins; do \
+      install -D "$bin" "/rootfs$bin"; \
+      ldd "$bin" | grep "=> /" | awk '{print $3}' | while read -r lib; do \
+        install -D "$lib" "/rootfs$lib"; \
+      done; \
+    done \
+ && install -D /lib/aarch64-linux-gnu/libudev.so.1 /rootfs/lib/aarch64-linux-gnu/libudev.so.1
 
 # NVIDIA Distroless Container
-FROM ${IMG}:${TAG}-${DISTROLESS_DEBUG_TAG}
+FROM --platform=linux/arm64 ${IMG}:${TAG}-${DISTROLESS_DEBUG_TAG}
+
+COPY --from=runtime-deps /rootfs/ /
 
 COPY --chmod=755 target/aarch64-unknown-linux-gnu/release/forge-dpu-otel-agent /usr/bin/forge-dpu-otel-agent
+COPY --chmod=755 bluefield/otel/scripts/otel_copy_certs.sh /usr/local/sbin/otel_copy_certs.sh
+COPY --chmod=755 bluefield/otel/otel-agent /otel/otel-agent
 
-COPY --from=udev /lib/aarch64-linux-gnu/libudev.so.1 /lib/aarch64-linux-gnu/libudev.so.1
-
-ENTRYPOINT ["/usr/bin/forge-dpu-otel-agent"]
-CMD ["--config-path=/etc/forge-dpu-otel-agent/config.toml", "run" ]
+ENTRYPOINT ["/otel/otel-agent"]
