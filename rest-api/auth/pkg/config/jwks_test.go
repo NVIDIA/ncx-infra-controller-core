@@ -926,6 +926,7 @@ func TestGetOrgDataFromClaimMappingAudiences(t *testing.T) {
 	tests := []struct {
 		name       string
 		config     *JwksConfig
+		reserved   map[string]bool
 		claims     jwt.MapClaims
 		requestOrg string
 		wantErr    error
@@ -968,8 +969,8 @@ func TestGetOrgDataFromClaimMappingAudiences(t *testing.T) {
 					RolesAttribute: "roles",
 					Audiences:      []string{"org-acme"},
 				}},
-				ReservedOrgNames: map[string]bool{"acme": true},
 			},
+			reserved:   map[string]bool{"acme": true},
 			claims:     jwt.MapClaims{"org": "acme", "roles": []string{"TENANT_ADMIN"}, "aud": "different-audience"},
 			requestOrg: "acme",
 			wantErr:    core.ErrReservedOrgName,
@@ -978,6 +979,9 @@ func TestGetOrgDataFromClaimMappingAudiences(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.reserved != nil {
+				tt.config.SetReservedOrgNames(tt.reserved)
+			}
 			orgData, _, err := tt.config.GetOrgDataFromClaim(tt.claims, tt.requestOrg)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)

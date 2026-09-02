@@ -71,6 +71,12 @@ func TestIsStaticIssuer(t *testing.T) {
 func TestHasPrivilegedStaticIssuerOrigins(t *testing.T) {
 	assert.False(t, staticIssuerConfig(t).HasPrivilegedStaticIssuerOrigins(), "custom-only static set")
 	assert.False(t, mustConfigFromYAML(t, `issuers: []`).HasPrivilegedStaticIssuerOrigins(), "empty set")
+	assert.True(t, mustConfigFromYAML(t, `
+issuers:
+  - issuer: https://invalid.example.com
+    jwks: https://invalid.example.com/jwks
+    origin: typo
+`).HasPrivilegedStaticIssuerOrigins(), "an invalid origin must fail closed")
 
 	for _, origin := range []string{"keycloak", "kas-legacy", "kas-ssa"} {
 		c := mustConfigFromYAML(t, fmt.Sprintf(`
@@ -324,7 +330,7 @@ func TestSeedAndReloadDBIssuers(t *testing.T) {
 
 	// A valid DB issuer (unreachable JWKS URL so the fetch fails fast & non-fatally).
 	err := cdb.WithTx(ctx, dbSession, func(tx *cdb.Tx) error {
-		_, derr := dao.Create(ctx, tx, cdbm.IssuerCreateInput{
+		_, derr := dao.Create(ctx, tx, cdbm.IssuerCreateOrUpdateInput{
 			Origin:        "custom",
 			IssuerURL:     "https://idp.acme.com",
 			JWKSUrl:       "http://127.0.0.1:1/jwks",
@@ -342,7 +348,7 @@ func TestSeedAndReloadDBIssuers(t *testing.T) {
 	// Insert a DB row that conflicts with the static issuer URL → must be skipped
 	// (static wins) and must NOT overwrite the static config.
 	err = cdb.WithTx(ctx, dbSession, func(tx *cdb.Tx) error {
-		_, derr := dao.Create(ctx, tx, cdbm.IssuerCreateInput{
+		_, derr := dao.Create(ctx, tx, cdbm.IssuerCreateOrUpdateInput{
 			Origin:        "custom",
 			IssuerURL:     "https://static.example.com",
 			JWKSUrl:       "http://127.0.0.1:1/jwks",
@@ -394,7 +400,7 @@ issuers: []
 	// A DB issuer with a DYNAMIC mapping (DAO.Create does not validate — simulates
 	// a row inserted out-of-band, bypassing the API guard).
 	require.NoError(t, cdb.WithTx(ctx, dbSession, func(tx *cdb.Tx) error {
-		_, e := dao.Create(ctx, tx, cdbm.IssuerCreateInput{
+		_, e := dao.Create(ctx, tx, cdbm.IssuerCreateOrUpdateInput{
 			Origin:        "custom",
 			IssuerURL:     "http://localhost:8082/realms/dyn",
 			JWKSUrl:       "http://127.0.0.1:1/jwks",
@@ -512,6 +518,64 @@ issuers: []
 	cfg := other.TokenOriginConfig.GetConfig("https://idp.acme.com")
 	require.NotNil(t, cfg)
 	assert.Equal(t, 1, cfg.KeyCount())
+}
+
+func TestRefreshJWKSBoundsConcurrentFetches(t *testing.T) {
+	ctx := context.Background()
+	var active atomic.Int32
+	var peak atomic.Int32
+	release := make(chan struct{})
+	released := false
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			previous := peak.Load()
+			if current <= previous || peak.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(cachedIssuerKeySet))
+	}))
+	defer idp.Close()
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+
+	c, dbSession, dao := newIssuerTestEnv(t)
+	defer dbSession.Close()
+	for i := range maxConcurrentJWKSRefreshes + 4 {
+		seedIssuerWithOrg(t, ctx, dbSession, dao,
+			fmt.Sprintf("https://bounded-%d.example.com", i),
+			fmt.Sprintf("%s/jwks-%d", idp.URL, i),
+			fmt.Sprintf("bounded-org-%d", i))
+	}
+	require.NoError(t, c.ReloadDBIssuers(ctx, dbSession))
+
+	done := make(chan struct{})
+	go func() {
+		c.refreshJWKS(ctx, dbSession, false)
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		return active.Load() == int32(maxConcurrentJWKSRefreshes)
+	}, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, int32(maxConcurrentJWKSRefreshes), peak.Load())
+	close(release)
+	released = true
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
 }
 
 // TestReloadRegistersWithoutContactingIdP pins reload's architectural role: it
@@ -1065,7 +1129,7 @@ func seedIssuerWithOrg(t *testing.T, ctx context.Context, dbSession *cdb.Session
 	var created *cdbm.Issuer
 	err := cdb.WithTx(ctx, dbSession, func(tx *cdb.Tx) error {
 		var derr error
-		created, derr = dao.Create(ctx, tx, cdbm.IssuerCreateInput{
+		created, derr = dao.Create(ctx, tx, cdbm.IssuerCreateOrUpdateInput{
 			Origin:        "custom",
 			IssuerURL:     issuerURL,
 			JWKSUrl:       jwksURL,

@@ -138,7 +138,7 @@ Key fields:
 - `claimMappings` is required and controls the organization and roles assigned to authenticated users.
 - A claim mapping may also set `audiences`. The token `aud` claim must contain at least one exact, case-sensitive match for the requested organization's mapping. If issuer and mapping audiences are both configured, both gates must pass.
 
-#### Audience Matching Examples
+### Audience Matching Examples
 
 Audience matching is an exact, case-sensitive overlap check. A configured list uses ANY-match semantics: the token needs at least one value from that list.
 
@@ -375,7 +375,7 @@ issuers:
         roles: ["TENANT_ADMIN"]
 ```
 
-#### One Organization Behind Two Identity Providers
+### One Organization Behind Two Identity Providers
 
 Use this when the same organization admits users from more than one identity provider, or grants different roles depending on which provider authenticated the user. Sharing an organization name is off by default; set `auth.sharedStaticOrgs: true` to allow it deployment-wide. The name remains reserved, so a dynamic (`orgAttribute`) mapping still cannot claim it, and only one issuer may hold the organization's service account mapping.
 
@@ -402,7 +402,7 @@ issuers:
 
 Each token receives the roles its own issuer declares for the organization, so a contractor token is a `TENANT_ADMIN` in `acme-corp` and an employee token is a `PROVIDER_ADMIN`. The setting applies to issuers created through the issuer API as well as those defined here.
 
-#### Replica convergence and key refresh
+### Replica convergence and key refresh
 
 These are Go duration strings. Omit them to keep the defaults.
 
@@ -415,6 +415,12 @@ auth:
 ```
 
 `jwksRefreshInterval` may be raised (for example `30m`) when identity-provider key rotation is slow. `issuerReloadInterval` is the idle convergence floor across replicas; a token naming a new issuer still resolves on demand without waiting for that tick.
+
+NICo will not use a cached signing-key set more than 24 hours after its last
+successful fetch. A request that encounters an older set first attempts to
+refresh it. If the issuer remains unreachable, token validation fails closed
+until a refresh succeeds; the expired set stays cached so a later request or
+background pass can retry without losing diagnostic state.
 
 ### Configure Keycloak
 

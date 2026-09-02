@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/NVIDIA/infra-controller/rest-api/db/pkg/db"
+	"github.com/NVIDIA/infra-controller/rest-api/db/pkg/db/paginator"
 	"github.com/NVIDIA/infra-controller/rest-api/db/pkg/util"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -44,7 +45,7 @@ func createTestIssuer(t *testing.T, ctx context.Context, dbSession *db.Session, 
 	var created *Issuer
 	err := db.WithTx(ctx, dbSession, func(tx *db.Tx) error {
 		var derr error
-		created, derr = dao.Create(ctx, tx, IssuerCreateInput{
+		created, derr = dao.Create(ctx, tx, IssuerCreateOrUpdateInput{
 			Origin:      "custom",
 			IssuerURL:   "https://idp.jwks-cache.test",
 			JWKSUrl:     "https://idp.jwks-cache.test/.well-known/jwks.json",
@@ -52,7 +53,7 @@ func createTestIssuer(t *testing.T, ctx context.Context, dbSession *db.Session, 
 			ClaimMappings: []ClaimMapping{
 				{OrgName: "acme", OrgDisplayName: "ACME", Roles: []string{"TENANT_ADMIN"}},
 			},
-			CreatedBy: &creator,
+			ActorID: &creator,
 		})
 		return derr
 	})
@@ -75,7 +76,7 @@ func TestIssuerSQLDAO_CRUD(t *testing.T) {
 	var created *Issuer
 	err := db.WithTx(ctx, dbSession, func(tx *db.Tx) error {
 		var derr error
-		created, derr = dao.Create(ctx, tx, IssuerCreateInput{
+		created, derr = dao.Create(ctx, tx, IssuerCreateOrUpdateInput{
 			Origin:      "custom",
 			IssuerURL:   "https://idp.acme.com",
 			JWKSUrl:     "https://idp.acme.com/.well-known/jwks.json",
@@ -85,7 +86,7 @@ func TestIssuerSQLDAO_CRUD(t *testing.T) {
 			ClaimMappings: []ClaimMapping{
 				{OrgName: "acme", OrgDisplayName: "ACME", Roles: []string{"TENANT_ADMIN"}},
 			},
-			CreatedBy: &creator,
+			ActorID: &creator,
 		})
 		return derr
 	})
@@ -118,6 +119,59 @@ func TestIssuerSQLDAO_CRUD(t *testing.T) {
 	assert.ErrorIs(t, err, db.ErrDoesNotExist)
 }
 
+func TestIssuerSQLDAO_Update(t *testing.T) {
+	ctx := context.Background()
+	dbSession := testIssuerInitDB(t)
+	defer dbSession.Close()
+	testIssuerSetupSchema(t, dbSession)
+
+	dao := NewIssuerDAO(dbSession)
+	created := createTestIssuer(t, ctx, dbSession, dao)
+	fetchedAt := time.Now().UTC().Truncate(time.Microsecond)
+	require.NoError(t, dao.UpdateJWKSCache(ctx, nil, created.ID, json.RawMessage(testJWKSBlob), fetchedAt))
+
+	actor := uuid.New()
+	input := IssuerCreateOrUpdateInput{
+		Origin:      "custom",
+		IssuerURL:   created.IssuerURL,
+		JWKSUrl:     created.JWKSUrl,
+		JWKSTimeout: "9s",
+		Audiences:   []string{"new-audience"},
+		ClaimMappings: []ClaimMapping{
+			{OrgName: "new-org", Roles: []string{"TENANT_ADMIN"}},
+		},
+		ActorID: &actor,
+	}
+
+	t.Run("preserves cache for the same endpoint", func(t *testing.T) {
+		updated, err := dao.Update(ctx, nil, created.ID, input, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, created.ID, updated.ID)
+		assert.Equal(t, created.CreatedAt, updated.CreatedAt)
+		assert.Equal(t, "9s", updated.JWKSTimeout)
+		assert.Equal(t, []string{"new-audience"}, updated.Audiences)
+		assert.JSONEq(t, testJWKSBlob, string(updated.JWKSKeys))
+		require.NotNil(t, updated.JWKSFetchedAt)
+		assert.True(t, fetchedAt.Equal(*updated.JWKSFetchedAt))
+		assert.Equal(t, &actor, updated.UpdatedBy)
+
+		byURL, getErr := dao.GetByIssuerURL(ctx, nil, created.IssuerURL)
+		require.NoError(t, getErr)
+		assert.Equal(t, created.ID, byURL.ID)
+	})
+
+	t.Run("clears cache for a new endpoint", func(t *testing.T) {
+		input.JWKSUrl = "https://new-jwks.example.com/keys"
+		updated, err := dao.Update(ctx, nil, created.ID, input, true)
+		require.NoError(t, err)
+
+		assert.Equal(t, input.JWKSUrl, updated.JWKSUrl)
+		assert.Empty(t, updated.JWKSKeys)
+		assert.Nil(t, updated.JWKSFetchedAt)
+	})
+}
+
 func TestIssuerSQLDAO_DuplicateURLRejected(t *testing.T) {
 	ctx := context.Background()
 	dbSession := testIssuerInitDB(t)
@@ -128,7 +182,7 @@ func TestIssuerSQLDAO_DuplicateURLRejected(t *testing.T) {
 
 	mk := func(url, jwksURL string) error {
 		return db.WithTx(ctx, dbSession, func(tx *db.Tx) error {
-			_, derr := dao.Create(ctx, tx, IssuerCreateInput{
+			_, derr := dao.Create(ctx, tx, IssuerCreateOrUpdateInput{
 				IssuerURL: url,
 				JWKSUrl:   jwksURL,
 			})
@@ -142,6 +196,93 @@ func TestIssuerSQLDAO_DuplicateURLRejected(t *testing.T) {
 	err := mk("https://idp.example.com", "https://other.example.com/jwks")
 	require.Error(t, err)
 	assert.True(t, (&db.PostgresErrorChecker{}).IsUniqueConstraintError(err), "expected unique constraint error, got: %v", err)
+}
+
+func TestIssuerSQLDAO_SoftDeletedURLCanBeRecreated(t *testing.T) {
+	ctx := context.Background()
+	dbSession := testIssuerInitDB(t)
+	defer dbSession.Close()
+	testIssuerSetupSchema(t, dbSession)
+
+	dao := NewIssuerDAO(dbSession)
+	create := func() *Issuer {
+		var created *Issuer
+		err := db.WithTx(ctx, dbSession, func(tx *db.Tx) error {
+			var derr error
+			created, derr = dao.Create(ctx, tx, IssuerCreateOrUpdateInput{
+				IssuerURL: "https://recreated.example.com",
+				JWKSUrl:   "https://recreated.example.com/jwks",
+			})
+			return derr
+		})
+		require.NoError(t, err)
+		return created
+	}
+
+	first := create()
+	require.NoError(t, db.WithTx(ctx, dbSession, func(tx *db.Tx) error {
+		return dao.Delete(ctx, tx, first.ID)
+	}))
+	second := create()
+
+	assert.NotEqual(t, first.ID, second.ID)
+	rows, err := dao.GetAll(ctx, nil, IssuerFilterInput{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, second.ID, rows[0].ID)
+}
+
+func TestIssuerSQLDAO_GetPage(t *testing.T) {
+	ctx := context.Background()
+	dbSession := testIssuerInitDB(t)
+	defer dbSession.Close()
+	testIssuerSetupSchema(t, dbSession)
+
+	dao := NewIssuerDAO(dbSession)
+	for _, name := range []string{"charlie", "alpha", "bravo"} {
+		err := db.WithTx(ctx, dbSession, func(tx *db.Tx) error {
+			_, derr := dao.Create(ctx, tx, IssuerCreateOrUpdateInput{
+				IssuerURL: "https://" + name + ".example.com",
+				JWKSUrl:   "https://" + name + ".example.com/jwks",
+			})
+			return derr
+		})
+		require.NoError(t, err)
+	}
+
+	offset, limit := 1, 1
+	rows, total, err := dao.GetPage(ctx, nil, IssuerFilterInput{}, paginator.PageInput{
+		Offset: &offset,
+		Limit:  &limit,
+		OrderBy: &paginator.OrderBy{
+			Field: "issuer_url",
+			Order: paginator.OrderAscending,
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "https://bravo.example.com", rows[0].IssuerURL)
+}
+
+func TestIssuer_HasDynamicMapping(t *testing.T) {
+	tests := []struct {
+		name    string
+		mapping ClaimMapping
+		dynamic bool
+	}{
+		{name: "static", mapping: ClaimMapping{OrgName: "acme"}},
+		{name: "org attribute", mapping: ClaimMapping{OrgAttribute: "org"}, dynamic: true},
+		{name: "org display attribute", mapping: ClaimMapping{OrgDisplayAttribute: "org_display"}, dynamic: true},
+		{name: "roles attribute", mapping: ClaimMapping{RolesAttribute: "roles"}, dynamic: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issuer := Issuer{ClaimMappings: []ClaimMapping{tt.mapping}}
+			assert.Equal(t, tt.dynamic, issuer.HasDynamicMapping())
+		})
+	}
 }
 
 func TestIssuerSQLDAO_UpdateJWKSCache(t *testing.T) {

@@ -12,10 +12,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/infra-controller/rest-api/api/internal/config"
 	"github.com/NVIDIA/infra-controller/rest-api/api/pkg/api/handler/util/common"
 	"github.com/NVIDIA/infra-controller/rest-api/api/pkg/api/model"
+	"github.com/NVIDIA/infra-controller/rest-api/api/pkg/api/pagination"
 	authz "github.com/NVIDIA/infra-controller/rest-api/auth/pkg/authorization"
 	cauth "github.com/NVIDIA/infra-controller/rest-api/auth/pkg/config"
 	"github.com/NVIDIA/infra-controller/rest-api/common/pkg/otelecho"
@@ -83,32 +85,34 @@ func testIssuerSetup(t *testing.T, cfg *config.Config) testIssuerFixture {
 	return testIssuerFixture{org: org, user: user, dbSession: dbSession, cfg: cfg}
 }
 
-// request invokes an Issuer handler as the fixture's Provider Admin.
+// request invokes an Issuer handler as the fixture's Provider Admin. It uses a
+// non-terminating assertion because concurrency tests call it from workers that
+// must still deliver their response recorders when a handler returns an error.
 func (f testIssuerFixture) request(t *testing.T, handler echo.HandlerFunc, method, issuerID, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	e := echo.New()
-	req := httptest.NewRequest(method, "/v2/org/"+f.org+"/nico/issuer", strings.NewReader(body))
+	req := httptest.NewRequest(method, "/v2/org/"+f.org+"/nico/auth-issuer", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	ec := e.NewContext(req, rec)
-	ec.SetParamNames("orgName", "issuerId")
+	ec.SetParamNames("orgName", "authIssuerId")
 	ec.SetParamValues(f.org, issuerID)
 	ec.Set("user", f.user)
 
-	require.NoError(t, handler(ec))
+	assert.NoError(t, handler(ec))
 	return rec
 }
 
-// createIssuerRequest is a create body with a single static org claim mapping.
-func createIssuerRequest(issuerURL, orgName string) string {
+// createOrUpdateIssuerRequest is a complete PUT body with one static org mapping.
+func createOrUpdateIssuerRequest(issuerURL, orgName string) string {
 	return fmt.Sprintf(`{"issuerUrl":%q,"jwksUrl":%q,"claimMappings":[{"orgName":%q,"roles":[%q]}]}`,
 		issuerURL, issuerURL+"/jwks", orgName, authz.TenantAdminRole)
 }
 
-// createIssuerRequestWithJWKS is createIssuerRequest with the JWKS endpoint given
-// explicitly, so a test can point it at a live or a dead server.
-func createIssuerRequestWithJWKS(issuerURL, jwksURL, orgName string) string {
+// createOrUpdateIssuerRequestWithJWKS is createOrUpdateIssuerRequest with the
+// JWKS endpoint given explicitly, so a test can point it at a live or dead server.
+func createOrUpdateIssuerRequestWithJWKS(issuerURL, jwksURL, orgName string) string {
 	return fmt.Sprintf(`{"issuerUrl":%q,"jwksUrl":%q,"claimMappings":[{"orgName":%q,"roles":["TENANT_ADMIN"]}]}`,
 		issuerURL, jwksURL, orgName)
 }
@@ -125,22 +129,22 @@ func onlyIssuer(t *testing.T, f testIssuerFixture) cdbm.Issuer {
 }
 
 // createIssuer creates an Issuer through the API and returns the response body.
-func (f testIssuerFixture) createIssuer(t *testing.T, issuerURL, orgName string) model.APIIssuer {
+func (f testIssuerFixture) createIssuer(t *testing.T, issuerURL, orgName string) model.APIAuthIssuer {
 	t.Helper()
 
-	rec := f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
-		createIssuerRequest(issuerURL, orgName))
+	rec := f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
+		createOrUpdateIssuerRequest(issuerURL, orgName))
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
-	apiIssuer := model.APIIssuer{}
+	apiIssuer := model.APIAuthIssuer{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiIssuer))
 	return apiIssuer
 }
 
-// TestIssuerHandler_TenantAdminForbidden verifies the provider-admin gate: a
+// TestAuthIssuerHandler_TenantAdminForbidden verifies the provider-admin gate: a
 // Tenant Admin (org member, but not Provider Admin) is rejected with 403 before
 // any DB access, so issuer management is provider-only.
-func TestIssuerHandler_TenantAdminForbidden(t *testing.T) {
+func TestAuthIssuerHandler_TenantAdminForbidden(t *testing.T) {
 	ctx := context.Background()
 	tracer, _, ctx := common.TestCommonTraceProviderSetup(t, ctx)
 
@@ -154,11 +158,11 @@ func TestIssuerHandler_TenantAdminForbidden(t *testing.T) {
 	}
 
 	// dbSession is never touched on the 403 path (the gate rejects first).
-	h := NewCreateIssuerHandler(&cdb.Session{}, customOnlyIssuerConfig(t))
+	h := NewCreateOrUpdateAuthIssuerHandler(&cdb.Session{}, customOnlyIssuerConfig(t))
 
 	e := echo.New()
 	body := `{"issuerUrl":"https://idp.acme.com"}`
-	req := httptest.NewRequest(http.MethodPut, "/v2/org/"+org+"/nico/issuer", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/v2/org/"+org+"/nico/auth-issuer", strings.NewReader(body))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	ec := e.NewContext(req, rec)
@@ -184,8 +188,8 @@ issuers:
     issuer: authn.example.com
 `))
 
-	rec := f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
-		createIssuerRequest("https://idp.acme.com", "acme"))
+	rec := f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
+		createOrUpdateIssuerRequest("https://idp.acme.com", "acme"))
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "kas-legacy")
@@ -195,7 +199,7 @@ func TestCreateIssuerRejectsDynamicClaimMappings(t *testing.T) {
 	f := testIssuerSetup(t, customOnlyIssuerConfig(t))
 
 	body := `{"issuerUrl":"https://dyn-attempt.example.com","claimMappings":[{"orgName":"acme","rolesAttribute":"roles"}]}`
-	rec := f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "", body)
+	rec := f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "", body)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "rolesAttribute")
@@ -207,19 +211,18 @@ func TestCreateIssuerForcesCustomOrigin(t *testing.T) {
 	f := testIssuerSetup(t, customOnlyIssuerConfig(t))
 
 	body := fmt.Sprintf(`{"issuerUrl":"https://forced-custom.example.com","origin":%q}`, cauth.TokenOriginKeycloak)
-	rec := f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "", body)
+	rec := f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "", body)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
-	apiIssuer := model.APIIssuer{}
+	apiIssuer := model.APIAuthIssuer{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &apiIssuer))
 	assert.Equal(t, cauth.TokenOriginCustom, apiIssuer.Origin)
 }
 
-// TestCreateIssuerRejectsIdentityConflicts covers the uniqueness rule at the write
-// boundary: an issuer URL or a JWKS URL may be claimed exactly once, whether the
-// current holder is a static ConfigMap issuer or a live row. Every case is a 409,
-// since the request is well formed and collides with something that exists.
-func TestCreateIssuerRejectsIdentityConflicts(t *testing.T) {
+// TestCreateOrUpdateIssuerRejectsIdentityConflicts covers identity claims that
+// belong to a different resource. A live row with the same issuerUrl is the PUT
+// target and is therefore updated rather than treated as a conflict.
+func TestCreateOrUpdateIssuerRejectsIdentityConflicts(t *testing.T) {
 	f := testIssuerSetup(t, testIssuerConfig(t, `
 env:
   disconnected: true
@@ -240,29 +243,24 @@ issuers:
 	}{
 		{
 			name:         "issuer_url_held_by_the_configmap",
-			body:         createIssuerRequestWithJWKS("https://static.example.com", "https://clashing.example.com/jwks", "clashing-org"),
+			body:         createOrUpdateIssuerRequestWithJWKS("https://static.example.com", "https://clashing.example.com/jwks", "clashing-org"),
 			wantBodyPart: "reserved by a statically-configured issuer",
 		},
 		{
 			name:         "jwks_url_held_by_the_configmap",
-			body:         createIssuerRequestWithJWKS("https://clashing.example.com", "https://static.example.com/jwks", "clashing-org"),
+			body:         createOrUpdateIssuerRequestWithJWKS("https://clashing.example.com", "https://static.example.com/jwks", "clashing-org"),
 			wantBodyPart: "reserved by a statically-configured issuer",
 		},
 		{
-			name:         "issuer_url_held_by_a_live_row",
-			body:         createIssuerRequestWithJWKS("https://existing.example.com", "https://clashing.example.com/jwks", "clashing-org"),
-			wantBodyPart: "duplicate issuer URL",
-		},
-		{
 			name:         "jwks_url_held_by_a_live_row",
-			body:         createIssuerRequestWithJWKS("https://clashing.example.com", "https://existing.example.com/jwks", "clashing-org"),
+			body:         createOrUpdateIssuerRequestWithJWKS("https://clashing.example.com", "https://existing.example.com/jwks", "clashing-org"),
 			wantBodyPart: "duplicate JWKS URL",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rec := f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "", tt.body)
+			rec := f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "", tt.body)
 
 			assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 			assert.Contains(t, rec.Body.String(), tt.wantBodyPart)
@@ -271,7 +269,116 @@ issuers:
 
 	issuers, err := cdbm.NewIssuerDAO(f.dbSession).GetAll(context.Background(), nil, cdbm.IssuerFilterInput{})
 	require.NoError(t, err)
-	assert.Len(t, issuers, 1, "no rejected create may have written a row")
+	assert.Len(t, issuers, 1, "no rejected PUT may have written a row")
+}
+
+func TestCreateOrUpdateAuthIssuerHandler_Handle(t *testing.T) {
+	t.Run("repeated identical PUT is a no-op", func(t *testing.T) {
+		f := testIssuerSetup(t, customOnlyIssuerConfig(t))
+		handler := NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg)
+		body := `{"issuerUrl":"https://repeat.example.com","jwksUrl":"https://repeat.example.com/jwks","jwksTimeout":"7s","audiences":["nico"],"scopes":["openid"],"claimMappings":[{"orgName":"repeat-org","roles":["TENANT_ADMIN"]}]}`
+
+		first := f.request(t, handler.Handle, http.MethodPut, "", body)
+		require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
+		storedBefore := onlyIssuer(t, f)
+		fetchedAt := time.Now().UTC().Truncate(time.Microsecond)
+		require.NoError(t, cdbm.NewIssuerDAO(f.dbSession).UpdateJWKSCache(
+			context.Background(), nil, storedBefore.ID, json.RawMessage(testIssuerKeySet), fetchedAt,
+		))
+		before, err := cdbm.NewIssuerDAO(f.dbSession).GetByID(context.Background(), nil, storedBefore.ID)
+		require.NoError(t, err)
+
+		repeated := f.request(t, handler.Handle, http.MethodPut, "", body)
+		require.Equal(t, http.StatusOK, repeated.Code, repeated.Body.String())
+		after := onlyIssuer(t, f)
+
+		assert.Equal(t, before.ID, after.ID)
+		assert.Equal(t, before.CreatedAt, after.CreatedAt)
+		assert.Equal(t, before.UpdatedAt, after.UpdatedAt)
+		assert.JSONEq(t, string(before.JWKSKeys), string(after.JWKSKeys))
+		assert.Equal(t, before.JWKSFetchedAt, after.JWKSFetchedAt)
+	})
+
+	t.Run("replacement preserves identity and same-endpoint keys", func(t *testing.T) {
+		f := testIssuerSetup(t, customOnlyIssuerConfig(t))
+		handler := NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg)
+		issuerURL := "https://replace.example.com"
+		jwksURL := issuerURL + "/jwks"
+		originalBody := fmt.Sprintf(`{"issuerUrl":%q,"jwksUrl":%q,"audiences":["old-audience"],"scopes":["old-scope"],"claimMappings":[{"orgName":"old-org","roles":["TENANT_ADMIN"]}]}`, issuerURL, jwksURL)
+		replacementBody := fmt.Sprintf(`{"issuerUrl":%q,"jwksUrl":%q,"jwksTimeout":"9s","audiences":["new-audience"],"claimMappings":[{"orgName":"new-org","roles":["TENANT_ADMIN"]}]}`, issuerURL, jwksURL)
+
+		created := f.request(t, handler.Handle, http.MethodPut, "", originalBody)
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+		before := onlyIssuer(t, f)
+		fetchedAt := time.Now().UTC().Truncate(time.Microsecond)
+		require.NoError(t, cdbm.NewIssuerDAO(f.dbSession).UpdateJWKSCache(
+			context.Background(), nil, before.ID, json.RawMessage(testIssuerKeySet), fetchedAt,
+		))
+
+		replaced := f.request(t, handler.Handle, http.MethodPut, "", replacementBody)
+		require.Equal(t, http.StatusOK, replaced.Code, replaced.Body.String())
+		after := onlyIssuer(t, f)
+
+		assert.Equal(t, before.ID, after.ID)
+		assert.Equal(t, before.CreatedAt, after.CreatedAt)
+		assert.Equal(t, "9s", after.JWKSTimeout)
+		assert.Equal(t, []string{"new-audience"}, after.Audiences)
+		assert.Empty(t, after.Scopes, "PUT replacement clears omitted fields")
+		require.Len(t, after.ClaimMappings, 1)
+		assert.Equal(t, "new-org", after.ClaimMappings[0].OrgName)
+		assert.JSONEq(t, testIssuerKeySet, string(after.JWKSKeys))
+		require.NotNil(t, after.JWKSFetchedAt)
+		assert.True(t, fetchedAt.Equal(*after.JWKSFetchedAt))
+	})
+
+	t.Run("JWKS endpoint replacement clears cached keys", func(t *testing.T) {
+		f := testIssuerSetup(t, customOnlyIssuerConfig(t))
+		handler := NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg)
+		issuerURL := "https://keys-reset.example.com"
+
+		created := f.request(t, handler.Handle, http.MethodPut, "",
+			createOrUpdateIssuerRequestWithJWKS(issuerURL, issuerURL+"/old-jwks", "keys-org"))
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+		before := onlyIssuer(t, f)
+		require.NoError(t, cdbm.NewIssuerDAO(f.dbSession).UpdateJWKSCache(
+			context.Background(), nil, before.ID, json.RawMessage(testIssuerKeySet), time.Now().UTC(),
+		))
+
+		replaced := f.request(t, handler.Handle, http.MethodPut, "",
+			createOrUpdateIssuerRequestWithJWKS(issuerURL, issuerURL+"/new-jwks", "keys-org"))
+		require.Equal(t, http.StatusOK, replaced.Code, replaced.Body.String())
+		response := model.APIAuthIssuer{}
+		require.NoError(t, json.Unmarshal(replaced.Body.Bytes(), &response))
+		after := onlyIssuer(t, f)
+
+		assert.Equal(t, before.ID, after.ID)
+		assert.Empty(t, after.JWKSKeys)
+		assert.Nil(t, after.JWKSFetchedAt)
+		assert.Equal(t, model.AuthIssuerStatusPending, response.Status)
+	})
+
+	t.Run("concurrent repeated PUTs create one row", func(t *testing.T) {
+		f := testIssuerSetup(t, customOnlyIssuerConfig(t))
+		handler := NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg)
+		body := createOrUpdateIssuerRequest("https://concurrent-repeat.example.com", "concurrent-repeat-org")
+		start := make(chan struct{})
+		results := make(chan *httptest.ResponseRecorder, 2)
+
+		for range 2 {
+			go func() {
+				<-start
+				results <- f.request(t, handler.Handle, http.MethodPut, "", body)
+			}()
+		}
+		close(start)
+
+		codes := map[int]int{}
+		codes[(<-results).Code]++
+		codes[(<-results).Code]++
+		assert.Equal(t, 1, codes[http.StatusCreated])
+		assert.Equal(t, 1, codes[http.StatusOK])
+		_ = onlyIssuer(t, f)
+	})
 }
 
 func TestCreateIssuerSerializesCombinedValidation(t *testing.T) {
@@ -284,8 +391,8 @@ func TestCreateIssuerSerializesCombinedValidation(t *testing.T) {
 	for _, issuerURL := range []string{"https://create-a.example.com", "https://create-b.example.com"} {
 		go func(issuerURL string) {
 			<-start
-			results <- f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
-				createIssuerRequest(issuerURL, orgName))
+			results <- f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
+				createOrUpdateIssuerRequest(issuerURL, orgName))
 		}(issuerURL)
 	}
 	close(start)
@@ -307,12 +414,12 @@ func TestDeleteIssuerSerializesWithConflictingCreate(t *testing.T) {
 	createResult := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		<-start
-		deleteResult <- f.request(t, NewDeleteIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodDelete, existing.ID, "")
+		deleteResult <- f.request(t, NewDeleteAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodDelete, existing.ID, "")
 	}()
 	go func() {
 		<-start
-		createResult <- f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
-			createIssuerRequest("https://delete-replacement.example.com", orgName))
+		createResult <- f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
+			createOrUpdateIssuerRequest("https://delete-replacement.example.com", orgName))
 	}()
 	close(start)
 
@@ -369,8 +476,8 @@ func TestCreateIssuerDoesNotContactTheIdP(t *testing.T) {
 	f := testIssuerSetup(t, customOnlyIssuerConfig(t))
 	f.cfg.TokenOriginConfig = cauth.NewTokenOriginConfig()
 
-	rec := f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
-		createIssuerRequestWithJWKS("https://idp.acme.com", idp.URL, "acme"))
+	rec := f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
+		createOrUpdateIssuerRequestWithJWKS("https://idp.acme.com", idp.URL, "acme"))
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
 	assert.Equal(t, int32(0), hits.Load(), "creating an issuer must not reach its IdP")
@@ -390,18 +497,92 @@ func TestCreateIssuerWithUnreachableIdP(t *testing.T) {
 	f := testIssuerSetup(t, customOnlyIssuerConfig(t))
 	f.cfg.TokenOriginConfig = cauth.NewTokenOriginConfig()
 
-	rec := f.request(t, NewCreateIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
-		createIssuerRequestWithJWKS("https://idp.acme.com", "http://127.0.0.1:1/jwks", "acme"))
+	rec := f.request(t, NewCreateOrUpdateAuthIssuerHandler(f.dbSession, f.cfg).Handle, http.MethodPut, "",
+		createOrUpdateIssuerRequestWithJWKS("https://idp.acme.com", "http://127.0.0.1:1/jwks", "acme"))
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
 	// The response is what tells the operator the issuer cannot verify tokens yet,
 	// which is the whole reason the create is allowed to succeed without the IdP.
-	created := model.APIIssuer{}
+	created := model.APIAuthIssuer{}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
-	assert.Equal(t, model.IssuerStatusPending, created.Status)
+	assert.Equal(t, model.AuthIssuerStatusPending, created.Status)
 	assert.Nil(t, created.JWKSFetchedAt)
 
 	stored := onlyIssuer(t, f)
 	assert.Empty(t, stored.JWKSKeys, "an unreachable IdP leaves the cache empty for the refresh loop to fill")
 	assert.Nil(t, stored.JWKSFetchedAt)
+}
+
+func TestGetAllIssuerPaginatesDeterministically(t *testing.T) {
+	f := testIssuerSetup(t, customOnlyIssuerConfig(t))
+	for _, name := range []string{"charlie", "alpha", "bravo"} {
+		f.createIssuer(t, "https://"+name+".example.com", name)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet,
+		"/v2/org/"+f.org+"/nico/auth-issuer?pageNumber=2&pageSize=1&orderBy=ISSUER_URL_ASC", nil)
+	rec := httptest.NewRecorder()
+	ec := e.NewContext(req, rec)
+	ec.SetParamNames("orgName")
+	ec.SetParamValues(f.org)
+	ec.Set("user", f.user)
+
+	require.NoError(t, NewGetAllAuthIssuerHandler(f.dbSession, f.cfg).Handle(ec))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	issuers := []model.APIAuthIssuer{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &issuers))
+	require.Len(t, issuers, 1)
+	assert.Equal(t, "https://bravo.example.com", issuers[0].IssuerURL)
+
+	page := pagination.PageResponse{}
+	require.NoError(t, json.Unmarshal([]byte(rec.Header().Get(pagination.ResponseHeaderName)), &page))
+	assert.Equal(t, 2, page.PageNumber)
+	assert.Equal(t, 1, page.PageSize)
+	assert.Equal(t, 3, page.Total)
+	require.NotNil(t, page.OrderBy)
+	assert.Equal(t, "ISSUER_URL_ASC", *page.OrderBy)
+}
+
+func TestGetIssuerErrors(t *testing.T) {
+	f := testIssuerSetup(t, customOnlyIssuerConfig(t))
+	handler := NewGetAuthIssuerHandler(f.dbSession, f.cfg)
+
+	tests := []struct {
+		name       string
+		issuerID   string
+		wantStatus int
+	}{
+		{name: "malformed ID", issuerID: "not-a-uuid", wantStatus: http.StatusBadRequest},
+		{name: "missing issuer", issuerID: uuid.NewString(), wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := f.request(t, handler.Handle, http.MethodGet, tt.issuerID, "")
+			assert.Equal(t, tt.wantStatus, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestDeleteIssuerErrors(t *testing.T) {
+	f := testIssuerSetup(t, customOnlyIssuerConfig(t))
+	handler := NewDeleteAuthIssuerHandler(f.dbSession, f.cfg)
+
+	tests := []struct {
+		name       string
+		issuerID   string
+		wantStatus int
+	}{
+		{name: "malformed ID", issuerID: "not-a-uuid", wantStatus: http.StatusBadRequest},
+		{name: "missing issuer", issuerID: uuid.NewString(), wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := f.request(t, handler.Handle, http.MethodDelete, tt.issuerID, "")
+			assert.Equal(t, tt.wantStatus, rec.Code, rec.Body.String())
+		})
+	}
 }

@@ -65,12 +65,24 @@ func Test_InitAPIServer(t *testing.T) {
 	t.Setenv("SENTRY_DSN", "https://bfe69b59461e44059a533274a6393155@glitchtip.test.com/3")
 
 	tests := []struct {
-		name string
-		args args
-		want *echo.Echo
+		name            string
+		keycloakEnabled bool
+		args            args
 	}{
 		{
-			name: "test initAPIServer success",
+			name:            "dynamic issuer routes enabled",
+			keycloakEnabled: false,
+			args: args{
+				cfg:       cfg,
+				dbSession: dbSession,
+				tc:        tc,
+				tnc:       tnc,
+				scp:       scp,
+			},
+		},
+		{
+			name:            "dynamic issuer routes disabled by Keycloak",
+			keycloakEnabled: true,
 			args: args{
 				cfg:       cfg,
 				dbSession: dbSession,
@@ -82,10 +94,12 @@ func Test_InitAPIServer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.args.cfg.SetKeycloakEnabled(tt.keycloakEnabled)
 			e := InitAPIServer(tt.args.cfg, tt.args.dbSession, tt.args.tc, tt.args.tnc, tt.args.scp, nil)
 			assertIssuerRoutesMatchPolicy(t, e, tt.args.cfg)
 		})
 	}
+	cfg.SetKeycloakEnabled(false)
 }
 
 // assertIssuerRoutesMatchPolicy checks the route table the server actually built
@@ -97,10 +111,10 @@ func assertIssuerRoutesMatchPolicy(t *testing.T, e *echo.Echo, cfg *config.Confi
 
 	prefix := "/" + cfg.GetAPIRouteVersion() + "/org/:orgName/" + cfg.GetAPIName()
 	issuerRoutes := []string{
-		http.MethodPut + " " + prefix + "/issuer",
-		http.MethodGet + " " + prefix + "/issuer",
-		http.MethodGet + " " + prefix + "/issuer/:issuerId",
-		http.MethodDelete + " " + prefix + "/issuer/:issuerId",
+		http.MethodPost + " " + prefix + "/auth-issuer",
+		http.MethodGet + " " + prefix + "/auth-issuer",
+		http.MethodGet + " " + prefix + "/auth-issuer/:authIssuerId",
+		http.MethodDelete + " " + prefix + "/auth-issuer/:authIssuerId",
 	}
 
 	registered := make(map[string]bool, len(e.Routes()))

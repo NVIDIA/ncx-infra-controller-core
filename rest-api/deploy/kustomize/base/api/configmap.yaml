@@ -76,7 +76,8 @@ data:
       resolveFlightTimeout: 30s
 
     # Keycloak disabled — auth is handled via the issuers block below.
-    # Dynamic issuer management via the /nico/issuer API requires keycloak.enabled=false.
+    # DB-backed Auth Issuer management via the /nico/auth-issuer API requires
+    # keycloak.enabled=false.
     keycloak:
       enabled: false
       baseURL: http://keycloak:8082

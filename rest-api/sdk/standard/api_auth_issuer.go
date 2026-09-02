@@ -22,51 +22,59 @@ import (
 	"strings"
 )
 
-// IssuerAPIService IssuerAPI service
-type IssuerAPIService service
+// AuthIssuerAPIService AuthIssuerAPI service
+type AuthIssuerAPIService service
 
-type ApiCreateIssuerRequest struct {
-	ctx                 context.Context
-	ApiService          *IssuerAPIService
-	org                 string
-	issuerCreateRequest *IssuerCreateRequest
+type ApiCreateOrUpdateAuthIssuerRequest struct {
+	ctx                             context.Context
+	ApiService                      *AuthIssuerAPIService
+	org                             string
+	authIssuerCreateOrUpdateRequest *AuthIssuerCreateOrUpdateRequest
 }
 
-func (r ApiCreateIssuerRequest) IssuerCreateRequest(issuerCreateRequest IssuerCreateRequest) ApiCreateIssuerRequest {
-	r.issuerCreateRequest = &issuerCreateRequest
+func (r ApiCreateOrUpdateAuthIssuerRequest) AuthIssuerCreateOrUpdateRequest(authIssuerCreateOrUpdateRequest AuthIssuerCreateOrUpdateRequest) ApiCreateOrUpdateAuthIssuerRequest {
+	r.authIssuerCreateOrUpdateRequest = &authIssuerCreateOrUpdateRequest
 	return r
 }
 
-func (r ApiCreateIssuerRequest) Execute() (*Issuer, *http.Response, error) {
-	return r.ApiService.CreateIssuerExecute(r)
+func (r ApiCreateOrUpdateAuthIssuerRequest) Execute() (*AuthIssuer, *http.Response, error) {
+	return r.ApiService.CreateOrUpdateAuthIssuerExecute(r)
 }
 
 /*
-CreateIssuer Register an external JWT issuer
+CreateOrUpdateAuthIssuer Create or replace an external JWT issuer
 
-Register a runtime-managed external JWT issuer. Provider Admin only.
+Create or fully replace a runtime-managed external JWT Auth Issuer. Provider Admin only.
+
+`issuerUrl` is the natural resource key. If no database issuer has that URL,
+the request creates one and returns `201`. If one exists, the request replaces
+its complete operator-managed configuration and returns `200`; an identical
+repeated request is a no-op and returns the same resource. The issuer ID and
+creation metadata are preserved across replacement. Cached signing keys are
+preserved unless `jwksUrl` changes.
 
 Always sets `origin: custom`. Only static org-name claim mappings are accepted;
 attribute-driven mappings (`orgAttribute`, `orgDisplayAttribute`, `rolesAttribute`)
 are rejected with `400`.
 
-Registration does not contact the identity provider, so it succeeds even while
-`jwksUrl` is unreachable and returns the issuer as `Pending`. Signing keys are
-fetched in the background, retried every 10 seconds until one lands, at which
-point the issuer reads back as `Ready`. Poll GET until then: tokens from a
-`Pending` issuer are rejected.
+The PUT does not contact the identity provider. A newly created issuer, or an
+existing issuer whose `jwksUrl` changes, therefore returns as `Pending` until
+signing keys are fetched. Policy-only replacements preserve cached keys and
+status. Key fetches are retried every 10 seconds until one lands, at which point
+the issuer reads back as `Ready`. Poll GET until then: tokens from a `Pending`
+issuer are rejected.
 
-The issuer API is available only in disconnected mode, with Keycloak disabled,
+The Auth Issuer API is available only in disconnected mode, with Keycloak disabled,
 and with no `keycloak` / `kas-legacy` / `kas-ssa` origin in the ConfigMap
 `issuers` block. A ConfigMap issuer with a dynamic (`orgAttribute`) mapping
 does not by itself disable this endpoint.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@param org Name of the Org
-	@return ApiCreateIssuerRequest
+	@return ApiCreateOrUpdateAuthIssuerRequest
 */
-func (a *IssuerAPIService) CreateIssuer(ctx context.Context, org string) ApiCreateIssuerRequest {
-	return ApiCreateIssuerRequest{
+func (a *AuthIssuerAPIService) CreateOrUpdateAuthIssuer(ctx context.Context, org string) ApiCreateOrUpdateAuthIssuerRequest {
+	return ApiCreateOrUpdateAuthIssuerRequest{
 		ApiService: a,
 		ctx:        ctx,
 		org:        org,
@@ -75,28 +83,28 @@ func (a *IssuerAPIService) CreateIssuer(ctx context.Context, org string) ApiCrea
 
 // Execute executes the request
 //
-//	@return Issuer
-func (a *IssuerAPIService) CreateIssuerExecute(r ApiCreateIssuerRequest) (*Issuer, *http.Response, error) {
+//	@return AuthIssuer
+func (a *AuthIssuerAPIService) CreateOrUpdateAuthIssuerExecute(r ApiCreateOrUpdateAuthIssuerRequest) (*AuthIssuer, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodPut
 		localVarPostBody    interface{}
 		formFiles           []formFile
-		localVarReturnValue *Issuer
+		localVarReturnValue *AuthIssuer
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "IssuerAPIService.CreateIssuer")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "AuthIssuerAPIService.CreateOrUpdateAuthIssuer")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v2/org/{org}/nico/issuer"
+	localVarPath := localBasePath + "/v2/org/{org}/nico/auth-issuer"
 	localVarPath = strings.Replace(localVarPath, "{"+"org"+"}", url.PathEscape(parameterValueToString(r.org, "org")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
-	if r.issuerCreateRequest == nil {
-		return localVarReturnValue, nil, reportError("issuerCreateRequest is required and must be specified")
+	if r.authIssuerCreateOrUpdateRequest == nil {
+		return localVarReturnValue, nil, reportError("authIssuerCreateOrUpdateRequest is required and must be specified")
 	}
 
 	// to determine the Content-Type header
@@ -117,7 +125,7 @@ func (a *IssuerAPIService) CreateIssuerExecute(r ApiCreateIssuerRequest) (*Issue
 		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
 	}
 	// body params
-	localVarPostBody = r.issuerCreateRequest
+	localVarPostBody = r.authIssuerCreateOrUpdateRequest
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
@@ -209,58 +217,58 @@ func (a *IssuerAPIService) CreateIssuerExecute(r ApiCreateIssuerRequest) (*Issue
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
-type ApiDeleteIssuerRequest struct {
-	ctx        context.Context
-	ApiService *IssuerAPIService
-	org        string
-	issuerId   string
+type ApiDeleteAuthIssuerRequest struct {
+	ctx          context.Context
+	ApiService   *AuthIssuerAPIService
+	org          string
+	authIssuerId string
 }
 
-func (r ApiDeleteIssuerRequest) Execute() (*Issuer, *http.Response, error) {
-	return r.ApiService.DeleteIssuerExecute(r)
+func (r ApiDeleteAuthIssuerRequest) Execute() (*AuthIssuer, *http.Response, error) {
+	return r.ApiService.DeleteAuthIssuerExecute(r)
 }
 
 /*
-DeleteIssuer Delete an external JWT issuer
+DeleteAuthIssuer Delete an external JWT issuer
 
 Soft-delete a runtime-managed external JWT issuer and withdraw its trust.
 Provider Admin only. Returns the deleted issuer object.
 
-To change `issuerUrl`, delete the issuer and re-register it with PUT.
+To change `issuerUrl`, delete the issuer and re-register it with POST.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@param org Name of the Org
-	@param issuerId ID of the Issuer
-	@return ApiDeleteIssuerRequest
+	@param authIssuerId ID of the Auth Issuer
+	@return ApiDeleteAuthIssuerRequest
 */
-func (a *IssuerAPIService) DeleteIssuer(ctx context.Context, org string, issuerId string) ApiDeleteIssuerRequest {
-	return ApiDeleteIssuerRequest{
-		ApiService: a,
-		ctx:        ctx,
-		org:        org,
-		issuerId:   issuerId,
+func (a *AuthIssuerAPIService) DeleteAuthIssuer(ctx context.Context, org string, authIssuerId string) ApiDeleteAuthIssuerRequest {
+	return ApiDeleteAuthIssuerRequest{
+		ApiService:   a,
+		ctx:          ctx,
+		org:          org,
+		authIssuerId: authIssuerId,
 	}
 }
 
 // Execute executes the request
 //
-//	@return Issuer
-func (a *IssuerAPIService) DeleteIssuerExecute(r ApiDeleteIssuerRequest) (*Issuer, *http.Response, error) {
+//	@return AuthIssuer
+func (a *AuthIssuerAPIService) DeleteAuthIssuerExecute(r ApiDeleteAuthIssuerRequest) (*AuthIssuer, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodDelete
 		localVarPostBody    interface{}
 		formFiles           []formFile
-		localVarReturnValue *Issuer
+		localVarReturnValue *AuthIssuer
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "IssuerAPIService.DeleteIssuer")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "AuthIssuerAPIService.DeleteAuthIssuer")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v2/org/{org}/nico/issuer/{issuerId}"
+	localVarPath := localBasePath + "/v2/org/{org}/nico/auth-issuer/{authIssuerId}"
 	localVarPath = strings.Replace(localVarPath, "{"+"org"+"}", url.PathEscape(parameterValueToString(r.org, "org")), -1)
-	localVarPath = strings.Replace(localVarPath, "{"+"issuerId"+"}", url.PathEscape(parameterValueToString(r.issuerId, "issuerId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"authIssuerId"+"}", url.PathEscape(parameterValueToString(r.authIssuerId, "authIssuerId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
@@ -363,28 +371,49 @@ func (a *IssuerAPIService) DeleteIssuerExecute(r ApiDeleteIssuerRequest) (*Issue
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
-type ApiGetAllIssuersRequest struct {
+type ApiGetAllAuthIssuerRequest struct {
 	ctx        context.Context
-	ApiService *IssuerAPIService
+	ApiService *AuthIssuerAPIService
 	org        string
+	pageNumber *int32
+	pageSize   *int32
+	orderBy    *string
 }
 
-func (r ApiGetAllIssuersRequest) Execute() ([]Issuer, *http.Response, error) {
-	return r.ApiService.GetAllIssuersExecute(r)
+// One-based page number.
+func (r ApiGetAllAuthIssuerRequest) PageNumber(pageNumber int32) ApiGetAllAuthIssuerRequest {
+	r.pageNumber = &pageNumber
+	return r
+}
+
+// Number of issuers per page.
+func (r ApiGetAllAuthIssuerRequest) PageSize(pageSize int32) ApiGetAllAuthIssuerRequest {
+	r.pageSize = &pageSize
+	return r
+}
+
+// Sort field and direction. Equal values are ordered by issuer ID.
+func (r ApiGetAllAuthIssuerRequest) OrderBy(orderBy string) ApiGetAllAuthIssuerRequest {
+	r.orderBy = &orderBy
+	return r
+}
+
+func (r ApiGetAllAuthIssuerRequest) Execute() ([]AuthIssuer, *http.Response, error) {
+	return r.ApiService.GetAllAuthIssuerExecute(r)
 }
 
 /*
-GetAllIssuers List external JWT issuers
+GetAllAuthIssuer List external JWT issuers
 
 List all runtime-managed external JWT issuers for the org's Infrastructure Provider.
 Provider Admin only.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@param org Name of the Org
-	@return ApiGetAllIssuersRequest
+	@return ApiGetAllAuthIssuerRequest
 */
-func (a *IssuerAPIService) GetAllIssuers(ctx context.Context, org string) ApiGetAllIssuersRequest {
-	return ApiGetAllIssuersRequest{
+func (a *AuthIssuerAPIService) GetAllAuthIssuer(ctx context.Context, org string) ApiGetAllAuthIssuerRequest {
+	return ApiGetAllAuthIssuerRequest{
 		ApiService: a,
 		ctx:        ctx,
 		org:        org,
@@ -393,27 +422,48 @@ func (a *IssuerAPIService) GetAllIssuers(ctx context.Context, org string) ApiGet
 
 // Execute executes the request
 //
-//	@return []Issuer
-func (a *IssuerAPIService) GetAllIssuersExecute(r ApiGetAllIssuersRequest) ([]Issuer, *http.Response, error) {
+//	@return []AuthIssuer
+func (a *AuthIssuerAPIService) GetAllAuthIssuerExecute(r ApiGetAllAuthIssuerRequest) ([]AuthIssuer, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodGet
 		localVarPostBody    interface{}
 		formFiles           []formFile
-		localVarReturnValue []Issuer
+		localVarReturnValue []AuthIssuer
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "IssuerAPIService.GetAllIssuers")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "AuthIssuerAPIService.GetAllAuthIssuer")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v2/org/{org}/nico/issuer"
+	localVarPath := localBasePath + "/v2/org/{org}/nico/auth-issuer"
 	localVarPath = strings.Replace(localVarPath, "{"+"org"+"}", url.PathEscape(parameterValueToString(r.org, "org")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.pageNumber != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "pageNumber", r.pageNumber, "form", "")
+	} else {
+		var defaultValue int32 = 1
+		parameterAddToHeaderOrQuery(localVarQueryParams, "pageNumber", defaultValue, "form", "")
+		r.pageNumber = &defaultValue
+	}
+	if r.pageSize != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "pageSize", r.pageSize, "form", "")
+	} else {
+		var defaultValue int32 = 20
+		parameterAddToHeaderOrQuery(localVarQueryParams, "pageSize", defaultValue, "form", "")
+		r.pageSize = &defaultValue
+	}
+	if r.orderBy != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "orderBy", r.orderBy, "form", "")
+	} else {
+		var defaultValue string = "CREATED_AT_ASC"
+		parameterAddToHeaderOrQuery(localVarQueryParams, "orderBy", defaultValue, "form", "")
+		r.orderBy = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -511,55 +561,55 @@ func (a *IssuerAPIService) GetAllIssuersExecute(r ApiGetAllIssuersRequest) ([]Is
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
-type ApiGetIssuerRequest struct {
-	ctx        context.Context
-	ApiService *IssuerAPIService
-	org        string
-	issuerId   string
+type ApiGetAuthIssuerRequest struct {
+	ctx          context.Context
+	ApiService   *AuthIssuerAPIService
+	org          string
+	authIssuerId string
 }
 
-func (r ApiGetIssuerRequest) Execute() (*Issuer, *http.Response, error) {
-	return r.ApiService.GetIssuerExecute(r)
+func (r ApiGetAuthIssuerRequest) Execute() (*AuthIssuer, *http.Response, error) {
+	return r.ApiService.GetAuthIssuerExecute(r)
 }
 
 /*
-GetIssuer Retrieve an external JWT issuer
+GetAuthIssuer Retrieve an external JWT issuer
 
 Retrieve a runtime-managed external JWT issuer by ID. Provider Admin only.
 
 	@param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
 	@param org Name of the Org
-	@param issuerId ID of the Issuer
-	@return ApiGetIssuerRequest
+	@param authIssuerId ID of the Auth Issuer
+	@return ApiGetAuthIssuerRequest
 */
-func (a *IssuerAPIService) GetIssuer(ctx context.Context, org string, issuerId string) ApiGetIssuerRequest {
-	return ApiGetIssuerRequest{
-		ApiService: a,
-		ctx:        ctx,
-		org:        org,
-		issuerId:   issuerId,
+func (a *AuthIssuerAPIService) GetAuthIssuer(ctx context.Context, org string, authIssuerId string) ApiGetAuthIssuerRequest {
+	return ApiGetAuthIssuerRequest{
+		ApiService:   a,
+		ctx:          ctx,
+		org:          org,
+		authIssuerId: authIssuerId,
 	}
 }
 
 // Execute executes the request
 //
-//	@return Issuer
-func (a *IssuerAPIService) GetIssuerExecute(r ApiGetIssuerRequest) (*Issuer, *http.Response, error) {
+//	@return AuthIssuer
+func (a *AuthIssuerAPIService) GetAuthIssuerExecute(r ApiGetAuthIssuerRequest) (*AuthIssuer, *http.Response, error) {
 	var (
 		localVarHTTPMethod  = http.MethodGet
 		localVarPostBody    interface{}
 		formFiles           []formFile
-		localVarReturnValue *Issuer
+		localVarReturnValue *AuthIssuer
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "IssuerAPIService.GetIssuer")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "AuthIssuerAPIService.GetAuthIssuer")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v2/org/{org}/nico/issuer/{issuerId}"
+	localVarPath := localBasePath + "/v2/org/{org}/nico/auth-issuer/{authIssuerId}"
 	localVarPath = strings.Replace(localVarPath, "{"+"org"+"}", url.PathEscape(parameterValueToString(r.org, "org")), -1)
-	localVarPath = strings.Replace(localVarPath, "{"+"issuerId"+"}", url.PathEscape(parameterValueToString(r.issuerId, "issuerId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"authIssuerId"+"}", url.PathEscape(parameterValueToString(r.authIssuerId, "authIssuerId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}

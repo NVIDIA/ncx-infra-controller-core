@@ -313,8 +313,8 @@ func InitAPIServer(cfg *config.Config, dbSession *cdb.Session, tc tsdkClient.Cli
 
 	// Same gate as the DB-backed issuer machinery above.
 	if cfg.DynamicIssuersEnabled() {
-		log.Info().Msg("Registering Issuer management routes (custom-origin ConfigMap issuers only)")
-		for _, r := range api.NewIssuerRoutes(dbSession, cfg) {
+		log.Info().Msg("Registering Auth Issuer management routes")
+		for _, r := range api.NewAuthIssuerRoutes(dbSession, cfg) {
 			routeGroup.Add(r.Method, r.Path, r.Handler.Handle)
 		}
 	} else {
@@ -322,7 +322,7 @@ func InitAPIServer(cfg *config.Config, dbSession *cdb.Session, tc tsdkClient.Cli
 			Bool("disconnected", cfg.GetEnvDisconnected()).
 			Bool("keycloak", cfg.GetKeycloakEnabled()).
 			Bool("privilegedOrigins", cfg.HasPrivilegedStaticIssuerOrigins()).
-			Msg("Issuer management routes not registered (connected, keycloak, or privileged static issuer active)")
+			Msg("Auth Issuer management routes not registered (connected, keycloak, or privileged static issuer active)")
 	}
 
 	if keycloakConfig != nil {

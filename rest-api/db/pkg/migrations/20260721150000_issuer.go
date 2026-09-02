@@ -60,6 +60,11 @@ func init() {
 		fmt.Print(" [up migration] ")
 		return nil
 	}, func(ctx context.Context, db *bun.DB) error {
+		_, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS issuer")
+		if err != nil {
+			return err
+		}
+		fmt.Print(" [down migration] ")
 		return nil
 	})
 }

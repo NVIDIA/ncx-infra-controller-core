@@ -5,6 +5,8 @@ package config
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,10 @@ import (
 // DefaultIssuerReloadInterval is how often every replica rebuilds the DB-sourced
 // portion of the live auth registry, and so the convergence floor across replicas.
 const DefaultIssuerReloadInterval = 30 * time.Second
+
+// maxConcurrentJWKSRefreshes caps outbound fetches and cache writes started by
+// one replica during a refresh pass.
+const maxConcurrentJWKSRefreshes = 8
 
 const (
 	// DefaultJWKSRefreshInterval is how often each replica re-fetches every
@@ -42,6 +48,10 @@ const (
 // registry trusts: the create and delete handlers, and the resolver's publication.
 const IssuerOrgMappingLockKey = "issuer:organization-mapping-namespace"
 
+// ErrIssuerStoreUnavailable distinguishes datastore failures from semantic
+// issuer validation errors at API boundaries.
+var ErrIssuerStoreUnavailable = errors.New("issuer datastore unavailable")
+
 // staticIssuers returns the ConfigMap issuers, which were validated at load. A
 // decode failure here leaves the registry trusting only what it already holds.
 func (c *Config) staticIssuers() []IssuerConfig {
@@ -53,20 +63,37 @@ func (c *Config) staticIssuers() []IssuerConfig {
 	return issuers
 }
 
+type staticIssuerSnapshot struct {
+	configs    []IssuerConfig
+	issuerURLs map[string]bool
+	jwksURLs   map[string]bool
+}
+
+func (c *Config) snapshotStaticIssuers() staticIssuerSnapshot {
+	configs := c.staticIssuers()
+	snapshot := staticIssuerSnapshot{
+		configs:    configs,
+		issuerURLs: make(map[string]bool, len(configs)),
+		jwksURLs:   make(map[string]bool, len(configs)),
+	}
+	for _, issuer := range configs {
+		snapshot.issuerURLs[issuer.Issuer] = true
+		snapshot.jwksURLs[issuer.JWKS] = true
+	}
+	return snapshot
+}
+
+func (snapshot staticIssuerSnapshot) conflicts(issuerURL, jwksURL string) bool {
+	return issuerURL != "" && snapshot.issuerURLs[issuerURL] ||
+		jwksURL != "" && snapshot.jwksURLs[jwksURL]
+}
+
 // IsStaticIssuer reports whether a static ConfigMap issuer already claims this
 // issuer URL (the token "iss") or JWKS URL. Static issuers always win: a DB issuer
 // colliding on either is rejected at write time and ignored at load time. Empty
 // arguments are skipped.
 func (c *Config) IsStaticIssuer(issuerURL, jwksURL string) bool {
-	for _, ic := range c.staticIssuers() {
-		if issuerURL != "" && ic.Issuer == issuerURL {
-			return true
-		}
-		if jwksURL != "" && ic.JWKS == jwksURL {
-			return true
-		}
-	}
-	return false
+	return c.snapshotStaticIssuers().conflicts(issuerURL, jwksURL)
 }
 
 // HasPrivilegedStaticIssuerOrigins reports whether any ConfigMap issuer uses a
@@ -77,7 +104,7 @@ func (c *Config) HasPrivilegedStaticIssuerOrigins() bool {
 	for _, ic := range c.staticIssuers() {
 		origin, err := ic.GetOrigin()
 		if err != nil {
-			continue
+			return true
 		}
 		switch origin {
 		case cauth.TokenOriginKeycloak, cauth.TokenOriginKasLegacy, cauth.TokenOriginKasSsa:
@@ -107,10 +134,8 @@ func NewConfigFromYAML(yamlDoc string) (*Config, error) {
 		return nil, err
 	}
 	return &Config{
-		v:      v,
-		dbURLs: map[string]bool{},
-		dbSigs: map[string]string{},
-		dbIDs:  map[string]uuid.UUID{},
+		v:                   v,
+		DynamicIssuerConfig: newDynamicIssuerConfig(),
 	}, nil
 }
 
@@ -119,13 +144,24 @@ func NewConfigFromYAML(yamlDoc string) (*Config, error) {
 // ValidateIssuersConfig. excludeID, if set, drops that existing row so it cannot
 // conflict with itself; candidate may be nil to validate the set as it stands.
 func (c *Config) ValidateCombinedIssuers(ctx context.Context, dbSession *cdb.Session, tx *cdb.Tx, candidate *cdbm.Issuer, excludeID *uuid.UUID) error {
+	return c.validateCombinedIssuers(ctx, dbSession, tx, candidate, excludeID, c.snapshotStaticIssuers().configs)
+}
+
+func (c *Config) validateCombinedIssuers(
+	ctx context.Context,
+	dbSession *cdb.Session,
+	tx *cdb.Tx,
+	candidate *cdbm.Issuer,
+	excludeID *uuid.UUID,
+	staticConfigs []IssuerConfig,
+) error {
 	dao := cdbm.NewIssuerDAO(dbSession)
 	existing, err := dao.GetAll(ctx, tx, cdbm.IssuerFilterInput{})
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrIssuerStoreUnavailable, err)
 	}
 
-	combined := append([]IssuerConfig{}, c.staticIssuers()...)
+	combined := append([]IssuerConfig{}, staticConfigs...)
 	for _, di := range existing {
 		if excludeID != nil && di.ID == *excludeID {
 			continue
@@ -143,12 +179,16 @@ func (c *Config) ValidateCombinedIssuers(ctx context.Context, dbSession *cdb.Ses
 // arms Close to cancel it. The loops outlive every request, so they cannot borrow a
 // request context.
 func (c *Config) NewIssuerLoopContext(parent context.Context) context.Context {
-	if c.stopIssuerLoops != nil {
-		c.stopIssuerLoops()
+	state := c.DynamicIssuerConfig
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.stopLoops != nil {
+		state.stopLoops()
 	}
 
 	ctx, cancel := context.WithCancel(parent)
-	c.stopIssuerLoops = cancel
+	state.stopLoops = cancel
 
 	return ctx
 }
@@ -231,7 +271,7 @@ func (c *Config) publishResolvedIssuer(
 
 		live, derr := cdbm.NewIssuerDAO(dbSession).GetByID(ctx, tx, id)
 		if derr != nil {
-			if derr == cdb.ErrDoesNotExist {
+			if errors.Is(derr, cdb.ErrDoesNotExist) {
 				log.Warn().Str("issuer", jwksCfg.Issuer).
 					Msg("on-demand issuer was deleted while it was being resolved; not publishing it")
 				return false, nil
@@ -241,22 +281,24 @@ func (c *Config) publishResolvedIssuer(
 
 		// The write path's rule applied to a row that already exists, so a manually
 		// inserted or legacy conflicting row cannot enter through the token path.
-		verr := c.ValidateCombinedIssuers(ctx, dbSession, tx, live, &live.ID)
+		staticIssuers := c.snapshotStaticIssuers()
+		verr := c.validateCombinedIssuers(ctx, dbSession, tx, live, &live.ID, staticIssuers.configs)
 		if verr != nil {
 			log.Warn().Err(verr).Str("issuer", live.IssuerURL).
 				Msg("on-demand issuer failed validation against the combined issuer set; refusing")
 			return false, nil
 		}
 
-		c.dbMu.Lock()
-		c.dbURLs[live.IssuerURL] = true
-		c.dbSigs[live.IssuerURL] = live.Signature()
-		c.dbIDs[live.IssuerURL] = live.ID
-		c.dbMu.Unlock()
+		state := c.DynamicIssuerConfig
+		state.mu.Lock()
+		state.dbURLs[live.IssuerURL] = true
+		state.dbSigs[live.IssuerURL] = live.Signature()
+		state.dbIDs[live.IssuerURL] = live.ID
+		state.mu.Unlock()
 
 		// Reserve before publishing, so the org this row owns is never claimable by a
 		// ConfigMap dynamic mapping while the row is already live.
-		c.reserveOrgNames(reg, computeReservedOrgNames([]IssuerConfig{issuerConfigFromDB(*live)}))
+		c.reserveOrgNames(reg, computeReservedOrgNames([]IssuerConfig{issuerConfigFromDB(*live)}), staticIssuers.configs)
 		reg.AddJwksConfig(jwksCfg)
 		return true, nil
 	})
@@ -266,7 +308,8 @@ func (c *Config) publishResolvedIssuer(
 // cheap checks that need no lock, or nil when there is no usable row. The
 // combined-set validation happens later, under the lock, in publishResolvedIssuer.
 func (c *Config) findAcceptableDBIssuer(ctx context.Context, dbSession *cdb.Session, issuerURL string) (*cdbm.Issuer, error) {
-	if c.IsStaticIssuer(issuerURL, "") {
+	staticIssuers := c.snapshotStaticIssuers()
+	if staticIssuers.conflicts(issuerURL, "") {
 		return nil, nil
 	}
 
@@ -282,7 +325,7 @@ func (c *Config) findAcceptableDBIssuer(ctx context.Context, dbSession *cdb.Sess
 
 	// The "iss" is free, but the ConfigMap may have grown an issuer claiming this
 	// row's JWKS URL since it was written.
-	if c.IsStaticIssuer("", di.JWKSUrl) {
+	if staticIssuers.conflicts("", di.JWKSUrl) {
 		log.Warn().Str("issuer", di.IssuerURL).Str("jwks", di.JWKSUrl).
 			Msg("on-demand issuer conflicts with a static issuer's JWKS URL; refusing (static wins)")
 		return nil, nil
@@ -360,14 +403,16 @@ func (c *Config) refreshJWKS(ctx context.Context, dbSession *cdb.Session, pendin
 		return
 	}
 
-	c.dbMu.Lock()
-	targets := make(map[string]uuid.UUID, len(c.dbIDs))
-	for url, id := range c.dbIDs {
+	state := c.DynamicIssuerConfig
+	state.mu.Lock()
+	targets := make(map[string]uuid.UUID, len(state.dbIDs))
+	for url, id := range state.dbIDs {
 		targets[url] = id
 	}
-	c.dbMu.Unlock()
+	state.mu.Unlock()
 
 	var wg sync.WaitGroup
+	refreshSlots := make(chan struct{}, maxConcurrentJWKSRefreshes)
 	for url, id := range targets {
 		jwksCfg := reg.GetConfig(url)
 		if jwksCfg == nil {
@@ -377,9 +422,17 @@ func (c *Config) refreshJWKS(ctx context.Context, dbSession *cdb.Session, pendin
 			continue
 		}
 
+		select {
+		case refreshSlots <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		}
+
 		wg.Add(1)
 		go func(url string, id uuid.UUID, jwksCfg *cauth.JwksConfig) {
 			defer wg.Done()
+			defer func() { <-refreshSlots }()
 
 			raw, fetchedAt, fetched, err := jwksCfg.RefreshJWKS(ctx)
 			if err != nil {
@@ -408,25 +461,27 @@ func (c *Config) ReloadDBIssuers(ctx context.Context, dbSession *cdb.Session) er
 		return nil
 	}
 
-	c.dbMu.Lock()
-	defer c.dbMu.Unlock()
+	state := c.DynamicIssuerConfig
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
 	dbIssuers, err := cdbm.NewIssuerDAO(dbSession).GetAll(ctx, nil, cdbm.IssuerFilterInput{})
 	if err != nil {
 		return err
 	}
 
-	prevManaged := c.dbURLs
+	prevManaged := state.dbURLs
+	staticIssuers := c.snapshotStaticIssuers()
 
 	// Accept rows that collide with no static issuer and keep the combined set
 	// valid; one bad row never blocks the others. A rejected row is ignored, never
 	// deleted — staying out of the registry also keeps it out of the refresh loop.
 	// Dynamic org mappings (orgAttribute) are a cross-tenant escalation risk and
 	// must live in the ConfigMap.
-	acceptedConfigs := append([]IssuerConfig{}, c.staticIssuers()...)
+	acceptedConfigs := append([]IssuerConfig{}, staticIssuers.configs...)
 	acceptedDB := make([]cdbm.Issuer, 0, len(dbIssuers))
 	for _, di := range dbIssuers {
-		if c.IsStaticIssuer(di.IssuerURL, di.JWKSUrl) ||
+		if staticIssuers.conflicts(di.IssuerURL, di.JWKSUrl) ||
 			(c.TokenOriginConfig.GetConfig(di.IssuerURL) != nil && !prevManaged[di.IssuerURL]) {
 			log.Warn().Str("issuer", di.IssuerURL).Str("jwks", di.JWKSUrl).
 				Msg("DB issuer conflicts with a static/built-in issuer; ignoring the row (static wins)")
@@ -461,7 +516,7 @@ func (c *Config) ReloadDBIssuers(ctx context.Context, dbSession *cdb.Session) er
 		// whose signature never changes would reject tokens signed by current keys
 		// sitting in the DB whenever the IdP is unreachable.
 		live := reg.GetConfig(di.IssuerURL)
-		if c.dbSigs[di.IssuerURL] == sig && live != nil {
+		if state.dbSigs[di.IssuerURL] == sig && live != nil {
 			if di.JWKSFetchedAt != nil && di.JWKSFetchedAt.After(live.LastFetchedAt()) {
 				hydrateFromCache(live, di)
 			}
@@ -480,13 +535,13 @@ func (c *Config) ReloadDBIssuers(ctx context.Context, dbSession *cdb.Session) er
 		}
 	}
 
-	c.dbURLs = newManaged
-	c.dbSigs = newSigs
-	c.dbIDs = newIDs
+	state.dbURLs = newManaged
+	state.dbSigs = newSigs
+	state.dbIDs = newIDs
 
 	// acceptedConfigs is the ConfigMap set plus every row that made it in, which is
 	// exactly the set that owns org names.
-	c.publishReservedOrgNames(reg, acceptedConfigs)
+	c.publishReservedOrgNames(reg, acceptedConfigs, staticIssuers.configs)
 	return nil
 }
 
@@ -561,9 +616,9 @@ func computeReservedOrgNames(configs []IssuerConfig) map[string]bool {
 // ConfigMap dynamic mapping from minting an org another issuer already owns, so a DB
 // row's static org has to reserve its name as soon as the row is accepted. Only
 // ConfigMap issuers can carry a dynamic mapping, so only they need the set.
-func (c *Config) publishReservedOrgNames(reg *cauth.TokenOriginConfig, combined []IssuerConfig) {
+func (c *Config) publishReservedOrgNames(reg *cauth.TokenOriginConfig, combined, staticConfigs []IssuerConfig) {
 	reserved := computeReservedOrgNames(combined)
-	for _, ic := range c.staticIssuers() {
+	for _, ic := range staticConfigs {
 		if live := reg.GetConfig(ic.Issuer); live != nil {
 			live.SetReservedOrgNames(reserved)
 		}
@@ -573,11 +628,11 @@ func (c *Config) publishReservedOrgNames(reg *cauth.TokenOriginConfig, combined 
 // reserveOrgNames adds orgs to what the ConfigMap issuers already reserve. The map is
 // replaced rather than mutated, so a concurrent reader sees one complete set or the
 // other. The next ReloadDBIssuers recomputes the set from the whole issuer set.
-func (c *Config) reserveOrgNames(reg *cauth.TokenOriginConfig, orgs map[string]bool) {
+func (c *Config) reserveOrgNames(reg *cauth.TokenOriginConfig, orgs map[string]bool, staticConfigs []IssuerConfig) {
 	if len(orgs) == 0 {
 		return
 	}
-	for _, ic := range c.staticIssuers() {
+	for _, ic := range staticConfigs {
 		live := reg.GetConfig(ic.Issuer)
 		if live == nil {
 			continue

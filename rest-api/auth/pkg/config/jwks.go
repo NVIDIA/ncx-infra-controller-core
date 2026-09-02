@@ -181,9 +181,9 @@ type JwksConfig struct {
 	// For custom issuers, use ClaimMapping.IsServiceAccount instead.
 	ServiceAccount bool
 
-	// ReservedOrgNames prevents dynamic org mappings from claiming statically-configured org names.
-	// Populated by nico-rest-api during initialization.
-	ReservedOrgNames map[string]bool
+	// reservedOrgNames prevents dynamic org mappings from claiming
+	// statically-configured org names. Guarded by the embedded mutex.
+	reservedOrgNames map[string]bool
 
 	subjectPrefix string // SHA256(issuer)[0:10] - namespaces subject claims
 
@@ -671,27 +671,33 @@ func (jcfg *JwksConfig) HasClaimMappings() bool { return len(jcfg.ClaimMappings)
 // GetClaimMappings returns the claim mappings.
 func (jcfg *JwksConfig) GetClaimMappings() []ClaimMapping { return jcfg.ClaimMappings }
 
-// SetReservedOrgNames replaces the reserved-org set. The caller must not mutate the
-// map afterwards; it is shared with every other issuer that received it.
+// SetReservedOrgNames replaces the reserved-org set. The input is copied so a
+// caller cannot race readers by retaining and mutating the map.
 func (jcfg *JwksConfig) SetReservedOrgNames(reserved map[string]bool) {
 	jcfg.Lock()
 	defer jcfg.Unlock()
-	jcfg.ReservedOrgNames = reserved
+	jcfg.reservedOrgNames = make(map[string]bool, len(reserved))
+	for org := range reserved {
+		jcfg.reservedOrgNames[org] = true
+	}
 }
 
-// GetReservedOrgNames returns the current reserved-org set, which must be treated
-// as read-only.
+// GetReservedOrgNames returns a snapshot of the current reserved-org set.
 func (jcfg *JwksConfig) GetReservedOrgNames() map[string]bool {
 	jcfg.RLock()
 	defer jcfg.RUnlock()
-	return jcfg.ReservedOrgNames
+	reserved := make(map[string]bool, len(jcfg.reservedOrgNames))
+	for org := range jcfg.reservedOrgNames {
+		reserved[org] = true
+	}
+	return reserved
 }
 
 // isReservedOrg reports whether some issuer statically owns org.
 func (jcfg *JwksConfig) isReservedOrg(org string) bool {
 	jcfg.RLock()
 	defer jcfg.RUnlock()
-	return jcfg.ReservedOrgNames[org]
+	return jcfg.reservedOrgNames[org]
 }
 
 // GetSubjectPrefix returns the issuer-derived prefix for namespacing subjects.

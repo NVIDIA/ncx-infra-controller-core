@@ -19,12 +19,12 @@ import (
 	"fmt"
 )
 
-// checks if the IssuerCreateRequest type satisfies the MappedNullable interface at compile time
-var _ MappedNullable = &IssuerCreateRequest{}
+// checks if the AuthIssuerCreateOrUpdateRequest type satisfies the MappedNullable interface at compile time
+var _ MappedNullable = &AuthIssuerCreateOrUpdateRequest{}
 
-// IssuerCreateRequest Request body for registering a new external JWT issuer.  `origin` is ignored — API-created issuers always receive `origin: custom`. Only static claim mappings (`orgName` + optional `roles`) are accepted.
-type IssuerCreateRequest struct {
-	// Expected JWT `iss` claim / OIDC issuer URL. Immutable after creation.
+// AuthIssuerCreateOrUpdateRequest Complete representation used to create or replace an external JWT Auth Issuer.  `issuerUrl` selects the resource. Repeating the same body is idempotent; changing any other field fully replaces the stored operator configuration. Omitted optional arrays are stored as empty arrays.  `origin` is ignored — API-managed issuers always receive `origin: custom`. Only static claim mappings (`orgName` + optional `roles`) are accepted.
+type AuthIssuerCreateOrUpdateRequest struct {
+	// Expected JWT `iss` claim / OIDC issuer URL and natural upsert key.
 	IssuerUrl string `json:"issuerUrl"`
 	// JWKS URL. Defaults to `{issuerUrl}/.well-known/jwks.json` when omitted.
 	JwksUrl *string `json:"jwksUrl,omitempty"`
@@ -37,31 +37,31 @@ type IssuerCreateRequest struct {
 	// Issuer-level required scope set.
 	Scopes []string `json:"scopes,omitempty"`
 	// Org/role mapping entries. Dynamic attribute fields are rejected with `400`.
-	ClaimMappings []IssuerClaimMapping `json:"claimMappings,omitempty"`
+	ClaimMappings []AuthIssuerClaimMapping `json:"claimMappings,omitempty"`
 }
 
-type _IssuerCreateRequest IssuerCreateRequest
+type _AuthIssuerCreateOrUpdateRequest AuthIssuerCreateOrUpdateRequest
 
-// NewIssuerCreateRequest instantiates a new IssuerCreateRequest object
+// NewAuthIssuerCreateOrUpdateRequest instantiates a new AuthIssuerCreateOrUpdateRequest object
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewIssuerCreateRequest(issuerUrl string) *IssuerCreateRequest {
-	this := IssuerCreateRequest{}
+func NewAuthIssuerCreateOrUpdateRequest(issuerUrl string) *AuthIssuerCreateOrUpdateRequest {
+	this := AuthIssuerCreateOrUpdateRequest{}
 	this.IssuerUrl = issuerUrl
 	return &this
 }
 
-// NewIssuerCreateRequestWithDefaults instantiates a new IssuerCreateRequest object
+// NewAuthIssuerCreateOrUpdateRequestWithDefaults instantiates a new AuthIssuerCreateOrUpdateRequest object
 // This constructor will only assign default values to properties that have it defined,
 // but it doesn't guarantee that properties required by API are set
-func NewIssuerCreateRequestWithDefaults() *IssuerCreateRequest {
-	this := IssuerCreateRequest{}
+func NewAuthIssuerCreateOrUpdateRequestWithDefaults() *AuthIssuerCreateOrUpdateRequest {
+	this := AuthIssuerCreateOrUpdateRequest{}
 	return &this
 }
 
 // GetIssuerUrl returns the IssuerUrl field value
-func (o *IssuerCreateRequest) GetIssuerUrl() string {
+func (o *AuthIssuerCreateOrUpdateRequest) GetIssuerUrl() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -72,7 +72,7 @@ func (o *IssuerCreateRequest) GetIssuerUrl() string {
 
 // GetIssuerUrlOk returns a tuple with the IssuerUrl field value
 // and a boolean to check if the value has been set.
-func (o *IssuerCreateRequest) GetIssuerUrlOk() (*string, bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) GetIssuerUrlOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -80,12 +80,12 @@ func (o *IssuerCreateRequest) GetIssuerUrlOk() (*string, bool) {
 }
 
 // SetIssuerUrl sets field value
-func (o *IssuerCreateRequest) SetIssuerUrl(v string) {
+func (o *AuthIssuerCreateOrUpdateRequest) SetIssuerUrl(v string) {
 	o.IssuerUrl = v
 }
 
 // GetJwksUrl returns the JwksUrl field value if set, zero value otherwise.
-func (o *IssuerCreateRequest) GetJwksUrl() string {
+func (o *AuthIssuerCreateOrUpdateRequest) GetJwksUrl() string {
 	if o == nil || IsNil(o.JwksUrl) {
 		var ret string
 		return ret
@@ -95,7 +95,7 @@ func (o *IssuerCreateRequest) GetJwksUrl() string {
 
 // GetJwksUrlOk returns a tuple with the JwksUrl field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *IssuerCreateRequest) GetJwksUrlOk() (*string, bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) GetJwksUrlOk() (*string, bool) {
 	if o == nil || IsNil(o.JwksUrl) {
 		return nil, false
 	}
@@ -103,7 +103,7 @@ func (o *IssuerCreateRequest) GetJwksUrlOk() (*string, bool) {
 }
 
 // HasJwksUrl returns a boolean if a field has been set.
-func (o *IssuerCreateRequest) HasJwksUrl() bool {
+func (o *AuthIssuerCreateOrUpdateRequest) HasJwksUrl() bool {
 	if o != nil && !IsNil(o.JwksUrl) {
 		return true
 	}
@@ -112,12 +112,12 @@ func (o *IssuerCreateRequest) HasJwksUrl() bool {
 }
 
 // SetJwksUrl gets a reference to the given string and assigns it to the JwksUrl field.
-func (o *IssuerCreateRequest) SetJwksUrl(v string) {
+func (o *AuthIssuerCreateOrUpdateRequest) SetJwksUrl(v string) {
 	o.JwksUrl = &v
 }
 
 // GetJwksTimeout returns the JwksTimeout field value if set, zero value otherwise.
-func (o *IssuerCreateRequest) GetJwksTimeout() string {
+func (o *AuthIssuerCreateOrUpdateRequest) GetJwksTimeout() string {
 	if o == nil || IsNil(o.JwksTimeout) {
 		var ret string
 		return ret
@@ -127,7 +127,7 @@ func (o *IssuerCreateRequest) GetJwksTimeout() string {
 
 // GetJwksTimeoutOk returns a tuple with the JwksTimeout field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *IssuerCreateRequest) GetJwksTimeoutOk() (*string, bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) GetJwksTimeoutOk() (*string, bool) {
 	if o == nil || IsNil(o.JwksTimeout) {
 		return nil, false
 	}
@@ -135,7 +135,7 @@ func (o *IssuerCreateRequest) GetJwksTimeoutOk() (*string, bool) {
 }
 
 // HasJwksTimeout returns a boolean if a field has been set.
-func (o *IssuerCreateRequest) HasJwksTimeout() bool {
+func (o *AuthIssuerCreateOrUpdateRequest) HasJwksTimeout() bool {
 	if o != nil && !IsNil(o.JwksTimeout) {
 		return true
 	}
@@ -144,12 +144,12 @@ func (o *IssuerCreateRequest) HasJwksTimeout() bool {
 }
 
 // SetJwksTimeout gets a reference to the given string and assigns it to the JwksTimeout field.
-func (o *IssuerCreateRequest) SetJwksTimeout(v string) {
+func (o *AuthIssuerCreateOrUpdateRequest) SetJwksTimeout(v string) {
 	o.JwksTimeout = &v
 }
 
 // GetServiceAccount returns the ServiceAccount field value if set, zero value otherwise.
-func (o *IssuerCreateRequest) GetServiceAccount() bool {
+func (o *AuthIssuerCreateOrUpdateRequest) GetServiceAccount() bool {
 	if o == nil || IsNil(o.ServiceAccount) {
 		var ret bool
 		return ret
@@ -159,7 +159,7 @@ func (o *IssuerCreateRequest) GetServiceAccount() bool {
 
 // GetServiceAccountOk returns a tuple with the ServiceAccount field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *IssuerCreateRequest) GetServiceAccountOk() (*bool, bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) GetServiceAccountOk() (*bool, bool) {
 	if o == nil || IsNil(o.ServiceAccount) {
 		return nil, false
 	}
@@ -167,7 +167,7 @@ func (o *IssuerCreateRequest) GetServiceAccountOk() (*bool, bool) {
 }
 
 // HasServiceAccount returns a boolean if a field has been set.
-func (o *IssuerCreateRequest) HasServiceAccount() bool {
+func (o *AuthIssuerCreateOrUpdateRequest) HasServiceAccount() bool {
 	if o != nil && !IsNil(o.ServiceAccount) {
 		return true
 	}
@@ -176,12 +176,12 @@ func (o *IssuerCreateRequest) HasServiceAccount() bool {
 }
 
 // SetServiceAccount gets a reference to the given bool and assigns it to the ServiceAccount field.
-func (o *IssuerCreateRequest) SetServiceAccount(v bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) SetServiceAccount(v bool) {
 	o.ServiceAccount = &v
 }
 
 // GetAudiences returns the Audiences field value if set, zero value otherwise.
-func (o *IssuerCreateRequest) GetAudiences() []string {
+func (o *AuthIssuerCreateOrUpdateRequest) GetAudiences() []string {
 	if o == nil || IsNil(o.Audiences) {
 		var ret []string
 		return ret
@@ -191,7 +191,7 @@ func (o *IssuerCreateRequest) GetAudiences() []string {
 
 // GetAudiencesOk returns a tuple with the Audiences field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *IssuerCreateRequest) GetAudiencesOk() ([]string, bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) GetAudiencesOk() ([]string, bool) {
 	if o == nil || IsNil(o.Audiences) {
 		return nil, false
 	}
@@ -199,7 +199,7 @@ func (o *IssuerCreateRequest) GetAudiencesOk() ([]string, bool) {
 }
 
 // HasAudiences returns a boolean if a field has been set.
-func (o *IssuerCreateRequest) HasAudiences() bool {
+func (o *AuthIssuerCreateOrUpdateRequest) HasAudiences() bool {
 	if o != nil && !IsNil(o.Audiences) {
 		return true
 	}
@@ -208,12 +208,12 @@ func (o *IssuerCreateRequest) HasAudiences() bool {
 }
 
 // SetAudiences gets a reference to the given []string and assigns it to the Audiences field.
-func (o *IssuerCreateRequest) SetAudiences(v []string) {
+func (o *AuthIssuerCreateOrUpdateRequest) SetAudiences(v []string) {
 	o.Audiences = v
 }
 
 // GetScopes returns the Scopes field value if set, zero value otherwise.
-func (o *IssuerCreateRequest) GetScopes() []string {
+func (o *AuthIssuerCreateOrUpdateRequest) GetScopes() []string {
 	if o == nil || IsNil(o.Scopes) {
 		var ret []string
 		return ret
@@ -223,7 +223,7 @@ func (o *IssuerCreateRequest) GetScopes() []string {
 
 // GetScopesOk returns a tuple with the Scopes field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *IssuerCreateRequest) GetScopesOk() ([]string, bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) GetScopesOk() ([]string, bool) {
 	if o == nil || IsNil(o.Scopes) {
 		return nil, false
 	}
@@ -231,7 +231,7 @@ func (o *IssuerCreateRequest) GetScopesOk() ([]string, bool) {
 }
 
 // HasScopes returns a boolean if a field has been set.
-func (o *IssuerCreateRequest) HasScopes() bool {
+func (o *AuthIssuerCreateOrUpdateRequest) HasScopes() bool {
 	if o != nil && !IsNil(o.Scopes) {
 		return true
 	}
@@ -240,14 +240,14 @@ func (o *IssuerCreateRequest) HasScopes() bool {
 }
 
 // SetScopes gets a reference to the given []string and assigns it to the Scopes field.
-func (o *IssuerCreateRequest) SetScopes(v []string) {
+func (o *AuthIssuerCreateOrUpdateRequest) SetScopes(v []string) {
 	o.Scopes = v
 }
 
 // GetClaimMappings returns the ClaimMappings field value if set, zero value otherwise.
-func (o *IssuerCreateRequest) GetClaimMappings() []IssuerClaimMapping {
+func (o *AuthIssuerCreateOrUpdateRequest) GetClaimMappings() []AuthIssuerClaimMapping {
 	if o == nil || IsNil(o.ClaimMappings) {
-		var ret []IssuerClaimMapping
+		var ret []AuthIssuerClaimMapping
 		return ret
 	}
 	return o.ClaimMappings
@@ -255,7 +255,7 @@ func (o *IssuerCreateRequest) GetClaimMappings() []IssuerClaimMapping {
 
 // GetClaimMappingsOk returns a tuple with the ClaimMappings field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *IssuerCreateRequest) GetClaimMappingsOk() ([]IssuerClaimMapping, bool) {
+func (o *AuthIssuerCreateOrUpdateRequest) GetClaimMappingsOk() ([]AuthIssuerClaimMapping, bool) {
 	if o == nil || IsNil(o.ClaimMappings) {
 		return nil, false
 	}
@@ -263,7 +263,7 @@ func (o *IssuerCreateRequest) GetClaimMappingsOk() ([]IssuerClaimMapping, bool) 
 }
 
 // HasClaimMappings returns a boolean if a field has been set.
-func (o *IssuerCreateRequest) HasClaimMappings() bool {
+func (o *AuthIssuerCreateOrUpdateRequest) HasClaimMappings() bool {
 	if o != nil && !IsNil(o.ClaimMappings) {
 		return true
 	}
@@ -271,12 +271,12 @@ func (o *IssuerCreateRequest) HasClaimMappings() bool {
 	return false
 }
 
-// SetClaimMappings gets a reference to the given []IssuerClaimMapping and assigns it to the ClaimMappings field.
-func (o *IssuerCreateRequest) SetClaimMappings(v []IssuerClaimMapping) {
+// SetClaimMappings gets a reference to the given []AuthIssuerClaimMapping and assigns it to the ClaimMappings field.
+func (o *AuthIssuerCreateOrUpdateRequest) SetClaimMappings(v []AuthIssuerClaimMapping) {
 	o.ClaimMappings = v
 }
 
-func (o IssuerCreateRequest) MarshalJSON() ([]byte, error) {
+func (o AuthIssuerCreateOrUpdateRequest) MarshalJSON() ([]byte, error) {
 	toSerialize, err := o.ToMap()
 	if err != nil {
 		return []byte{}, err
@@ -284,7 +284,7 @@ func (o IssuerCreateRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(toSerialize)
 }
 
-func (o IssuerCreateRequest) ToMap() (map[string]interface{}, error) {
+func (o AuthIssuerCreateOrUpdateRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["issuerUrl"] = o.IssuerUrl
 	if !IsNil(o.JwksUrl) {
@@ -308,7 +308,7 @@ func (o IssuerCreateRequest) ToMap() (map[string]interface{}, error) {
 	return toSerialize, nil
 }
 
-func (o *IssuerCreateRequest) UnmarshalJSON(data []byte) (err error) {
+func (o *AuthIssuerCreateOrUpdateRequest) UnmarshalJSON(data []byte) (err error) {
 	// This validates that all required properties are included in the JSON object
 	// by unmarshalling the object into a generic map with string keys and checking
 	// that every required field exists as a key in the generic map.
@@ -330,53 +330,53 @@ func (o *IssuerCreateRequest) UnmarshalJSON(data []byte) (err error) {
 		}
 	}
 
-	varIssuerCreateRequest := _IssuerCreateRequest{}
+	varAuthIssuerCreateOrUpdateRequest := _AuthIssuerCreateOrUpdateRequest{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&varIssuerCreateRequest)
+	err = decoder.Decode(&varAuthIssuerCreateOrUpdateRequest)
 
 	if err != nil {
 		return err
 	}
 
-	*o = IssuerCreateRequest(varIssuerCreateRequest)
+	*o = AuthIssuerCreateOrUpdateRequest(varAuthIssuerCreateOrUpdateRequest)
 
 	return err
 }
 
-type NullableIssuerCreateRequest struct {
-	value *IssuerCreateRequest
+type NullableAuthIssuerCreateOrUpdateRequest struct {
+	value *AuthIssuerCreateOrUpdateRequest
 	isSet bool
 }
 
-func (v NullableIssuerCreateRequest) Get() *IssuerCreateRequest {
+func (v NullableAuthIssuerCreateOrUpdateRequest) Get() *AuthIssuerCreateOrUpdateRequest {
 	return v.value
 }
 
-func (v *NullableIssuerCreateRequest) Set(val *IssuerCreateRequest) {
+func (v *NullableAuthIssuerCreateOrUpdateRequest) Set(val *AuthIssuerCreateOrUpdateRequest) {
 	v.value = val
 	v.isSet = true
 }
 
-func (v NullableIssuerCreateRequest) IsSet() bool {
+func (v NullableAuthIssuerCreateOrUpdateRequest) IsSet() bool {
 	return v.isSet
 }
 
-func (v *NullableIssuerCreateRequest) Unset() {
+func (v *NullableAuthIssuerCreateOrUpdateRequest) Unset() {
 	v.value = nil
 	v.isSet = false
 }
 
-func NewNullableIssuerCreateRequest(val *IssuerCreateRequest) *NullableIssuerCreateRequest {
-	return &NullableIssuerCreateRequest{value: val, isSet: true}
+func NewNullableAuthIssuerCreateOrUpdateRequest(val *AuthIssuerCreateOrUpdateRequest) *NullableAuthIssuerCreateOrUpdateRequest {
+	return &NullableAuthIssuerCreateOrUpdateRequest{value: val, isSet: true}
 }
 
-func (v NullableIssuerCreateRequest) MarshalJSON() ([]byte, error) {
+func (v NullableAuthIssuerCreateOrUpdateRequest) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.value)
 }
 
-func (v *NullableIssuerCreateRequest) UnmarshalJSON(src []byte) error {
+func (v *NullableAuthIssuerCreateOrUpdateRequest) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }

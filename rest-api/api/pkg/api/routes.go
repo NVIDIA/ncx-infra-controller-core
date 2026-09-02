@@ -1314,31 +1314,31 @@ func NewAPIRoutes(dbSession *cdb.Session, tc tClient.Client, tnc tClient.Namespa
 	return apiRoutes
 }
 
-// NewIssuerRoutes returns the four Provider Admin issuer-management routes.
+// NewAuthIssuerRoutes returns the four Provider Admin issuer-management routes.
 // Callers must only register these when Config.DynamicIssuersEnabled reports that
 // this deployment manages issuers through the issuer table.
-func NewIssuerRoutes(dbSession *cdb.Session, cfg *config.Config) []Route {
+func NewAuthIssuerRoutes(dbSession *cdb.Session, cfg *config.Config) []Route {
 	apiPathPrefix := "/org/:orgName/" + cfg.GetAPIName()
 	return []Route{
 		{
-			Path:    apiPathPrefix + "/issuer",
+			Path:    apiPathPrefix + "/auth-issuer",
 			Method:  http.MethodPut,
-			Handler: apiHandler.NewCreateIssuerHandler(dbSession, cfg),
+			Handler: apiHandler.NewCreateOrUpdateAuthIssuerHandler(dbSession, cfg),
 		},
 		{
-			Path:    apiPathPrefix + "/issuer",
+			Path:    apiPathPrefix + "/auth-issuer",
 			Method:  http.MethodGet,
-			Handler: apiHandler.NewGetAllIssuerHandler(dbSession, cfg),
+			Handler: apiHandler.NewGetAllAuthIssuerHandler(dbSession, cfg),
 		},
 		{
-			Path:    apiPathPrefix + "/issuer/:issuerId",
+			Path:    apiPathPrefix + "/auth-issuer/:authIssuerId",
 			Method:  http.MethodGet,
-			Handler: apiHandler.NewGetIssuerHandler(dbSession, cfg),
+			Handler: apiHandler.NewGetAuthIssuerHandler(dbSession, cfg),
 		},
 		{
-			Path:    apiPathPrefix + "/issuer/:issuerId",
+			Path:    apiPathPrefix + "/auth-issuer/:authIssuerId",
 			Method:  http.MethodDelete,
-			Handler: apiHandler.NewDeleteIssuerHandler(dbSession, cfg),
+			Handler: apiHandler.NewDeleteAuthIssuerHandler(dbSession, cfg),
 		},
 	}
 }

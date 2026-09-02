@@ -55,6 +55,8 @@ type APIClient struct {
 
 	AuditAPI *AuditAPIService
 
+	AuthIssuerAPI *AuthIssuerAPIService
+
 	BMCCredentialAPI *BMCCredentialAPIService
 
 	BMCResetAPI *BMCResetAPIService
@@ -90,8 +92,6 @@ type APIClient struct {
 	InstanceAPI *InstanceAPIService
 
 	InstanceTypeAPI *InstanceTypeAPIService
-
-	IssuerAPI *IssuerAPIService
 
 	MachineAPI *MachineAPIService
 
@@ -170,6 +170,7 @@ func NewAPIClient(cfg *Configuration) *APIClient {
 	// API Services
 	c.AllocationAPI = (*AllocationAPIService)(&c.common)
 	c.AuditAPI = (*AuditAPIService)(&c.common)
+	c.AuthIssuerAPI = (*AuthIssuerAPIService)(&c.common)
 	c.BMCCredentialAPI = (*BMCCredentialAPIService)(&c.common)
 	c.BMCResetAPI = (*BMCResetAPIService)(&c.common)
 	c.CredentialRotationAPI = (*CredentialRotationAPIService)(&c.common)
@@ -188,7 +189,6 @@ func NewAPIClient(cfg *Configuration) *APIClient {
 	c.InfrastructureProviderAPI = (*InfrastructureProviderAPIService)(&c.common)
 	c.InstanceAPI = (*InstanceAPIService)(&c.common)
 	c.InstanceTypeAPI = (*InstanceTypeAPIService)(&c.common)
-	c.IssuerAPI = (*IssuerAPIService)(&c.common)
 	c.MachineAPI = (*MachineAPIService)(&c.common)
 	c.MachineValidationAPI = (*MachineValidationAPIService)(&c.common)
 	c.MeasuredBootTrustedMachineAPI = (*MeasuredBootTrustedMachineAPIService)(&c.common)

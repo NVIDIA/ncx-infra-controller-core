@@ -13,14 +13,22 @@ import (
 	"time"
 
 	"github.com/NVIDIA/infra-controller/rest-api/db/pkg/db"
+	"github.com/NVIDIA/infra-controller/rest-api/db/pkg/db/paginator"
 	"github.com/google/uuid"
 
 	stracer "github.com/NVIDIA/infra-controller/rest-api/db/pkg/tracer"
 	"github.com/uptrace/bun"
 )
 
-// IssuerRelationName is the relation name for the Issuer model
-const IssuerRelationName = "Issuer"
+const (
+	// IssuerRelationName is the relation name for the Issuer model.
+	IssuerRelationName = "Issuer"
+	// IssuerOrderByDefault is the deterministic default for paginated issuer reads.
+	IssuerOrderByDefault = "created_at"
+)
+
+// IssuerOrderByFields is the public orderBy field allowlist.
+var IssuerOrderByFields = []string{"created_at", "issuer_url"}
 
 // ClaimMapping is one entry of an issuer's claim_mappings JSONB array. It is the
 // persisted, JSON-tagged twin of auth/pkg/config.ClaimMapping (which carries only
@@ -45,8 +53,9 @@ type ClaimMapping struct {
 	IsServiceAccount bool `json:"isServiceAccount,omitempty"`
 }
 
-// IssuerCreateInput are the parameters for the Create method.
-type IssuerCreateInput struct {
+// IssuerCreateOrUpdateInput is the complete operator-managed configuration used
+// to create or replace an Issuer selected by IssuerURL.
+type IssuerCreateOrUpdateInput struct {
 	Origin         string
 	IssuerURL      string
 	JWKSUrl        string
@@ -55,14 +64,13 @@ type IssuerCreateInput struct {
 	Audiences      []string
 	Scopes         []string
 	ClaimMappings  []ClaimMapping
-	CreatedBy      *uuid.UUID
+	ActorID        *uuid.UUID
 }
 
-// ToIssuer projects a create input onto the Issuer it would produce, applying the
-// same defaults the table declares. Create builds the inserted row with it, and
-// callers that must validate an Issuer before the row exists use it to build the
-// candidate.
-func (input IssuerCreateInput) ToIssuer() Issuer {
+// ToIssuer projects a create-or-update input onto the Issuer it would produce,
+// applying the same defaults the table declares. Callers use the result both to
+// validate the candidate and to detect idempotent PUT requests.
+func (input IssuerCreateOrUpdateInput) ToIssuer() Issuer {
 	claimMappings := input.ClaimMappings
 	if claimMappings == nil {
 		claimMappings = []ClaimMapping{}
@@ -93,8 +101,8 @@ func (input IssuerCreateInput) ToIssuer() Issuer {
 		Audiences:      audiences,
 		Scopes:         scopes,
 		ClaimMappings:  claimMappings,
-		CreatedBy:      input.CreatedBy,
-		UpdatedBy:      input.CreatedBy,
+		CreatedBy:      input.ActorID,
+		UpdatedBy:      input.ActorID,
 	}
 }
 
@@ -148,9 +156,12 @@ func (i *Issuer) BeforeAppendModel(ctx context.Context, query bun.Query) error {
 
 // IssuerDAO is an interface for interacting with the Issuer model.
 type IssuerDAO interface {
-	Create(ctx context.Context, tx *db.Tx, input IssuerCreateInput) (*Issuer, error)
+	Create(ctx context.Context, tx *db.Tx, input IssuerCreateOrUpdateInput) (*Issuer, error)
+	Update(ctx context.Context, tx *db.Tx, id uuid.UUID, input IssuerCreateOrUpdateInput, clearJWKSCache bool) (*Issuer, error)
 	GetByID(ctx context.Context, tx *db.Tx, id uuid.UUID) (*Issuer, error)
+	GetByIssuerURL(ctx context.Context, tx *db.Tx, issuerURL string) (*Issuer, error)
 	GetAll(ctx context.Context, tx *db.Tx, filter IssuerFilterInput) ([]Issuer, error)
+	GetPage(ctx context.Context, tx *db.Tx, filter IssuerFilterInput, page paginator.PageInput) ([]Issuer, int, error)
 	Delete(ctx context.Context, tx *db.Tx, id uuid.UUID) error
 	UpdateJWKSCache(ctx context.Context, tx *db.Tx, id uuid.UUID, raw json.RawMessage, fetchedAt time.Time) error
 }
@@ -172,7 +183,7 @@ func NewIssuerDAO(dbSession *db.Session) IssuerDAO {
 
 // Create inserts a new Issuer. Because there are two operations (INSERT, SELECT),
 // this call must happen within a transaction.
-func (isd IssuerSQLDAO) Create(ctx context.Context, tx *db.Tx, input IssuerCreateInput) (*Issuer, error) {
+func (isd IssuerSQLDAO) Create(ctx context.Context, tx *db.Tx, input IssuerCreateOrUpdateInput) (*Issuer, error) {
 	ctx, issuerDAOSpan := isd.tracerSpan.CreateChildInCurrentContext(ctx, "IssuerDAO.Create")
 	if issuerDAOSpan != nil {
 		defer issuerDAOSpan.End()
@@ -189,6 +200,50 @@ func (isd IssuerSQLDAO) Create(ctx context.Context, tx *db.Tx, input IssuerCreat
 	return isd.GetByID(ctx, tx, i.ID)
 }
 
+// Update fully replaces the operator-managed configuration of an Issuer while
+// preserving its identity and creation metadata. Cached signing keys remain valid
+// across policy-only changes, but must be cleared when the JWKS endpoint changes.
+func (isd IssuerSQLDAO) Update(
+	ctx context.Context,
+	tx *db.Tx,
+	id uuid.UUID,
+	input IssuerCreateOrUpdateInput,
+	clearJWKSCache bool,
+) (*Issuer, error) {
+	ctx, issuerDAOSpan := isd.tracerSpan.CreateChildInCurrentContext(ctx, "IssuerDAO.Update")
+	if issuerDAOSpan != nil {
+		defer issuerDAOSpan.End()
+		isd.tracerSpan.SetAttribute(issuerDAOSpan, "issuer_id", id.String())
+	}
+
+	i := input.ToIssuer()
+	i.ID = id
+	columns := []string{
+		"origin",
+		"jwks_url",
+		"jwks_timeout",
+		"service_account",
+		"audiences",
+		"scopes",
+		"claim_mappings",
+		"updated_at",
+		"updated_by",
+	}
+	if clearJWKSCache {
+		columns = append(columns, "jwks_keys", "jwks_fetched_at")
+	}
+
+	_, err := db.GetIDB(tx, isd.dbSession).NewUpdate().Model(&i).
+		Column(columns...).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return isd.GetByID(ctx, tx, id)
+}
+
 // GetByID returns an Issuer by ID. Returns db.ErrDoesNotExist if not found.
 func (isd IssuerSQLDAO) GetByID(ctx context.Context, tx *db.Tx, id uuid.UUID) (*Issuer, error) {
 	ctx, issuerDAOSpan := isd.tracerSpan.CreateChildInCurrentContext(ctx, "IssuerDAO.GetByID")
@@ -200,7 +255,27 @@ func (isd IssuerSQLDAO) GetByID(ctx context.Context, tx *db.Tx, id uuid.UUID) (*
 	i := &Issuer{}
 	err := db.GetIDB(tx, isd.dbSession).NewSelect().Model(i).Where("iss.id = ?", id).Scan(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, db.ErrDoesNotExist
+		}
+		return nil, err
+	}
+	return i, nil
+}
+
+// GetByIssuerURL returns the live Issuer selected by its natural API key.
+// Returns db.ErrDoesNotExist if no active row has that URL.
+func (isd IssuerSQLDAO) GetByIssuerURL(ctx context.Context, tx *db.Tx, issuerURL string) (*Issuer, error) {
+	ctx, issuerDAOSpan := isd.tracerSpan.CreateChildInCurrentContext(ctx, "IssuerDAO.GetByIssuerURL")
+	if issuerDAOSpan != nil {
+		defer issuerDAOSpan.End()
+		isd.tracerSpan.SetAttribute(issuerDAOSpan, "issuer_url", issuerURL)
+	}
+
+	i := &Issuer{}
+	err := db.GetIDB(tx, isd.dbSession).NewSelect().Model(i).Where("iss.issuer_url = ?", issuerURL).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, db.ErrDoesNotExist
 		}
 		return nil, err
@@ -212,6 +287,14 @@ func (isd IssuerSQLDAO) GetByID(ctx context.Context, tx *db.Tx, id uuid.UUID) (*
 // excluded automatically. If no records match, the returned slice is empty and
 // error is nil.
 func (isd IssuerSQLDAO) GetAll(ctx context.Context, tx *db.Tx, filter IssuerFilterInput) ([]Issuer, error) {
+	limit := paginator.TotalLimit
+	issuers, _, err := isd.GetPage(ctx, tx, filter, paginator.PageInput{Limit: &limit})
+	return issuers, err
+}
+
+// GetPage returns one deterministic page of Issuers and the total matching row
+// count. Equal primary sort values are ordered by ID so page boundaries are stable.
+func (isd IssuerSQLDAO) GetPage(ctx context.Context, tx *db.Tx, filter IssuerFilterInput, page paginator.PageInput) ([]Issuer, int, error) {
 	ctx, issuerDAOSpan := isd.tracerSpan.CreateChildInCurrentContext(ctx, "IssuerDAO.GetAll")
 	if issuerDAOSpan != nil {
 		defer issuerDAOSpan.End()
@@ -224,12 +307,19 @@ func (isd IssuerSQLDAO) GetAll(ctx context.Context, tx *db.Tx, filter IssuerFilt
 		query = query.Where("iss.issuer_url = ?", *filter.IssuerURL)
 	}
 
-	query = query.Order("iss.created_at ASC")
-
-	if err := query.Scan(ctx); err != nil {
-		return nil, err
+	if page.OrderBy == nil {
+		page.OrderBy = paginator.NewDefaultOrderBy(IssuerOrderByDefault)
 	}
-	return issuers, nil
+
+	pager, err := paginator.NewPaginator(ctx, query, page.Offset, page.Limit, page.OrderBy, IssuerOrderByFields)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if err := pager.Query.Order("iss.id ASC").Limit(pager.Limit).Offset(pager.Offset).Scan(ctx); err != nil {
+		return nil, 0, err
+	}
+	return issuers, pager.Total, nil
 }
 
 // Delete soft-deletes an Issuer by ID. Idempotent: no error if the row is absent.
@@ -287,11 +377,11 @@ func (i Issuer) HasCachedKeys() bool {
 	return len(i.JWKSKeys) > 0 && i.JWKSFetchedAt != nil
 }
 
-// HasDynamicMapping reports whether any claim mapping is attribute-driven
-// (orgAttribute is set), meaning the token's own claims pick the org.
+// HasDynamicMapping reports whether any claim mapping is attribute-driven,
+// meaning the token's own claims pick identity or authorization data.
 func (i Issuer) HasDynamicMapping() bool {
 	for _, cm := range i.ClaimMappings {
-		if cm.OrgAttribute != "" {
+		if cm.OrgAttribute != "" || cm.OrgDisplayAttribute != "" || cm.RolesAttribute != "" {
 			return true
 		}
 	}

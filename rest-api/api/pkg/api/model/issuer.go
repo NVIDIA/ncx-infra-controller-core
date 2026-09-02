@@ -5,6 +5,8 @@ package model
 
 import (
 	"errors"
+	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,32 +18,32 @@ import (
 )
 
 const (
-	validationErrorIssuerDynamicClaimMapping = "dynamic claim attributes (orgAttribute/orgDisplayAttribute/rolesAttribute) are not permitted via the API; " +
+	validationErrorAuthIssuerDynamicClaimMapping = "dynamic claim attributes (orgAttribute/orgDisplayAttribute/rolesAttribute) are not permitted via the API; " +
 		"only static orgName and roles claim mappings can be created"
-	validationErrorIssuerClaimMappingOrgName = "orgName is required (only static org name claim mappings can be created via the API)"
+	validationErrorAuthIssuerClaimMappingOrgName = "orgName is required (only static org name claim mappings can be created via the API)"
 )
 
-// APIIssuerStatus reports whether an issuer can verify tokens yet. It is derived
+// APIAuthIssuerStatus reports whether an issuer can verify tokens yet. It is derived
 // from the row's cached key set on every read, not stored.
-type APIIssuerStatus string
+type APIAuthIssuerStatus string
 
 const (
-	// IssuerStatusPending means no signing keys have been fetched yet. Registration
+	// AuthIssuerStatusPending means no signing keys have been fetched yet. Registration
 	// never contacts the identity provider, so an issuer starts here and stays here
 	// while its JWKS endpoint is unreachable; tokens it signs cannot be verified
 	// until the background retry succeeds.
-	IssuerStatusPending APIIssuerStatus = "Pending"
-	// IssuerStatusReady means a key set has been fetched and tokens can be verified.
-	IssuerStatusReady APIIssuerStatus = "Ready"
+	AuthIssuerStatusPending APIAuthIssuerStatus = "Pending"
+	// AuthIssuerStatusReady means a key set has been fetched and tokens can be verified.
+	AuthIssuerStatusReady APIAuthIssuerStatus = "Ready"
 )
 
-// APIIssuer is the API representation of a runtime-managed external JWT issuer.
-type APIIssuer struct {
+// APIAuthIssuer is the API representation of a runtime-managed external JWT issuer.
+type APIAuthIssuer struct {
 	// ID is the unique identifier of the issuer.
 	ID string `json:"id"`
 	// Origin selects the token processor (kas-legacy|kas-ssa|keycloak|custom).
 	Origin string `json:"origin"`
-	// IssuerURL is the expected JWT "iss" claim. Immutable after creation.
+	// IssuerURL is the expected JWT "iss" claim and natural upsert key.
 	IssuerURL string `json:"issuerUrl"`
 	// JWKSUrl is where signing keys are fetched from.
 	JWKSUrl string `json:"jwksUrl"`
@@ -54,29 +56,105 @@ type APIIssuer struct {
 	// Scopes is the issuer-level required scope set (token needs all).
 	Scopes []string `json:"scopes"`
 	// ClaimMappings is the org/role mapping array.
-	ClaimMappings []cdbm.ClaimMapping `json:"claimMappings"`
+	ClaimMappings APIAuthIssuerClaimMappings `json:"claimMappings"`
 	// Status reports whether signing keys have been fetched. A stored key set that
 	// is present but unparseable reads as Ready; only an older or buggy writer can
 	// produce one, and hydration logs it when it refuses the blob.
-	Status APIIssuerStatus `json:"status"`
+	Status APIAuthIssuerStatus `json:"status"`
 	// JWKSFetchedAt is when the signing keys were last fetched, absent if never.
-	JWKSFetchedAt *time.Time `json:"jwksFetchedAt,omitempty"`
+	JWKSFetchedAt *time.Time `json:"jwksFetchedAt"`
 	// Created is the creation timestamp.
 	Created time.Time `json:"created"`
 	// Updated is the last-update timestamp.
 	Updated time.Time `json:"updated"`
 }
 
-// NewAPIIssuer converts a DB Issuer into its API representation.
-func NewAPIIssuer(dbIssuer *cdbm.Issuer) *APIIssuer {
-	if dbIssuer == nil {
+// APIAuthIssuerClaimMapping is the public REST representation of an issuer claim mapping.
+// Keeping this type in the API package prevents persistence-model changes from
+// silently changing the JSON contract.
+type APIAuthIssuerClaimMapping struct {
+	OrgAttribute        string   `json:"orgAttribute"`
+	OrgDisplayAttribute string   `json:"orgDisplayAttribute"`
+	OrgName             string   `json:"orgName"`
+	OrgDisplayName      string   `json:"orgDisplayName"`
+	RolesAttribute      string   `json:"rolesAttribute"`
+	Roles               []string `json:"roles"`
+	Audiences           []string `json:"audiences"`
+	IsServiceAccount    bool     `json:"isServiceAccount"`
+}
+
+// ToDBModel converts the API mapping to its persistence representation.
+func (m APIAuthIssuerClaimMapping) ToDBModel() cdbm.ClaimMapping {
+	return cdbm.ClaimMapping{
+		OrgAttribute:        m.OrgAttribute,
+		OrgDisplayAttribute: m.OrgDisplayAttribute,
+		OrgName:             m.OrgName,
+		OrgDisplayName:      m.OrgDisplayName,
+		RolesAttribute:      m.RolesAttribute,
+		Roles:               m.Roles,
+		Audiences:           m.Audiences,
+		IsServiceAccount:    m.IsServiceAccount,
+	}
+}
+
+// FromDBModel populates the API mapping from its persistence representation.
+func (m *APIAuthIssuerClaimMapping) FromDBModel(dbMapping cdbm.ClaimMapping) {
+	roles := dbMapping.Roles
+	if roles == nil {
+		roles = []string{}
+	}
+	audiences := dbMapping.Audiences
+	if audiences == nil {
+		audiences = []string{}
+	}
+
+	m.OrgAttribute = dbMapping.OrgAttribute
+	m.OrgDisplayAttribute = dbMapping.OrgDisplayAttribute
+	m.OrgName = dbMapping.OrgName
+	m.OrgDisplayName = dbMapping.OrgDisplayName
+	m.RolesAttribute = dbMapping.RolesAttribute
+	m.Roles = roles
+	m.Audiences = audiences
+	m.IsServiceAccount = dbMapping.IsServiceAccount
+}
+
+// APIAuthIssuerClaimMappings is the public REST claim-mapping collection.
+type APIAuthIssuerClaimMappings []APIAuthIssuerClaimMapping
+
+// ToDBModel converts the API mappings to their persistence representation.
+func (mappings APIAuthIssuerClaimMappings) ToDBModel() []cdbm.ClaimMapping {
+	if mappings == nil {
 		return nil
 	}
 
-	claimMappings := dbIssuer.ClaimMappings
-	if claimMappings == nil {
-		claimMappings = []cdbm.ClaimMapping{}
+	dbMappings := make([]cdbm.ClaimMapping, len(mappings))
+	for i := range mappings {
+		dbMappings[i] = mappings[i].ToDBModel()
 	}
+	return dbMappings
+}
+
+// FromDBModel populates the API mappings from their persistence representation.
+func (mappings *APIAuthIssuerClaimMappings) FromDBModel(dbMappings []cdbm.ClaimMapping) {
+	if dbMappings == nil {
+		*mappings = APIAuthIssuerClaimMappings{}
+		return
+	}
+
+	*mappings = make(APIAuthIssuerClaimMappings, len(dbMappings))
+	for i := range dbMappings {
+		(*mappings)[i].FromDBModel(dbMappings[i])
+	}
+}
+
+// FromDBModel populates the API issuer from its persistence representation.
+func (issuer *APIAuthIssuer) FromDBModel(dbIssuer *cdbm.Issuer) {
+	if dbIssuer == nil {
+		return
+	}
+
+	claimMappings := APIAuthIssuerClaimMappings{}
+	claimMappings.FromDBModel(dbIssuer.ClaimMappings)
 	audiences := dbIssuer.Audiences
 	if audiences == nil {
 		audiences = []string{}
@@ -86,12 +164,12 @@ func NewAPIIssuer(dbIssuer *cdbm.Issuer) *APIIssuer {
 		scopes = []string{}
 	}
 
-	status := IssuerStatusPending
+	status := AuthIssuerStatusPending
 	if dbIssuer.HasCachedKeys() {
-		status = IssuerStatusReady
+		status = AuthIssuerStatusReady
 	}
 
-	return &APIIssuer{
+	*issuer = APIAuthIssuer{
 		ID:             dbIssuer.ID.String(),
 		Origin:         dbIssuer.Origin,
 		IssuerURL:      dbIssuer.IssuerURL,
@@ -108,40 +186,59 @@ func NewAPIIssuer(dbIssuer *cdbm.Issuer) *APIIssuer {
 	}
 }
 
-// APIIssuerCreateRequest is the request body for creating an issuer. Origin is
-// not accepted: API-created issuers are always custom.
-type APIIssuerCreateRequest struct {
-	IssuerURL      string              `json:"issuerUrl"`
-	JWKSUrl        string              `json:"jwksUrl"`
-	JWKSTimeout    string              `json:"jwksTimeout"`
-	ServiceAccount bool                `json:"serviceAccount"`
-	Audiences      []string            `json:"audiences"`
-	Scopes         []string            `json:"scopes"`
-	ClaimMappings  []cdbm.ClaimMapping `json:"claimMappings"`
+// APIAuthIssuerCreateOrUpdateRequest is the complete request body for creating or
+// replacing an issuer selected by IssuerURL. Origin is not accepted: API-managed
+// issuers are always custom.
+type APIAuthIssuerCreateOrUpdateRequest struct {
+	IssuerURL      string                     `json:"issuerUrl"`
+	JWKSUrl        string                     `json:"jwksUrl"`
+	JWKSTimeout    string                     `json:"jwksTimeout"`
+	ServiceAccount bool                       `json:"serviceAccount"`
+	Audiences      []string                   `json:"audiences"`
+	Scopes         []string                   `json:"scopes"`
+	ClaimMappings  APIAuthIssuerClaimMappings `json:"claimMappings"`
 }
 
 // DefaultJWKSURL returns the JWKS URL, defaulting to {issuerUrl}/.well-known/jwks.json.
-func DefaultJWKSURL(issuerURL, jwksURL string) string {
-	if strings.TrimSpace(jwksURL) != "" {
-		return jwksURL
+func (r APIAuthIssuerCreateOrUpdateRequest) DefaultJWKSURL() string {
+	if strings.TrimSpace(r.JWKSUrl) != "" {
+		return r.JWKSUrl
 	}
-	return strings.TrimRight(issuerURL, "/") + "/.well-known/jwks.json"
+	return strings.TrimRight(r.IssuerURL, "/") + "/.well-known/jwks.json"
 }
 
 // validateStaticOnlyClaimMapping enforces that issuers managed through the API
 // carry only static claim mappings: a fixed orgName plus optional static roles.
 // Attribute-driven fields let the token choose its own org and roles, a
 // cross-tenant escalation risk, so those issuers must live in the ConfigMap.
-func validateStaticOnlyClaimMapping(value interface{}) error {
-	cm, ok := value.(cdbm.ClaimMapping)
+func (r APIAuthIssuerCreateOrUpdateRequest) validateStaticOnlyClaimMapping(value interface{}) error {
+	cm, ok := value.(APIAuthIssuerClaimMapping)
 	if !ok {
 		return nil
 	}
 	if cm.OrgAttribute != "" || cm.OrgDisplayAttribute != "" || cm.RolesAttribute != "" {
-		return errors.New(validationErrorIssuerDynamicClaimMapping)
+		return errors.New(validationErrorAuthIssuerDynamicClaimMapping)
 	}
 	if strings.TrimSpace(cm.OrgName) == "" {
-		return errors.New(validationErrorIssuerClaimMappingOrgName)
+		return errors.New(validationErrorAuthIssuerClaimMappingOrgName)
+	}
+	return nil
+}
+
+// validateAbsoluteHTTPURL rejects relative, malformed, and non-HTTP(S) issuer
+// endpoints while preserving the HTTP URLs used by local disconnected setups.
+func validateAbsoluteHTTPURL(value interface{}) error {
+	raw, ok := value.(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return errors.New("must be an absolute URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("scheme must be http or https, got %q", parsed.Scheme)
 	}
 	return nil
 }
@@ -150,32 +247,35 @@ func validateStaticOnlyClaimMapping(value interface{}) error {
 // (org uniqueness, single dynamic mapping, disconnected-only service accounts,
 // role validity, ...) are enforced by config.ValidateIssuersConfig over the
 // combined static+DB set in the handler.
-func (r *APIIssuerCreateRequest) Validate() error {
+func (r *APIAuthIssuerCreateOrUpdateRequest) Validate() error {
 	return validation.ValidateStruct(r,
 		validation.Field(&r.IssuerURL,
 			validation.Required.Error(validationErrorValueRequired),
-			validation.Match(util.NotAllWhitespaceRegexp).Error(validationErrorValueRequired)),
+			validation.Match(util.NotAllWhitespaceRegexp).Error(validationErrorValueRequired),
+			validation.By(validateAbsoluteHTTPURL)),
+		validation.Field(&r.JWKSUrl,
+			validation.By(validateAbsoluteHTTPURL)),
 		validation.Field(&r.ClaimMappings,
-			validation.Each(validation.By(validateStaticOnlyClaimMapping))),
+			validation.Each(validation.By(r.validateStaticOnlyClaimMapping))),
 	)
 }
 
-// ToCreateInput builds the DAO create input from the request. Origin is always
-// custom — runtime-managed issuers cannot select a privileged processor.
-func (r *APIIssuerCreateRequest) ToCreateInput(createdBy *uuid.UUID) cdbm.IssuerCreateInput {
-	claimMappings := r.ClaimMappings
+// ToCreateOrUpdateInput builds the complete DAO input from the request. Origin
+// is always custom — runtime-managed issuers cannot select a privileged processor.
+func (r *APIAuthIssuerCreateOrUpdateRequest) ToCreateOrUpdateInput(actorID *uuid.UUID) cdbm.IssuerCreateOrUpdateInput {
+	claimMappings := r.ClaimMappings.ToDBModel()
 	if claimMappings == nil {
 		claimMappings = []cdbm.ClaimMapping{}
 	}
-	return cdbm.IssuerCreateInput{
+	return cdbm.IssuerCreateOrUpdateInput{
 		Origin:         cauth.TokenOriginCustom,
 		IssuerURL:      r.IssuerURL,
-		JWKSUrl:        DefaultJWKSURL(r.IssuerURL, r.JWKSUrl),
+		JWKSUrl:        r.DefaultJWKSURL(),
 		JWKSTimeout:    r.JWKSTimeout,
 		ServiceAccount: r.ServiceAccount,
 		Audiences:      r.Audiences,
 		Scopes:         r.Scopes,
 		ClaimMappings:  claimMappings,
-		CreatedBy:      createdBy,
+		ActorID:        actorID,
 	}
 }

@@ -224,6 +224,33 @@ type RateLimiterConfig struct {
 // Maintain a global config object
 var config *Config
 
+// DynamicIssuerConfig owns the mutable state used to reconcile database-backed
+// issuers with the live authentication registry.
+type DynamicIssuerConfig struct {
+	// mu is intentionally separate from Config.RWMutex. A reload holds this mutex
+	// across a database read and registry reconciliation; sharing Config's mutex
+	// would block unrelated request-path configuration reads during that work.
+	mu sync.Mutex
+
+	// dbURLs and dbSigs hold the managed issuer URLs and their last-seen
+	// fingerprints. dbIDs maps each URL to its row ID so the refresh loop can
+	// persist a fetched key set without re-reading the table.
+	dbURLs map[string]bool
+	dbSigs map[string]string
+	dbIDs  map[string]uuid.UUID
+
+	// stopLoops cancels the issuer reload and JWKS refresh loops. Invoked by Close.
+	stopLoops context.CancelFunc
+}
+
+func newDynamicIssuerConfig() *DynamicIssuerConfig {
+	return &DynamicIssuerConfig{
+		dbURLs: map[string]bool{},
+		dbSigs: map[string]string{},
+		dbIDs:  map[string]uuid.UUID{},
+	}
+}
+
 // Config represents configurations for the service
 type Config struct {
 	sync.RWMutex
@@ -234,18 +261,7 @@ type Config struct {
 	SiteConfig        *SiteConfig
 	KeycloakConfig    *cauth.KeycloakConfig
 
-	// dbMu serializes concurrent ReloadDBIssuers calls. dbURLs and dbSigs hold the
-	// DB-managed issuer URLs and their last-seen fingerprint for change detection;
-	// dbIDs maps each to its row ID so the refresh loop can write a fetched key set
-	// back without re-reading the table.
-	dbMu   sync.Mutex
-	dbURLs map[string]bool
-	dbSigs map[string]string
-	dbIDs  map[string]uuid.UUID
-
-	// stopIssuerLoops cancels the context the issuer reload and JWKS refresh loops
-	// run on. Invoked by Close.
-	stopIssuerLoops context.CancelFunc
+	DynamicIssuerConfig *DynamicIssuerConfig
 }
 
 // NewConfig creates a new config object
@@ -255,10 +271,8 @@ func NewConfig() *Config {
 	}
 
 	c := Config{
-		v:      newViper(),
-		dbURLs: map[string]bool{},
-		dbSigs: map[string]string{},
-		dbIDs:  map[string]uuid.UUID{},
+		v:                   newViper(),
+		DynamicIssuerConfig: newDynamicIssuerConfig(),
 	}
 
 	// Set defaults
@@ -540,7 +554,7 @@ func (c *Config) GetOrInitTokenOriginConfig() *cauth.TokenOriginConfig {
 
 			// Only assign reservedOrgNames to configs with dynamic claim mappings
 			if hasDynamicMapping {
-				jwksCfg.ReservedOrgNames = reservedOrgNames
+				jwksCfg.SetReservedOrgNames(reservedOrgNames)
 			}
 
 			c.TokenOriginConfig.AddJwksConfig(jwksCfg)
@@ -1427,8 +1441,15 @@ func (c *Config) Close() {
 	if c.temporal != nil {
 		c.temporal.Close()
 	}
-	if c.stopIssuerLoops != nil {
-		c.stopIssuerLoops()
+	if c.DynamicIssuerConfig != nil {
+		state := c.DynamicIssuerConfig
+		state.mu.Lock()
+		stopLoops := state.stopLoops
+		state.stopLoops = nil
+		state.mu.Unlock()
+		if stopLoops != nil {
+			stopLoops()
+		}
 	}
 }
 
