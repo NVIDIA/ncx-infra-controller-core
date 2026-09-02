@@ -18,15 +18,21 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub mod answer;
 pub mod domain_info;
 pub mod metadata;
+pub mod question;
 pub mod resource_record;
 pub mod snapshot;
+pub mod zone;
 
+pub use answer::{Answer, AuthorityRef, LookupOutcome, LookupWire};
 pub use domain_info::DomainInfo;
 pub use metadata::DomainMetadata;
+pub use question::{Question, QuestionError};
 pub use resource_record::ResourceRecord;
 pub use snapshot::SoaSnapshot;
+pub use zone::{Fqdn, Label, NameError, Zone};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Domain {

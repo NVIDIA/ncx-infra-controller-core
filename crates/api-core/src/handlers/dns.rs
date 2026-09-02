@@ -17,7 +17,8 @@
 use ::rpc::protos;
 use db::db_read::DbReader;
 use db::dns::resource_record;
-use dns_record::{DnsResourceRecordReply, DnsResourceRecordType};
+use dns_record::{DnsResourceRecordReply, DnsResourceRecordType, SoaRecord};
+use model::dns::{Answer, AuthorityRef, Fqdn, LookupOutcome, ResourceRecord};
 use tonic::{Request, Response, Status};
 
 use crate::CarbideError;
@@ -26,44 +27,140 @@ use crate::api::{Api, log_request_data};
 #[derive(Clone, Debug)]
 struct DnsResourceRecordLookupResponse {
     record: Vec<DnsResourceRecordReply>,
+    outcome: LookupOutcome,
+    authoritative: bool,
+    authority_soa: Option<DnsResourceRecordReply>,
+}
+
+impl DnsResourceRecordLookupResponse {
+    fn new(
+        record: Vec<DnsResourceRecordReply>,
+        outcome: LookupOutcome,
+        authoritative: bool,
+        authority_soa: Option<DnsResourceRecordReply>,
+    ) -> Self {
+        Self {
+            record,
+            outcome,
+            authoritative,
+            authority_soa,
+        }
+    }
+
+    fn from_answer(answer: Answer) -> Self {
+        let wire = answer.lookup_wire();
+        match answer {
+            Answer::Records { records, .. } => Self::new(
+                records.into_iter().map(Into::into).collect(),
+                wire.outcome,
+                wire.authoritative,
+                None,
+            ),
+            Answer::NoData { authority, soa } => Self::new(
+                vec![],
+                wire.outcome,
+                wire.authoritative,
+                Some(authority_soa_reply(authority.zone(), &soa)),
+            ),
+            Answer::NxDomain { authority, soa } => Self::new(
+                vec![],
+                wire.outcome,
+                wire.authoritative,
+                Some(authority_soa_reply(authority.zone(), &soa)),
+            ),
+            Answer::NotAuthoritative | Answer::Refused | Answer::NotImplemented => {
+                Self::new(vec![], wire.outcome, wire.authoritative, None)
+            }
+        }
+    }
+}
+
+fn authority_soa_reply(zone: &Fqdn, soa: &SoaRecord) -> DnsResourceRecordReply {
+    DnsResourceRecordReply {
+        qtype: DnsResourceRecordType::SOA.to_string(),
+        qname: zone.as_str().to_string(),
+        ttl: soa.ttl.0 as u32,
+        content: soa.to_string(),
+        domain_id: None,
+        scope_mask: None,
+        auth: None,
+    }
+}
+
+/// Publish a zone SOA as a lookup `ResourceRecord` at the zone apex.
+fn soa_as_model(authority: &AuthorityRef, soa: &SoaRecord) -> ResourceRecord {
+    ResourceRecord {
+        q_type: DnsResourceRecordType::SOA.to_string(),
+        q_name: authority.zone().as_str().to_string(),
+        ttl: soa.ttl.0 as u32,
+        content: soa.to_string(),
+        domain_id: None,
+    }
+}
+
+/// A `HeldAuthority` is a DNS zone that we actually own and can answer queries for.
+///
+/// It includes the zones `AuthorityRef`, the zone's SOA record, and a boolean for whether we're asking exactly at that zone's name.
+/// If we're asking exactly at that zone's name, we can return the zone's SOA record directly,
+/// otherwise we need to look up the records in the zone.
+struct HeldAuthority {
+    authority: AuthorityRef,
+    soa: Option<SoaRecord>,
+    is_apex: bool,
+}
+
+/// Find the longest-suffix `HeldAuthority` that contains `qname`.
+///
+/// Load every `domain` from `domains` table that is not deleted. We keep the `domains` that `qname` is within — same name, or a hostname under it.
+/// If more than one matches, we take the longest name, because that’s the most specific zone. If none match, we don’t own this name.
+/// If we find a match, we return the `HeldAuthority` - the zone's `AuthorityRef` and `SoaRecord`, and a boolean for whether we're asking exactly at that zone's name.
+/// If we don't find a match, we return `None`.
+async fn find_site_authority(
+    db: impl DbReader<'_>,
+    qname: &Fqdn,
+) -> Result<Option<HeldAuthority>, Status> {
+    let domains =
+        db::dns::domain::find_by(db, db::ObjectColumnFilter::<db::dns::domain::IdColumn>::All)
+            .await
+            .map_err(CarbideError::from)?;
+
+    let closest = domains
+        .into_iter()
+        .filter_map(|domain| {
+            let zone = Fqdn::parse(&domain.name).ok()?;
+            qname.is_within(&zone).then_some((domain, zone))
+        })
+        .max_by_key(|(_, zone)| zone.as_str().len());
+
+    let Some((domain, zone)) = closest else {
+        return Ok(None);
+    };
+    Ok(Some(HeldAuthority {
+        is_apex: qname == &zone,
+        authority: AuthorityRef::Site {
+            domain: domain.id,
+            zone,
+        },
+        soa: domain.soa.map(|soa| soa.0),
+    }))
 }
 
 impl From<DnsResourceRecordLookupResponse> for protos::dns::DnsResourceRecordLookupResponse {
     fn from(value: DnsResourceRecordLookupResponse) -> Self {
         Self {
             records: value.record.into_iter().map(Into::into).collect(),
+            outcome: protos::dns::DnsLookupOutcome::from(value.outcome) as i32,
+            authority_soa: value.authority_soa.map(Into::into),
+            authoritative: value.authoritative,
         }
     }
 }
 
-async fn lookup_soa_record(
-    db: impl DbReader<'_>,
-    query_name: &str,
-) -> Result<DnsResourceRecordReply, tonic::Status> {
-    tracing::debug!(query_name, "Looking up SOA record",);
-    let record = resource_record::get_soa_record(db, query_name)
-        .await
-        .map_err(CarbideError::from)?
-        .ok_or_else(|| CarbideError::NotFoundError {
-            kind: "soa_record",
-            id: query_name.to_string(),
-        })?;
-    Ok(DnsResourceRecordReply {
-        qtype: DnsResourceRecordType::SOA.to_string(),
-        qname: query_name.to_string(),
-        ttl: record.0.ttl.0 as u32,
-        content: record.0.to_string(),
-        domain_id: None,
-        scope_mask: None,
-        auth: None,
-    })
-}
-
-/// Returns ALL record types (A, AAAA, CNAME, etc.) - PowerDNS filters to requested type
+/// Returns all published record types for a qname. The authority layer selects the requested type.
 async fn lookup_records_by_qname(
     txn: impl DbReader<'_>,
     query_name: &str,
-) -> Result<Vec<DnsResourceRecordReply>, tonic::Status> {
+) -> Result<Vec<ResourceRecord>, tonic::Status> {
     tracing::debug!(query_name, "Looking up DNS records",);
 
     // dns_records view expects trailing dots (FQDN format)
@@ -77,10 +174,7 @@ async fn lookup_records_by_qname(
         .await
         .map_err(CarbideError::from)?
         .into_iter()
-        .map(|db_record| {
-            let model_record: model::dns::ResourceRecord = db_record.into();
-            model_record.into()
-        })
+        .map(Into::into)
         .collect::<Vec<_>>();
 
     Ok(result)
@@ -93,7 +187,7 @@ async fn lookup_records_by_qname(
 async fn lookup_ptr_record(
     txn: impl DbReader<'_>,
     query_name: &str,
-) -> Result<Vec<DnsResourceRecordReply>, tonic::Status> {
+) -> Result<Vec<ResourceRecord>, tonic::Status> {
     tracing::debug!(qname = %query_name, "looking up PTR record");
 
     let qname_with_dot = if !query_name.ends_with('.') {
@@ -110,18 +204,53 @@ async fn lookup_ptr_record(
         .await
         .map_err(CarbideError::from)?
         .into_iter()
-        .map(|record| DnsResourceRecordReply {
-            qtype: DnsResourceRecordType::PTR.to_string(),
-            qname: qname_with_dot.clone(),
+        .map(|record| ResourceRecord {
+            q_type: DnsResourceRecordType::PTR.to_string(),
+            q_name: qname_with_dot.clone(),
             ttl: record.ttl as u32,
             content: record.ptr_content,
             domain_id: Some(record.domain_id.to_string()),
-            scope_mask: None,
-            auth: None,
         })
         .collect::<Vec<_>>();
 
     Ok(result)
+}
+
+async fn lookup_answer(
+    db: impl DbReader<'_> + Copy,
+    qname: &str,
+    qtype: DnsResourceRecordType,
+) -> Result<Answer, Status> {
+    let qname =
+        Fqdn::parse(qname).map_err(|error| CarbideError::InvalidArgument(error.to_string()))?;
+    let Some(held) = find_site_authority(db, &qname).await? else {
+        return Ok(Answer::NotAuthoritative);
+    };
+
+    if held.is_apex && qtype == DnsResourceRecordType::SOA {
+        let soa = held.soa.ok_or_else(|| {
+            Status::internal(format!(
+                "held DNS zone {} does not have an SOA record",
+                held.authority.zone().as_str()
+            ))
+        })?;
+        let record = soa_as_model(&held.authority, &soa);
+        return Ok(Answer::Records {
+            authority: held.authority,
+            records: vec![record],
+        });
+    }
+
+    let all_records = if qtype == DnsResourceRecordType::PTR {
+        lookup_ptr_record(db, qname.as_str()).await?
+    } else {
+        lookup_records_by_qname(db, qname.as_str()).await?
+    };
+
+    Ok(Answer::Records {
+        authority: held.authority,
+        records: all_records,
+    })
 }
 
 pub(crate) async fn get_all_domains(
@@ -214,25 +343,91 @@ pub(crate) async fn lookup_record(
         return Err(CarbideError::InvalidArgument("qname cannot be empty".to_string()).into());
     }
 
-    let resource_record: Vec<DnsResourceRecordReply> = match rrtype {
-        DnsResourceRecordType::SOA => {
-            // SOA queries: only return SOA record for the domain
-            let normalized = db::dns::normalize_domain(&qname);
-            let record = lookup_soa_record(&api.database_connection, &normalized).await?;
-            vec![record]
-        }
-        DnsResourceRecordType::PTR => {
-            // Reverse DNS: parse the arpa qname back to an address and look up by it.
-            lookup_ptr_record(&api.database_connection, &qname).await?
-        }
-        _ => {
-            // For all other types (A, AAAA, MX, CNAME, etc.):
-            lookup_records_by_qname(&api.database_connection, &qname).await?
-        }
-    };
-
-    let resp = DnsResourceRecordLookupResponse {
-        record: resource_record,
-    };
+    let answer = lookup_answer(&api.database_connection, &qname, rrtype).await?;
+    let resp = DnsResourceRecordLookupResponse::from_answer(answer);
     Ok(Response::new(resp.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use carbide_test_support::value_scenarios;
+    use carbide_uuid::domain::DomainId;
+
+    use super::*;
+
+    #[test]
+    fn lookup_response_mapping_copies_answer_metadata() {
+        let authority = site_authority();
+        value_scenarios!(
+            run = |answer: Answer| {
+                let proto = protos::dns::DnsResourceRecordLookupResponse::from(
+                    DnsResourceRecordLookupResponse::from_answer(answer),
+                );
+                (
+                    proto.outcome,
+                    proto.authoritative,
+                    proto.authority_soa.is_some(),
+                    proto.records.len(),
+                )
+            };
+            "in-zone RRset" {
+                Answer::Records {
+                    authority: authority.clone(),
+                    records: vec![model_a_record()],
+                } => (
+                    protos::dns::DnsLookupOutcome::Records as i32,
+                    true,
+                    false,
+                    1,
+                ),
+            }
+            "empty Records is Records, not NXDOMAIN" {
+                Answer::Records {
+                    authority: authority.clone(),
+                    records: vec![],
+                } => (
+                    protos::dns::DnsLookupOutcome::Records as i32,
+                    true,
+                    false,
+                    0,
+                ),
+            }
+            "NODATA carries authority SOA" {
+                Answer::NoData {
+                    authority: authority.clone(),
+                    soa: dns_record::SoaRecord::new("mysite.example.com"),
+                } => (
+                    protos::dns::DnsLookupOutcome::NoData as i32,
+                    true,
+                    true,
+                    0,
+                ),
+            }
+            "not authoritative" {
+                Answer::NotAuthoritative => (
+                    protos::dns::DnsLookupOutcome::NotAuthoritative as i32,
+                    false,
+                    false,
+                    0,
+                ),
+            }
+        );
+    }
+
+    fn site_authority() -> AuthorityRef {
+        AuthorityRef::Site {
+            domain: DomainId::from(uuid::Uuid::nil()),
+            zone: Fqdn::parse("mysite.example.com").expect("fixture zone"),
+        }
+    }
+
+    fn model_a_record() -> ResourceRecord {
+        ResourceRecord {
+            q_type: DnsResourceRecordType::A.to_string(),
+            q_name: "gpu.mysite.example.com.".to_string(),
+            ttl: 300,
+            content: "192.0.2.10".to_string(),
+            domain_id: None,
+        }
+    }
 }

@@ -14,8 +14,21 @@ message DnsResourceRecordLookupRequest {
   optional string real_remote = 6;
 }
 
+enum DnsLookupOutcome {
+  DNS_LOOKUP_OUTCOME_UNSPECIFIED = 0;
+  DNS_LOOKUP_OUTCOME_RECORDS = 1;
+  DNS_LOOKUP_OUTCOME_NO_DATA = 2;
+  DNS_LOOKUP_OUTCOME_NO_SUCH_NAME = 3;
+  DNS_LOOKUP_OUTCOME_NOT_AUTHORITATIVE = 4;
+  DNS_LOOKUP_OUTCOME_REFUSED = 5;
+  DNS_LOOKUP_OUTCOME_NOT_IMPLEMENTED = 6;
+}
+
 message DnsResourceRecordLookupResponse {
   repeated DnsResourceRecord records = 1;
+  DnsLookupOutcome outcome = 8;
+  optional DnsResourceRecord authority_soa = 9;
+  bool authoritative = 10;
 }
 
 message DnsResourceRecord {

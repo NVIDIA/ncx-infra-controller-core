@@ -18,7 +18,7 @@
 use chrono::{DateTime, Utc};
 use dns_record::SoaRecord;
 use model::dns::domain_info::DomainInfo;
-use model::dns::{Domain, DomainMetadata, NewDomain, SoaSnapshot};
+use model::dns::{Domain, DomainMetadata, LookupOutcome, NewDomain, SoaSnapshot};
 
 use crate as rpc;
 use crate::errors::RpcDataConversionError;
@@ -142,5 +142,41 @@ impl From<DomainMetadata> for rpc::protos::dns::Metadata {
         rpc::protos::dns::Metadata {
             allow_axfr_from: vec![metadata.allow_axfr_from.join(",")],
         }
+    }
+}
+
+impl From<LookupOutcome> for rpc::protos::dns::DnsLookupOutcome {
+    fn from(outcome: LookupOutcome) -> Self {
+        match outcome {
+            LookupOutcome::Records => Self::Records,
+            LookupOutcome::NoData => Self::NoData,
+            LookupOutcome::NoSuchName => Self::NoSuchName,
+            LookupOutcome::NotAuthoritative => Self::NotAuthoritative,
+            LookupOutcome::Refused => Self::Refused,
+            LookupOutcome::NotImplemented => Self::NotImplemented,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use carbide_test_support::value_scenarios;
+    use model::dns::LookupOutcome;
+
+    use super::*;
+
+    #[test]
+    fn lookup_outcome_maps_onto_proto_without_using_rcode_numbers() {
+        value_scenarios!(
+            run = |outcome: LookupOutcome| rpc::protos::dns::DnsLookupOutcome::from(outcome) as i32;
+            "wire outcomes" {
+                LookupOutcome::Records => 1,
+                LookupOutcome::NoData => 2,
+                LookupOutcome::NoSuchName => 3,
+                LookupOutcome::NotAuthoritative => 4,
+                LookupOutcome::Refused => 5,
+                LookupOutcome::NotImplemented => 6,
+            }
+        );
     }
 }

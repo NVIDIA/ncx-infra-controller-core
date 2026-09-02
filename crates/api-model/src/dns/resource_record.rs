@@ -26,6 +26,7 @@ use dns_record::DnsResourceRecordReply;
 ///
 /// This is a lightweight struct that exists solely for conversion purposes.
 /// The actual database type is `db::dns::resource_record::DbResourceRecord`.
+#[derive(Clone, Debug)]
 pub struct ResourceRecord {
     pub q_type: String,
     pub q_name: String,
