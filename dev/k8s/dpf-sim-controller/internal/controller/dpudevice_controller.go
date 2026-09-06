@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"time"
 
 	provisioningv1 "github.com/nvidia/doca-platform/api/provisioning/v1alpha1"
@@ -101,6 +103,10 @@ func (r *DPUDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	//    ownerRef set to the DPUDevice.
 	dpu, err := r.ensureDPU(ctx, &device, dpuName, nodeName)
 	if err != nil {
+		if errors.Is(err, errDPURecreating) {
+			l.Info("DPU recreated under its DPUDeployment", "dpu", dpuName)
+			return ctrl.Result{RequeueAfter: r.PhaseDwell}, nil
+		}
 		if errors.Is(err, errDeviceNotReady) {
 			// NICo has not finished populating the DPUDevice; poll until it has.
 			l.V(1).Info("DPUDevice not fully populated yet; requeueing", "device", device.Name, "reason", err.Error())
@@ -178,6 +184,12 @@ func (r *DPUDeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: r.PhaseDwell}, nil
 	}
 	dpu.Status.Phase = next
+	if next == provisioningv1.DPUReady && dpu.Spec.BFB != "" {
+		// NICo checks a Ready DPU against its DPUDeployment by comparing the
+		// basename of status.bfbFile with "<namespace>-<bfb>.bfb"; a missing
+		// or different file is treated as a failed deployment migration.
+		dpu.Status.BFBFile = r.bfbFileFor(dpu.Spec.BFB)
+	}
 	if err := r.Status().Update(ctx, dpu); err != nil {
 		if apierrors.IsConflict(err) {
 			l.V(1).Info("phase advance conflicted; retrying", "dpu", dpuName, "phase", next)
@@ -237,12 +249,163 @@ func (r *DPUDeviceReconciler) resolveNodeID(ctx context.Context, device *provisi
 // ensureDPU creates the DPU CR if absent, seeded at Initializing with the
 // machine-id label copied off the DPUDevice (required for NICo reverse lookup)
 // and a controller ownerRef to the DPUDevice for GC and Owns() re-enqueue.
+// dpuDeploymentGVK addresses DPUDeployment without importing the svc API
+// package: the pinned doca-platform module does not ship it, and the simulator
+// needs only three fields from the object.
+var dpuDeploymentGVK = schema.GroupVersionKind{
+	Group: "svc.dpu.nvidia.com", Version: "v1alpha1", Kind: "DPUDeployment",
+}
+
+// selectedDeployment mirrors the DPF DPUSet controller: a DPU belongs to the
+// DPUDeployment whose dpuNodeSelector matches its DPUNode's labels. NICo uses
+// the same rule when it resolves a node's deployment type to a DPUDeployment,
+// so the simulator must land on the same object or NICo waits for a DPU that
+// never appears. ok=false means no deployment selects the node; the legacy
+// "sim" flavor is kept and NICo's name-based lookup still works.
+type selectedDeployment struct {
+	name, flavor, bfb string
+}
+
+func (r *DPUDeviceReconciler) selectDeployment(ctx context.Context, nodeName string) (selectedDeployment, bool, error) {
+	var node provisioningv1.DPUNode
+	if err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: nodeName}, &node); err != nil {
+		return selectedDeployment{}, false, client.IgnoreNotFound(err)
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: dpuDeploymentGVK.Group, Version: dpuDeploymentGVK.Version, Kind: dpuDeploymentGVK.Kind + "List",
+	})
+	if err := r.List(ctx, list, client.InNamespace(r.Namespace)); err != nil {
+		return selectedDeployment{}, false, err
+	}
+	var matches []selectedDeployment
+	var matchIdx []int
+	for i := range list.Items {
+		d := &list.Items[i]
+		sets, _, _ := unstructured.NestedSlice(d.Object, "spec", "dpus", "dpuSets")
+		selects := false
+		for _, raw := range sets {
+			set, _ := raw.(map[string]interface{})
+			ml, _, _ := unstructured.NestedStringMap(set, "dpuNodeSelector", "matchLabels")
+			if len(ml) == 0 {
+				continue
+			}
+			all := true
+			for k, v := range ml {
+				if node.Labels[k] != v {
+					all = false
+					break
+				}
+			}
+			if all {
+				selects = true
+				break
+			}
+		}
+		if !selects {
+			continue
+		}
+		flavor, _, _ := unstructured.NestedString(d.Object, "spec", "dpus", "flavor")
+		bfb, _, _ := unstructured.NestedString(d.Object, "spec", "dpus", "bfb")
+		matches = append(matches, selectedDeployment{name: d.GetName(), flavor: flavor, bfb: bfb})
+		matchIdx = append(matchIdx, i)
+	}
+	if len(matches) != 1 {
+		return selectedDeployment{}, false, nil
+	}
+	if err := r.markDeploymentReady(ctx, &list.Items[matchIdx[0]]); err != nil {
+		return selectedDeployment{}, false, err
+	}
+	return matches[0], true, nil
+}
+
+// markDeploymentReady reports the DPUDeployment as reconciled, which is what
+// the real DPF DPUDeployment controller does once it has created the
+// deployment's DPUSets. NICo refuses to look at any DPU under a deployment
+// whose DPUSetsReconciled condition is not True at the current generation, so
+// without this every host waits forever for a DPU that is already there.
+// Idempotent: a current condition is left untouched.
+func (r *DPUDeviceReconciler) markDeploymentReady(ctx context.Context, d *unstructured.Unstructured) error {
+	gen := d.GetGeneration()
+	conds, _, _ := unstructured.NestedSlice(d.Object, "status", "conditions")
+	for _, raw := range conds {
+		c, _ := raw.(map[string]interface{})
+		if c["type"] == "DPUSetsReconciled" && c["status"] == "True" {
+			if og, ok := c["observedGeneration"]; ok {
+				if n, ok := og.(int64); ok && n == gen {
+					return nil
+				}
+			}
+		}
+	}
+	patch := d.DeepCopy()
+	now := time.Now().UTC().Format(time.RFC3339)
+	cond := map[string]interface{}{
+		"type":               "DPUSetsReconciled",
+		"status":             "True",
+		"reason":             "Simulated",
+		"message":            "dpf-sim-controller: DPUSets reconciled",
+		"lastTransitionTime": now,
+		"observedGeneration": gen,
+	}
+	_ = unstructured.SetNestedSlice(patch.Object, []interface{}{cond}, "status", "conditions")
+	_ = unstructured.SetNestedField(patch.Object, gen, "status", "observedGeneration")
+	return r.Status().Patch(ctx, patch, client.MergeFrom(d))
+}
+
+// ownedByValue is the label value NICo computes: "<namespace>_<deployment>".
+func (r *DPUDeviceReconciler) ownedByValue(dep selectedDeployment) string {
+	return r.Namespace + "_" + dep.name
+}
+
+// bfbFileFor is the installed-image filename NICo compares against a Ready
+// DPU: "<namespace>-<bfb CR name>.bfb".
+func (r *DPUDeviceReconciler) bfbFileFor(bfb string) string {
+	return r.Namespace + "-" + bfb + ".bfb"
+}
+
+// errDPURecreating reports that an existing DPU was deleted because its
+// immutable spec no longer matches the deployment selecting its node; the
+// next reconcile recreates it.
+var errDPURecreating = errors.New("DPU deleted for recreation under its DPUDeployment")
+
 func (r *DPUDeviceReconciler) ensureDPU(
 	ctx context.Context, device *provisioningv1.DPUDevice, dpuName, nodeName string,
 ) (*provisioningv1.DPU, error) {
 	var dpu provisioningv1.DPU
 	err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: dpuName}, &dpu)
 	if err == nil {
+		dep, ok, derr := r.selectDeployment(ctx, nodeName)
+		if derr != nil {
+			return nil, derr
+		}
+		if ok {
+			// spec.dpuFlavor is immutable on the CRD, so a DPU created before
+			// the deployment existed (or under the legacy "sim" flavor) cannot
+			// be patched into compliance. Real DPF deletes the source-owned DPU
+			// and lets the target deployment recreate it; do the same.
+			if dpu.Spec.DPUFlavor != dep.flavor && dpu.DeletionTimestamp == nil {
+				if err := r.Delete(ctx, &dpu); err != nil && !apierrors.IsNotFound(err) {
+					return nil, err
+				}
+				return nil, errDPURecreating
+			}
+			wantCtl := device.Labels[carbide.LabelControlledDev]
+			if dpu.Labels[carbide.LabelOwnedByDPUDeployment] != r.ownedByValue(dep) ||
+				(wantCtl != "" && dpu.Labels[carbide.LabelControlledDev] != wantCtl) {
+				patch := client.MergeFrom(dpu.DeepCopy())
+				if dpu.Labels == nil {
+					dpu.Labels = map[string]string{}
+				}
+				dpu.Labels[carbide.LabelOwnedByDPUDeployment] = r.ownedByValue(dep)
+				if wantCtl != "" {
+					dpu.Labels[carbide.LabelControlledDev] = wantCtl
+				}
+				if err := r.Patch(ctx, &dpu, patch); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return &dpu, nil
 	}
 	if !apierrors.IsNotFound(err) {
@@ -262,16 +425,29 @@ func (r *DPUDeviceReconciler) ensureDPU(
 		return nil, fmt.Errorf("%w: label %s is empty on %s", errDeviceNotReady, carbide.LabelHostBMCIP, device.Name)
 	}
 
+	flavor, bfb := "sim", "sim"
+	labels := map[string]string{
+		// MUST propagate: NICo maps DPU events back to a machine by this.
+		carbide.LabelDPUMachineID: device.Labels[carbide.LabelDPUMachineID],
+		carbide.LabelHostBMCIP:    device.Labels[carbide.LabelHostBMCIP],
+	}
+	// NICo scopes its DPU watch to controlled devices; the real DPUSet
+	// controller carries this label from the DPUDevice onto the DPU.
+	if v := device.Labels[carbide.LabelControlledDev]; v != "" {
+		labels[carbide.LabelControlledDev] = v
+	}
+	if dep, ok, derr := r.selectDeployment(ctx, nodeName); derr != nil {
+		return nil, derr
+	} else if ok {
+		flavor, bfb = dep.flavor, dep.bfb
+		labels[carbide.LabelOwnedByDPUDeployment] = r.ownedByValue(dep)
+	}
 	noEffect := true
 	dpu = provisioningv1.DPU{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dpuName,
 			Namespace: r.Namespace,
-			Labels: map[string]string{
-				// MUST propagate — NICo maps DPU events back to a machine by this.
-				carbide.LabelDPUMachineID: device.Labels[carbide.LabelDPUMachineID],
-				carbide.LabelHostBMCIP:    device.Labels[carbide.LabelHostBMCIP],
-			},
+			Labels:    labels,
 			Annotations: map[string]string{
 				carbide.AnnSimPhaseEnteredAt: time.Now().UTC().Format(time.RFC3339),
 			},
@@ -287,8 +463,8 @@ func (r *DPUDeviceReconciler) ensureDPU(
 			BMCIP: device.Labels[carbide.LabelHostBMCIP],
 			// DPUFlavor and BFB are required by the CRD but have no meaning for
 			// the simulator; use placeholder values so the CR is accepted.
-			DPUFlavor: "sim",
-			BFB:       "sim",
+			DPUFlavor: flavor,
+			BFB:       bfb,
 			// NoEffect: the simulator never touches real K8s node taints/drains.
 			// NodeEffect embeds Action; NoEffect lives on Action, not NodeEffect directly.
 			NodeEffect: provisioningv1.NodeEffect{

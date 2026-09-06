@@ -35,7 +35,17 @@ rules:
     verbs: ["get", "list", "watch", "create"]
   - apiGroups: ["provisioning.dpu.nvidia.com"]
     resources: ["dpus"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
+    # delete: a DPU whose immutable flavor no longer matches the deployment
+    # selecting its node is deleted and recreated, as the DPF DPUSet controller does.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["svc.dpu.nvidia.com"]
+    resources: ["dpudeployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["svc.dpu.nvidia.com"]
+    # The real DPUDeployment controller reports DPUSetsReconciled; NICo will not
+    # look at a deployment's DPUs until that condition is True.
+    resources: ["dpudeployments/status"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: ["provisioning.dpu.nvidia.com"]
     resources: ["dpus/status"]
     verbs: ["get", "update", "patch"]
