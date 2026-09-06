@@ -115,7 +115,7 @@ pods:
         networkStatusRunInterval: "120s"
         # Simulated networks (Phase 5/6 constants), not Service CIDR carve-outs.
         oobDhcpRelayAddress: "10.96.64.1"
-        adminDhcpRelayAddress: "10.102.0.1"
+        adminDhcpRelayAddress: "10.104.0.1"
         dpusInNicMode: false
 extraEnv:
   - name: RUST_LOG

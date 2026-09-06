@@ -117,7 +117,9 @@
 #                          Default: NicoSiteRoot1
 #   OOB_DHCP_RELAY         OOB/underlay gateway (BMC DHCP relay). Auto-detected
 #                          from nico-core site config if unset.
-#   ADMIN_DHCP_RELAY       Admin network gateway. Auto-detected if unset.
+#   ADMIN_DHCP_RELAY       Relay MAT uses for DPU OOB and switch NVOS DHCP
+#                          (MAT underlay_dhcp_relay_address). Scale mode:
+#                          simulated-underlay gateway; else auto-detected.
 #   HOST_COUNT             Override machines.dell-hosts.hostCount.
 #   DPU_PER_HOST           Override machines.dell-hosts.dpuPerHostCount.
 #   CHART_DIR              Path to the nico-machine-a-tron chart.
@@ -221,8 +223,13 @@ MAT_MODE="${MAT_MODE:-override}"
 # and must come from the Kubernetes ServiceCIDR, so it must override these.
 SCALE_OOB_PREFIX="${SCALE_OOB_PREFIX:-10.96.64.0/18}";  SCALE_OOB_GW="${SCALE_OOB_GW:-10.96.64.1}"
 SCALE_ADMIN_PREFIX="${SCALE_ADMIN_PREFIX:-10.102.0.0/18}"; SCALE_ADMIN_GW="${SCALE_ADMIN_GW:-10.102.0.1}"
+# DPU OOB and switch NVOS DHCP relay target. NICo predicts DPU oob interfaces
+# on an underlay-typed segment and rejects DHCP relayed from any other type,
+# while host admin links must stay on an admin-typed segment, so the relay
+# MAT uses for DPU/switch DHCP gets its own underlay segment.
+SCALE_UNDERLAY_PREFIX="${SCALE_UNDERLAY_PREFIX:-10.104.0.0/18}"; SCALE_UNDERLAY_GW="${SCALE_UNDERLAY_GW:-10.104.0.1}"
 SCALE_RESERVE=1
-# These four are operator-overridable and are written straight into the site
+# These six are operator-overridable and are written straight into the site
 # config and the DB, so validate them before anything consumes them: an
 # invalid prefix would insert a network segment and only fail on the separate
 # prefix insert, leaving a half-built segment that later runs skip as
@@ -245,6 +252,7 @@ PYCHK
 }
 _valid_cidr_gw "$SCALE_OOB_PREFIX"   "$SCALE_OOB_GW"   "SCALE_OOB"   || die "$(_valid_cidr_gw "$SCALE_OOB_PREFIX" "$SCALE_OOB_GW" "SCALE_OOB" 2>&1)"
 _valid_cidr_gw "$SCALE_ADMIN_PREFIX" "$SCALE_ADMIN_GW" "SCALE_ADMIN" || die "$(_valid_cidr_gw "$SCALE_ADMIN_PREFIX" "$SCALE_ADMIN_GW" "SCALE_ADMIN" 2>&1)"
+_valid_cidr_gw "$SCALE_UNDERLAY_PREFIX" "$SCALE_UNDERLAY_GW" "SCALE_UNDERLAY" || die "$(_valid_cidr_gw "$SCALE_UNDERLAY_PREFIX" "$SCALE_UNDERLAY_GW" "SCALE_UNDERLAY" 2>&1)"
 # site_explorer throughput knobs applied in scale mode (defaults 30/90/4 make
 # 4500-host ingestion take ~9h; these bring it to ~1-2h).
 # Defaults are the values measured best at BOTH scales:
@@ -737,6 +745,7 @@ elif [[ "$MAT_MODE" == "scale" ]]; then
         || die "nico-api-site-config-files configmap not found"
     _PATCH_RESULT="$(SCALE_OOB_PREFIX="$SCALE_OOB_PREFIX" SCALE_OOB_GW="$SCALE_OOB_GW" \
         SCALE_ADMIN_PREFIX="$SCALE_ADMIN_PREFIX" SCALE_ADMIN_GW="$SCALE_ADMIN_GW" \
+        SCALE_UNDERLAY_PREFIX="$SCALE_UNDERLAY_PREFIX" SCALE_UNDERLAY_GW="$SCALE_UNDERLAY_GW" \
         SCALE_RESERVE="$SCALE_RESERVE" \
         BMC_PROXY="${BMC_MOCK_FQDN}:${BMC_MOCK_PORT}" \
         KNOB_CONC="$SCALE_CONCURRENT_EXPLORATIONS" KNOB_EPR="$SCALE_EXPLORATIONS_PER_RUN" \
@@ -819,6 +828,17 @@ gateway = "{env["SCALE_ADMIN_GW"]}"
 mtu = 9000
 reserve_first = {env["SCALE_RESERVE"]}
 '''
+# DPU OOB + switch NVOS DHCP relay target (MAT underlay_dhcp_relay_address,
+# rendered as adminDhcpRelayAddress). Kept separate from the admin pool: NICo
+# predicts DPU oob interfaces on an underlay-typed segment.
+networks_underlay = f'''
+[networks.simulated-underlay]
+type = "underlay"
+prefix = "{env["SCALE_UNDERLAY_PREFIX"]}"
+gateway = "{env["SCALE_UNDERLAY_GW"]}"
+mtu = 9000
+reserve_first = {env["SCALE_RESERVE"]}
+'''
 # Machine creation allocates one loopback IP per machine from pools.lo-ip —
 # site templates ship tiny ranges (often only a few addresses) that exhaust
 # ("Resource pool lo-ip is empty"). Pools DO reconcile at startup (unlike
@@ -871,6 +891,8 @@ for k, v in cm["data"].items():
     new = "\n".join(out) + ("\n" if v_work.endswith("\n") else "")
     if "[networks.simulated-oob]" not in new:
         new = new.rstrip("\n") + "\n" + networks
+    if "[networks.simulated-underlay]" not in new:
+        new = new.rstrip("\n") + "\n" + networks_underlay
     # Sections not present in the file are emitted in the sentinel tail.
     # (A dotted subtable like [machine_state_controller.controller] is valid
     # there even when its parent table exists elsewhere.)
@@ -941,13 +963,17 @@ PY
     }
     _ensure_segment "simulated-oob"   "underlay" "$SCALE_OOB_PREFIX"   "$SCALE_OOB_GW"   "$SCALE_RESERVE"
     _ensure_segment "simulated-admin" "admin"    "$SCALE_ADMIN_PREFIX" "$SCALE_ADMIN_GW" "$SCALE_RESERVE"
+    # Underlay-typed: DPU OOB and switch NVOS DHCP relay through this gateway.
+    # NICo's site explorer predicts DPU oob interfaces with expected type
+    # underlay and rejects DHCP relayed onto a segment of any other type.
+    _ensure_segment "simulated-underlay" "underlay" "$SCALE_UNDERLAY_PREFIX" "$SCALE_UNDERLAY_GW" "$SCALE_RESERVE"
     # Backfill segments created before this script seeded svi_ip (or created
     # by config-driven bootstrap, which leaves it NULL).
     _SVI_FIXED="$(psql_q "WITH fixed AS (
             UPDATE network_prefixes np SET svi_ip = np.gateway
             FROM network_segments ns
             WHERE ns.id = np.segment_id
-              AND ns.name IN ('simulated-oob','simulated-admin')
+              AND ns.name IN ('simulated-oob','simulated-admin','simulated-underlay')
               AND np.svi_ip IS NULL
             RETURNING 1)
         SELECT count(*) FROM fixed;" || echo 0)"
@@ -1065,7 +1091,11 @@ if [[ "$MAT_MODE" == "scale" ]]; then
     # scale mode uses the SIMULATED networks added in Phase 5 — constants,
     # no live-config parsing needed.
     OOB_PREFIX="$SCALE_OOB_PREFIX";   OOB_DHCP_RELAY="${OOB_DHCP_RELAY:-$SCALE_OOB_GW}"
-    ADMIN_PREFIX="$SCALE_ADMIN_PREFIX"; ADMIN_DHCP_RELAY="${ADMIN_DHCP_RELAY:-$SCALE_ADMIN_GW}"
+    ADMIN_PREFIX="$SCALE_ADMIN_PREFIX"
+    # MAT's adminDhcpRelayAddress is its underlay relay (DPU OOB + switch NVOS
+    # DHCP); it must resolve to an underlay-typed segment, not the admin pool.
+    UNDERLAY_PREFIX="$SCALE_UNDERLAY_PREFIX"; UNDERLAY_RESERVE="$SCALE_RESERVE"
+    ADMIN_DHCP_RELAY="${ADMIN_DHCP_RELAY:-$SCALE_UNDERLAY_GW}"
     OOB_RESERVE="$SCALE_RESERVE"; ADMIN_RESERVE="$SCALE_RESERVE"
 else
     SITE_CFG="$(kubectl get cm nico-api-site-config-files -n "$NICO_SYSTEM_NS" \
@@ -1095,20 +1125,29 @@ fi
 [[ -n "$OOB_DHCP_RELAY" && -n "$ADMIN_DHCP_RELAY" ]] \
     || die "could not resolve DHCP relays; set OOB_DHCP_RELAY and ADMIN_DHCP_RELAY"
 ok "OOB:   relay ${OOB_DHCP_RELAY}   prefix ${OOB_PREFIX:-unknown}"
-ok "admin: relay ${ADMIN_DHCP_RELAY}   prefix ${ADMIN_PREFIX:-unknown}"
+ok "admin: pool ${ADMIN_PREFIX:-unknown}   DPU/switch DHCP relay ${ADMIN_DHCP_RELAY} (underlay pool ${UNDERLAY_PREFIX:-n/a})"
 _usable() { local m="${1##*/}" r="$2"; local u=$(( (1 << (32 - m)) - r - 1 )); (( u < 0 )) && u=0; echo "$u"; }
 # Demand per pool (measured live):
 #   OOB   = hostCount*(1 + dpuPerHost)   — one BMC IP per host and per DPU
 #   admin = hostCount*(dpuPerHost + 1)   — one host-PF IP per DPU at DHCP time,
 #           PLUS one admin IP per host allocated by machine creation (creation
 #           fails with "No IP addresses left in prefix <admin>" without it)
+#   underlay = hostCount*dpuPerHost + switchCount - one DPU OOB IP per DPU plus
+#           one NVOS IP per switch (scale mode; relayed via adminDhcpRelayAddress)
 if [[ "${OOB_PREFIX:-}" == */* && "${ADMIN_PREFIX:-}" == */* ]]; then
     OOB_USABLE="$(_usable "$OOB_PREFIX" "$OOB_RESERVE")"; ADMIN_USABLE="$(_usable "$ADMIN_PREFIX" "$ADMIN_RESERVE")"
     # max hosts each pool supports, then take the min
     FIT_OOB=$(( OOB_USABLE / (1 + DPU_PER_HOST) ))
     FIT_ADMIN=$(( ADMIN_USABLE / (DPU_PER_HOST + 1) ))
     FIT=$(( FIT_OOB < FIT_ADMIN ? FIT_OOB : FIT_ADMIN ))
-    info "pool fit: OOB ${OOB_PREFIX} ≈${OOB_USABLE} usable → ≤${FIT_OOB} hosts; admin ${ADMIN_PREFIX} ≈${ADMIN_USABLE} usable → ≤${FIT_ADMIN} hosts"
+    FIT_NOTE=""
+    if [[ "${UNDERLAY_PREFIX:-}" == */* && "${DPU_PER_HOST:-0}" -gt 0 ]]; then
+        UNDERLAY_USABLE="$(_usable "$UNDERLAY_PREFIX" "${UNDERLAY_RESERVE:-$ADMIN_RESERVE}")"
+        FIT_UNDERLAY=$(( UNDERLAY_USABLE / DPU_PER_HOST ))   # switch NVOS demand not counted
+        FIT=$(( FIT < FIT_UNDERLAY ? FIT : FIT_UNDERLAY ))
+        FIT_NOTE="; underlay ${UNDERLAY_PREFIX} ≈${UNDERLAY_USABLE} usable → ≤${FIT_UNDERLAY} hosts"
+    fi
+    info "pool fit: OOB ${OOB_PREFIX} ≈${OOB_USABLE} usable → ≤${FIT_OOB} hosts; admin ${ADMIN_PREFIX} ≈${ADMIN_USABLE} usable → ≤${FIT_ADMIN} hosts${FIT_NOTE}"
     if [[ "${MAT_MULTIPOD:-0}" == "1" ]]; then
         # Multipod: HOST_COUNT/DPU_PER_HOST are only the FIRST pod group, so
         # the single-pool clamp above is meaningless here. Two cases matter:

@@ -295,7 +295,8 @@ hwMacAddressRanges:
 ##   - hostCount: Number of hosts (required)
 ##   - dpuPerHostCount: DPUs per host (default: 0)
 ##   - oobDhcpRelayAddress: OOB network gateway
-##   - adminDhcpRelayAddress: Admin network gateway
+##   - adminDhcpRelayAddress: DHCP relay for DPU OOB and switch NVOS traffic
+##     (an underlay segment gateway; MAT reads it as underlay_dhcp_relay_address)
 ##
 ## All other settings inherit from machineDefaults above.
 ##

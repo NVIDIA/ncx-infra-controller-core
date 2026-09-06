@@ -224,7 +224,7 @@ Copy `helm-prereqs/values/machine-a-tron.yaml` and fill in the site-specific val
 |-------|-------------|
 | `image.tag` | Tag produced by [building the container image](#building-the-container-image) (e.g. `8c35783af-amd64`) |
 | `machines.dell-hosts.oobDhcpRelayAddress` | Gateway of the OOB/underlay network from nico-core site config |
-| `machines.dell-hosts.adminDhcpRelayAddress` | Gateway of the admin network from nico-core site config |
+| `machines.dell-hosts.adminDhcpRelayAddress` | Gateway of the underlay segment that serves DPU OOB and switch NVOS DHCP (MAT reads it as `underlay_dhcp_relay_address`) |
 | `machines.dell-hosts.hostCount` | Must not exceed available OOB DHCP addresses (`hostCount + hostCount×dpuPerHostCount`) |
 
 ### SPIFFE URI override
