@@ -1629,6 +1629,7 @@ dependencies = [
  "carbide-secrets",
  "carbide-sqlx-testing",
  "carbide-test-support",
+ "carbide-uuid",
  "chrono",
  "libredfish",
  "mac_address",
@@ -1645,6 +1646,7 @@ version = "0.0.0"
 dependencies = [
  "carbide-dhcp",
  "carbide-dhcp-common",
+ "carbide-dhcpv6",
  "carbide-instrument",
  "carbide-rpc",
  "carbide-test-support",
@@ -1688,6 +1690,7 @@ name = "carbide-dhcp-server"
 version = "0.1.0"
 dependencies = [
  "carbide-dhcp-common",
+ "carbide-dhcpv6",
  "carbide-instrument",
  "carbide-rpc",
  "carbide-rpc-utils",
@@ -1698,7 +1701,11 @@ dependencies = [
  "clap",
  "dhcproto",
  "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "ipnetwork",
+ "libc",
  "logfmt",
  "lru",
  "metrics-endpoint",
@@ -1715,6 +1722,16 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "carbide-dhcpv6"
+version = "0.1.0"
+dependencies = [
+ "carbide-test-support",
+ "dhcproto",
+ "mac_address",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1820,6 +1837,7 @@ dependencies = [
  "carbide-uuid",
  "clap",
  "dashmap",
+ "derive_builder",
  "eyre",
  "futures",
  "hex",
@@ -3280,6 +3298,7 @@ name = "carbide-ssh-console-mock-api-server"
 version = "0.0.1"
 dependencies = [
  "carbide-api-test-helper",
+ "carbide-proto-compiler",
  "carbide-rpc",
  "carbide-uuid",
  "carbide-version",
@@ -6751,7 +6770,7 @@ dependencies = [
 [[package]]
 name = "libredfish"
 version = "0.0.0"
-source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.47.4#5b3bfb1cfe06c4a36fc93d0cf1b4c0ab9288c633"
+source = "git+https://github.com/NVIDIA/libredfish.git?tag=v0.47.5#569bc602d2aa03b3f2ea4c9e006d593a05c7b1dc"
 dependencies = [
  "chrono",
  "clap",

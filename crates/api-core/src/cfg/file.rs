@@ -1734,8 +1734,16 @@ pub struct DpfConfig {
     #[serde(default)]
     pub enabled: bool,
     /// Opts the DPF namespace into deployment-scoped DPUServiceInterfaces.
-    /// Changing modes requires operators to remove old-mode NICo resources and
-    /// re-ingest DPUs; NICo neither detects nor deletes those resources.
+    /// BF3 sites (including BF3 GB200) and generic BF4 use the default
+    /// unscoped mode; BF4 Astra requires this to be enabled. When enabled, initialization
+    /// removes legacy unscoped ServiceInterfaces before creating
+    /// scoped replacements. If cleanup remains incomplete for ten minutes, NICo logs an error and
+    /// continues waiting. If an operator manually completes unscoped cleanup, NICo creates scoped
+    /// replacements. The setting is read only at startup. To return to unscoped interfaces, stop
+    /// NICo, delete scoped ServiceInterfaces and wait for their deletion, then restart with this
+    /// set to false.
+    /// DPF initialization rejects disabling this value while scoped
+    /// ServiceInterfaces exist.
     #[serde(default)]
     pub deployment_scoped_service_interfaces: bool,
     /// SF capacity reserved beyond configured NICo-managed service endpoints.
@@ -3169,6 +3177,14 @@ impl CarbideConfig {
             }
             validate_tool_url(&tool.name, &tool.url)?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn validate_service_vpc_slots(&self) -> eyre::Result<()> {
+        eyre::ensure!(
+            self.dpu_config.service_vpc_slot_count == 0 || self.site_global_vpc_vni.is_none(),
+            "dpu_config.service_vpc_slot_count requires site_global_vpc_vni to be unset because service VPCs require distinct HBN VRFs"
+        );
         Ok(())
     }
 
@@ -5562,6 +5578,26 @@ path = "credentials.yaml"
             url: BAD_URL.to_string(),
         }];
         assert!(config.validate_web_ui_sidebar_tools().is_err());
+    }
+
+    #[test]
+    fn validate_service_vpc_slots_rejects_site_global_vpc_vni() {
+        let mut config: CarbideConfig = Figment::new()
+            .merge(Toml::file(format!("{TEST_DATA_DIR}/min_config.toml")))
+            .extract()
+            .unwrap();
+
+        config.dpu_config.service_vpc_slot_count = 1;
+        assert!(config.validate_service_vpc_slots().is_ok());
+
+        config.site_global_vpc_vni = Some(6_000);
+        assert!(
+            config
+                .validate_service_vpc_slots()
+                .unwrap_err()
+                .to_string()
+                .contains("requires site_global_vpc_vni to be unset")
+        );
     }
 
     #[test]
