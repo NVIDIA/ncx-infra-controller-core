@@ -129,6 +129,9 @@ impl LibvirtCallbacks {
         };
         if restore_boot {
             self.restore_persistent_boot_order()?;
+            if let Some(system_state) = self.system_state.get().and_then(Weak::upgrade) {
+                system_state.on_boot_completed();
+            }
         }
         Ok(())
     }
@@ -976,6 +979,31 @@ esac
         assert!(!active_xml.contains("<boot dev=\"network\"/>"));
         let defined_xml = fs::read_to_string(&defined_xml_path).unwrap();
         assert!(defined_xml.contains("<boot dev=\"network\"/><boot dev=\"hd\"/>"));
+
+        // A one-shot override is consumed by the successful start. A second
+        // cold start without another PATCH must use the persistent selection.
+        let status = request(
+            &router,
+            Method::POST,
+            &format!("{system}/Actions/ComputerSystem.Reset"),
+            json!({"ResetType": "PowerCycle"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let active_xml = fs::read_to_string(&active_xml_path).unwrap();
+        assert!(
+            active_xml.contains("<boot dev=\"network\"/><boot dev=\"hd\"/>"),
+            "one-shot disk override was reapplied: {active_xml}"
+        );
+        assert_eq!(
+            state
+                .system_state
+                .controlled_system()
+                .unwrap()
+                .boot_source_override()["BootSourceOverrideEnabled"],
+            "Disabled"
+        );
+
         let status = request(
             &router,
             Method::POST,
