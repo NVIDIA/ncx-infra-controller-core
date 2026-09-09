@@ -27,6 +27,7 @@ import (
 	echo "github.com/labstack/echo/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	temporalClient "go.temporal.io/sdk/client"
 	tmocks "go.temporal.io/sdk/mocks"
 )
@@ -54,6 +55,9 @@ func Test_InitAPIServer(t *testing.T) {
 
 	dbSession := cdbu.GetTestDBSession(t, true)
 	defer dbSession.Close()
+	// Registered after the session so it runs first: the enabled case starts the
+	// issuer reload and JWKS loops, which must stop before the DB session closes.
+	defer cfg.Close()
 
 	tc := &tmocks.Client{}
 	tnc := &tmocks.NamespaceClient{}
@@ -64,14 +68,35 @@ func Test_InitAPIServer(t *testing.T) {
 
 	t.Setenv("SENTRY_DSN", "https://bfe69b59461e44059a533274a6393155@glitchtip.test.com/3")
 
+	// Startup panics when no configured issuer's key set can be fetched, so the
+	// fixtures below point at a local IdP rather than a real one.
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"keys":[{"kty":"RSA","use":"sig","kid":"test-key","alg":"RS256","n":"test-n-value","e":"AQAB"}]}`))
+	}))
+	defer idp.Close()
+
+	customIssuer := []config.IssuerConfig{{
+		Origin: "custom",
+		Issuer: idp.URL,
+		JWKS:   idp.URL + "/jwks",
+	}}
+	privilegedIssuer := []config.IssuerConfig{{
+		Origin: "kas-legacy",
+		JWKS:   idp.URL + "/jwks",
+	}}
+
 	tests := []struct {
-		name            string
-		keycloakEnabled bool
-		args            args
+		name               string
+		keycloakEnabled    bool
+		staticIssuers      []config.IssuerConfig
+		wantDynamicIssuers bool
+		args               args
 	}{
 		{
-			name:            "dynamic issuer routes enabled",
-			keycloakEnabled: false,
+			name:               "dynamic issuer routes enabled",
+			keycloakEnabled:    false,
+			staticIssuers:      customIssuer,
+			wantDynamicIssuers: true,
 			args: args{
 				cfg:       cfg,
 				dbSession: dbSession,
@@ -81,8 +106,23 @@ func Test_InitAPIServer(t *testing.T) {
 			},
 		},
 		{
-			name:            "dynamic issuer routes disabled by Keycloak",
-			keycloakEnabled: true,
+			name:               "dynamic issuer routes disabled by Keycloak",
+			keycloakEnabled:    true,
+			staticIssuers:      customIssuer,
+			wantDynamicIssuers: false,
+			args: args{
+				cfg:       cfg,
+				dbSession: dbSession,
+				tc:        tc,
+				tnc:       tnc,
+				scp:       scp,
+			},
+		},
+		{
+			name:               "dynamic issuer routes disabled by a privileged static origin",
+			keycloakEnabled:    false,
+			staticIssuers:      privilegedIssuer,
+			wantDynamicIssuers: false,
 			args: args{
 				cfg:       cfg,
 				dbSession: dbSession,
@@ -95,8 +135,15 @@ func Test_InitAPIServer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.args.cfg.SetKeycloakEnabled(tt.keycloakEnabled)
+			config.SetStaticIssuersForTest(t, tt.args.cfg, tt.staticIssuers)
+			// Without this the route assertions below can pass vacuously: a fixture
+			// that never reaches the state under test makes every expectation
+			// "the route is absent", which a regression also satisfies.
+			require.Equal(t, tt.wantDynamicIssuers, tt.args.cfg.DynamicIssuersEnabled(),
+				"fixture must reach the policy state the routes are being checked against")
+
 			e := InitAPIServer(tt.args.cfg, tt.args.dbSession, tt.args.tc, tt.args.tnc, tt.args.scp, nil)
-			assertIssuerRoutesMatchPolicy(t, e, tt.args.cfg)
+			assertIssuerRoutesMatchPolicy(t, e, tt.args.cfg, tt.wantDynamicIssuers)
 		})
 	}
 	cfg.SetKeycloakEnabled(false)
@@ -105,13 +152,15 @@ func Test_InitAPIServer(t *testing.T) {
 // assertIssuerRoutesMatchPolicy checks the route table the server actually built
 // against the single condition that is supposed to govern it. The issuer routes
 // and the DB-backed issuer machinery are gated together, so the registered
-// surface is the observable half of that decision.
-func assertIssuerRoutesMatchPolicy(t *testing.T, e *echo.Echo, cfg *config.Config) {
+// surface is the observable half of that decision. wantRegistered is passed in
+// rather than read from cfg, because deriving the expectation from the predicate
+// under test makes a broken predicate agree with itself.
+func assertIssuerRoutesMatchPolicy(t *testing.T, e *echo.Echo, cfg *config.Config, wantRegistered bool) {
 	t.Helper()
 
 	prefix := "/" + cfg.GetAPIRouteVersion() + "/org/:orgName/" + cfg.GetAPIName()
 	issuerRoutes := []string{
-		http.MethodPost + " " + prefix + "/auth-issuer",
+		http.MethodPut + " " + prefix + "/auth-issuer",
 		http.MethodGet + " " + prefix + "/auth-issuer",
 		http.MethodGet + " " + prefix + "/auth-issuer/:authIssuerId",
 		http.MethodDelete + " " + prefix + "/auth-issuer/:authIssuerId",
@@ -123,7 +172,7 @@ func assertIssuerRoutesMatchPolicy(t *testing.T, e *echo.Echo, cfg *config.Confi
 	}
 
 	for _, route := range issuerRoutes {
-		assert.Equal(t, cfg.DynamicIssuersEnabled(), registered[route], route)
+		assert.Equal(t, wantRegistered, registered[route], route)
 	}
 }
 
