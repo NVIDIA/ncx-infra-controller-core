@@ -2,7 +2,7 @@
 
 NICo does not maintain its own user directory. Identity, org membership, and role assignments are all managed in the upstream identity provider. The REST API reads role claims from the authentication token on every request. Adding or removing a user is done in the identity provider, not through nicocli.
 
-NICo accepts tokens from any OIDC-compatible IdP. The bundled dev Keycloak (deployed by `setup.sh` and documented in the [Quick Start Guide](../getting-started/quick-start.md)) is the recommended starting point and the reference implementation for IdP wiring -- you can use it as-is for evaluation, or model your production IdP setup after it. Configure additional or replacement IdPs via the `issuers` block in `nico-rest-api`'s config; see [Authentication and Authorization](https://docs.nvidia.com/infra-controller/rest-api-reference/authentication-and-authorization) for the configuration surface, the claim mappings NICo expects (org name, display name, role claim), and the validation rules that apply before rollout.
+NICo accepts tokens from any OIDC-compatible IdP. The bundled dev Keycloak (deployed by `setup.sh` and documented in the [Quick Start Guide](../getting-started/quick-start.md)) is the recommended starting point and the reference implementation for IdP wiring -- you can use it as-is for evaluation, or model your production IdP setup after it. Configure additional or replacement IdPs via the `issuers` block in `nico-rest-api`'s config; refer to [Authentication and Authorization](/rest-api-reference/authentication-and-authorization) for the configuration surface, the claim mappings NICo expects (org name, display name, role claim), and the validation rules that apply before rollout.
 
 ## Roles
 

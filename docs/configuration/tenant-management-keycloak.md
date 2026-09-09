@@ -66,7 +66,7 @@ Tenant will authenticate as a service account rather than as a user.
 If `keycloak.enabled` is `false`, your deployment uses the `issuers` block instead and
 this page does not apply. Onboarding a Tenant is then a configuration change rather than
 realm administration, and the recipe is the "Provider with Multiple Tenant IdPs" example in
-[Authentication and Authorization](https://docs.nvidia.com/infra-controller/rest-api-reference/authentication-and-authorization).
+[Authentication and Authorization](/rest-api-reference/authentication-and-authorization).
 
 That page is also the authoritative field reference for the `keycloak` block itself, so use
 it when you need the meaning of a setting rather than the procedure for using it.
@@ -154,20 +154,28 @@ Choose one of the two options below.
 bundled `ncx-service` client uses. Requires `serviceAccount: true` in the NICo config.
 
 Pass the client definition on stdin rather than putting the secret in `-s secret=...`,
-which would place it in shell history, process listings, and any terminal capture:
+which would place it in shell history, process listings, and any terminal capture. Build
+the JSON with an encoder rather than interpolating the secret into a string, so a secret
+containing a quote, backslash, or newline cannot corrupt the payload:
 
 ```bash
-/opt/keycloak/bin/kcadm.sh create clients -r nico -f - <<EOF
-{
-  "clientId": "acme-corp-service",
-  "enabled": true,
-  "publicClient": false,
-  "serviceAccountsEnabled": true,
-  "standardFlowEnabled": false,
-  "directAccessGrantsEnabled": false,
-  "secret": "$(cat /path/to/client-secret)"
-}
-EOF
+CLIENT_SECRET_FILE=/path/to/client-secret
+
+python3 -c '
+import json, sys
+with open(sys.argv[1]) as f:
+    secret = f.read().rstrip("\n")
+json.dump({
+    "clientId": "acme-corp-service",
+    "enabled": True,
+    "publicClient": False,
+    "serviceAccountsEnabled": True,
+    "standardFlowEnabled": False,
+    "directAccessGrantsEnabled": False,
+    "secret": secret,
+}, sys.stdout)
+' "$CLIENT_SECRET_FILE" \
+  | /opt/keycloak/bin/kcadm.sh create clients -r nico -f -
 
 /opt/keycloak/bin/kcadm.sh add-roles -r nico \
   --uusername service-account-acme-corp-service \
@@ -235,7 +243,7 @@ workstation, so interactive sign-in from outside the cluster needs one of:
 
 - Set `externalBaseURL` to an externally resolvable hostname and expose Keycloak through an
   ingress, restricted to the endpoints listed in
-  [Authentication and Authorization](https://docs.nvidia.com/infra-controller/rest-api-reference/authentication-and-authorization).
+  [Authentication and Authorization](/rest-api-reference/authentication-and-authorization).
   This is the production answer.
 - Or, for evaluation only, port-forward Keycloak and map the in-cluster name to `127.0.0.1`
   in `/etc/hosts`, so the issuer in the minted token still matches.
@@ -249,14 +257,24 @@ Request a token from inside the cluster. For Option A:
 
 The request body carries the client secret, so pass it to `curl` on stdin with `-K -`
 rather than in `-d`. In `-d` it would appear in the pod spec, in Kubernetes audit
-records, and in your shell history.
+records, and in your shell history. Form-encode the secret as well, because a raw `&`,
+`=`, `+`, or `%` would otherwise change the value that reaches Keycloak.
 
 ```bash
 CLIENT_SECRET_FILE=/path/to/client-secret
 
 TENANT_TOKEN=$(
-  printf 'data = "grant_type=client_credentials&client_id=acme-corp-service&client_secret=%s"\n' \
-    "$(cat "$CLIENT_SECRET_FILE")" \
+  python3 -c '
+import sys, urllib.parse
+with open(sys.argv[1]) as f:
+    secret = f.read().rstrip("\n")
+body = urllib.parse.urlencode({
+    "grant_type": "client_credentials",
+    "client_id": "acme-corp-service",
+    "client_secret": secret,
+})
+print("data = \"%s\"" % body)
+' "$CLIENT_SECRET_FILE" \
   | kubectl run -i --rm --restart=Never --image=curlimages/curl "curl-tenant-$$" \
       -n nico-rest --quiet -- \
       -sf -K - "http://keycloak.nico-rest:8082/realms/nico/protocol/openid-connect/token" \
@@ -264,9 +282,9 @@ TENANT_TOKEN=$(
 )
 ```
 
-`printf` is a shell builtin, so the expanded secret never becomes a separate process's
-arguments. `curl` sets `Content-Type: application/x-www-form-urlencoded` for `data`
-itself, and `data` implies `POST`.
+The secret reaches `curl` on stdin, so it never becomes a process argument. `curl` sets
+`Content-Type: application/x-www-form-urlencoded` for `data` itself, and `data` implies
+`POST`.
 
 `helm-prereqs/keycloak/get-token.sh` does the same thing for the bundled `ncx-service`
 client and is a working reference for the pattern.
@@ -392,7 +410,7 @@ authentication inactive, so confirm Keycloak is ready first.
 ## Related Documentation
 
 - [Tenant Management](tenant_management.md), the NICo-side Day 1 workflow with `nicocli`
-- [Authentication and Authorization](https://docs.nvidia.com/infra-controller/rest-api-reference/authentication-and-authorization),
+- [Authentication and Authorization](/rest-api-reference/authentication-and-authorization),
   the Day 0 auth configuration reference for both the `keycloak` and `issuers` modes
 - [Organization & Permissions](org-permissions.md), the role model and what each role grants
 - [Quick Start Guide](../getting-started/quick-start.md), deployment and token acquisition
