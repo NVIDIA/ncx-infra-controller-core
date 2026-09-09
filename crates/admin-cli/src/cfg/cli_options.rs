@@ -142,7 +142,11 @@ pub(crate) struct CliOptions {
         default_value_t = DEFAULT_INTERNAL_PAGE_SIZE,
         value_parser = parse_internal_page_size
     )]
-    #[clap(help = "For commands that internally retrieve data with paging, use this page size.")]
+    #[clap(
+        help = "For commands that internally retrieve data with paging, use this page size (1-100). \
+                Smaller pages keep each gRPC reply under the client's 4 MiB receive limit, which \
+                TONIC_MAX_DECODING_MESSAGE_SIZE can raise."
+    )]
     pub(crate) internal_page_size: usize,
 
     #[clap(
