@@ -47,7 +47,7 @@ func (s *notifyingTaskStore) UpdateTaskStatus(
 		return nil
 	}
 
-	tasks, err := s.Store.GetTasks(ctx, []uuid.UUID{u.ID})
+	tasks, err := s.GetTasks(ctx, []uuid.UUID{u.ID})
 	if err != nil || len(tasks) == 0 {
 		log.Warn().
 			Str("task_id", u.ID.String()).

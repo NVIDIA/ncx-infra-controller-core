@@ -12,14 +12,176 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dbquery "github.com/NVIDIA/infra-controller/rest-api/flow/internal/db/query"
+	inventorystore "github.com/NVIDIA/infra-controller/rest-api/flow/internal/inventory/store"
 	"github.com/NVIDIA/infra-controller/rest-api/flow/internal/operation"
 	taskcommon "github.com/NVIDIA/infra-controller/rest-api/flow/internal/task/common"
 	"github.com/NVIDIA/infra-controller/rest-api/flow/internal/task/conflict"
 	"github.com/NVIDIA/infra-controller/rest-api/flow/internal/task/operationrules"
 	"github.com/NVIDIA/infra-controller/rest-api/flow/internal/task/operations"
 	taskdef "github.com/NVIDIA/infra-controller/rest-api/flow/internal/task/task"
+	identifier "github.com/NVIDIA/infra-controller/rest-api/flow/pkg/common/Identifier"
 	"github.com/NVIDIA/infra-controller/rest-api/flow/pkg/common/devicetypes"
+	"github.com/NVIDIA/infra-controller/rest-api/flow/pkg/inventoryobjects/rack"
 )
+
+type submitTaskInventory struct {
+	inventorystore.Store
+	rack *rack.Rack
+}
+
+func (s *submitTaskInventory) GetRackByIdentifier(
+	_ context.Context,
+	_ identifier.Identifier,
+	_ bool,
+) (*rack.Rack, error) {
+	return s.rack, nil
+}
+
+func TestManagerImpl_SubmitTask(t *testing.T) {
+	rackID := uuid.New()
+	resolvedRack := newTestRack(rackID, "rack-1")
+	unlinkedID := uuid.New()
+	unlinked := newTestComponent(
+		unlinkedID,
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	unlinked.ComponentID = ""
+	resolvedRack.AddComponent(unlinked)
+
+	store := &managerTaskStore{}
+	manager := &ManagerImpl{
+		inventoryStore: &submitTaskInventory{rack: resolvedRack},
+		taskStore:      store,
+	}
+
+	_, err := manager.SubmitTask(context.Background(), &operation.Request{
+		Operation: testPowerControlOperation(t),
+		TargetSpec: operation.TargetSpec{
+			Racks: []operation.RackTarget{{
+				Identifier: identifier.Identifier{ID: rackID},
+			}},
+		},
+	})
+
+	require.ErrorContains(t, err, "selected components not linked to actual inventory (1)")
+	require.ErrorContains(t, err, unlinkedID.String())
+	require.Zero(t, store.createTaskCalls)
+}
+
+func TestManagerImpl_ExecuteTask(t *testing.T) {
+	rackID := uuid.New()
+	resolvedRack := newTestRack(rackID, "rack-1")
+	unlinked := newTestComponent(
+		uuid.New(),
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	unlinked.ComponentID = ""
+	resolvedRack.AddComponent(unlinked)
+
+	manager := &ManagerImpl{}
+	resp, err := manager.executeTask(
+		context.Background(),
+		&taskdef.Task{
+			ID:        uuid.New(),
+			RackID:    rackID,
+			Operation: testPowerControlOperation(t),
+		},
+		resolvedRack,
+		nil,
+	)
+
+	require.Nil(t, resp)
+	require.ErrorContains(t, err, "selected components not linked to actual inventory (1)")
+}
+
+func TestValidateResolvedRackTargets(t *testing.T) {
+	tests := []struct {
+		name         string
+		op           operation.Wrapper
+		componentIDs []string
+		wantError    string
+	}{
+		{
+			name: "linked components allow a disruptive operation",
+			op: operation.Wrapper{
+				Type: taskcommon.TaskTypePowerControl,
+				Code: taskcommon.OpCodePowerControlPowerOff,
+			},
+			componentIDs: []string{"machine-1", "machine-2"},
+		},
+		{
+			name: "unlinked component rejects a disruptive operation",
+			op: operation.Wrapper{
+				Type: taskcommon.TaskTypeFirmwareControl,
+				Code: taskcommon.OpCodeFirmwareControlUpgrade,
+			},
+			componentIDs: []string{"machine-1", ""},
+			wantError:    "selected components not linked to actual inventory (1)",
+		},
+		{
+			name: "ingestion allows an unlinked expected component",
+			op: operation.Wrapper{
+				Type: taskcommon.TaskTypeBringUp,
+				Code: taskcommon.OpCodeIngest,
+			},
+			componentIDs: []string{""},
+		},
+		{
+			name: "inject expectation allows an unlinked expected component",
+			op: operation.Wrapper{
+				Type: taskcommon.TaskTypeInjectExpectation,
+				Code: taskcommon.OpCodeInjectExpectation,
+			},
+			componentIDs: []string{""},
+		},
+		{
+			name: "empty selected scope rejects every operation",
+			op: operation.Wrapper{
+				Type: taskcommon.TaskTypeBringUp,
+				Code: taskcommon.OpCodeIngest,
+			},
+			wantError: "racks have no selected components",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rackID := uuid.New()
+			resolvedRack := newTestRack(rackID, "rack-1")
+			componentFlowIDs := make([]uuid.UUID, 0, len(test.componentIDs))
+			for i, externalID := range test.componentIDs {
+				flowID := uuid.New()
+				componentFlowIDs = append(componentFlowIDs, flowID)
+				comp := newTestComponent(
+					flowID,
+					rackID,
+					devicetypes.ComponentTypeCompute,
+					fmt.Sprintf("compute-%d", i),
+				)
+				comp.ComponentID = externalID
+				resolvedRack.AddComponent(comp)
+			}
+
+			err := validateResolvedRackTargets(test.op, map[uuid.UUID]*rack.Rack{
+				rackID: resolvedRack,
+			})
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				for i, externalID := range test.componentIDs {
+					if externalID == "" {
+						require.ErrorContains(t, err, componentFlowIDs[i].String())
+					}
+				}
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
 
 func TestCreateAndExecuteTaskReturnsExistingIdempotentTaskBeforeRackConflict(t *testing.T) {
 	ctx := context.Background()

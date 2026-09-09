@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,6 +250,11 @@ func (m *ManagerImpl) SubmitTask(
 		}
 	}
 
+	err = validateResolvedRackTargets(req.Operation, rackMap)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create and execute task for each rack.
 	var taskIDs []uuid.UUID
 	for _, targetRack := range rackMap {
@@ -274,6 +281,62 @@ func (m *ManagerImpl) SubmitTask(
 	}
 
 	return taskIDs, nil
+}
+
+// validateResolvedRackTargets enforces the boundary between expected
+// inventory and actionable actual devices before any task is persisted.
+// Expectation-only operations are the exception: they intentionally operate
+// on expected components that may not have an external ID yet.
+func validateResolvedRackTargets(
+	op operation.Wrapper,
+	rackMap map[uuid.UUID]*rack.Rack,
+) error {
+	var emptyRacks []string
+	var unlinkedComponents []string
+	expectationOnly := (op.Type == taskcommon.TaskTypeInjectExpectation &&
+		op.Code == taskcommon.OpCodeInjectExpectation) ||
+		(op.Type == taskcommon.TaskTypeBringUp && op.Code == taskcommon.OpCodeIngest)
+
+	for rackID, resolvedRack := range rackMap {
+		if resolvedRack == nil || len(resolvedRack.Components) == 0 {
+			emptyRacks = append(emptyRacks, rackID.String())
+			continue
+		}
+		if expectationOnly {
+			continue
+		}
+		for _, comp := range resolvedRack.Components {
+			if comp.ComponentID == "" {
+				unlinkedComponents = append(
+					unlinkedComponents,
+					fmt.Sprintf(
+						"rack %s %s/%s",
+						rackID,
+						devicetypes.ComponentTypeToString(comp.Type),
+						comp.Info.ID,
+					),
+				)
+			}
+		}
+	}
+
+	if len(emptyRacks) > 0 {
+		slices.Sort(emptyRacks)
+		return fmt.Errorf(
+			"operation cannot be submitted: racks have no selected components: %s",
+			strings.Join(emptyRacks, ", "),
+		)
+	}
+	if len(unlinkedComponents) > 0 {
+		slices.Sort(unlinkedComponents)
+		return fmt.Errorf(
+			"operation cannot be submitted: selected components not linked to actual inventory (%d): %s",
+			len(unlinkedComponents),
+			strings.Join(unlinkedComponents, ", "),
+		)
+	}
+
+	return nil
 }
 
 // createAndExecuteTask creates a task for a single rack and executes it.
@@ -648,6 +711,13 @@ func (m *ManagerImpl) executeTask(
 ) (*taskdef.ExecutionResponse, error) {
 	if task == nil {
 		return nil, fmt.Errorf("task is nil")
+	}
+
+	err := validateResolvedRackTargets(task.Operation, map[uuid.UUID]*rack.Rack{
+		task.RackID: targetRack,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	req := taskdef.ExecutionRequest{
