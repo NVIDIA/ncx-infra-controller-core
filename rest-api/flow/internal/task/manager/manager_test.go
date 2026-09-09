@@ -26,7 +26,8 @@ import (
 
 type submitTaskInventory struct {
 	inventorystore.Store
-	rack *rack.Rack
+	rack         *rack.Rack
+	getRackCalls int
 }
 
 func (s *submitTaskInventory) GetRackByIdentifier(
@@ -34,6 +35,7 @@ func (s *submitTaskInventory) GetRackByIdentifier(
 	_ identifier.Identifier,
 	_ bool,
 ) (*rack.Rack, error) {
+	s.getRackCalls++
 	return s.rack, nil
 }
 
@@ -70,6 +72,83 @@ func TestManagerImpl_SubmitTask(t *testing.T) {
 	require.Zero(t, store.createTaskCalls)
 }
 
+func TestManagerImpl_SubmitTaskReturnsScheduledIdempotentTaskBeforeInventoryValidation(t *testing.T) {
+	rackID := uuid.New()
+	taskID := uuid.New()
+	idempotencyKey := "operation-run-target:" + uuid.NewString()
+	store := &managerTaskStore{
+		taskByIdempotencyKey: map[string]*taskdef.Task{
+			idempotencyKey: {
+				ID:             taskID,
+				ExecutionID:    `{"workflow_id":"workflow","run_id":"run"}`,
+				IdempotencyKey: idempotencyKey,
+			},
+		},
+	}
+	inventory := &submitTaskInventory{}
+	manager := &ManagerImpl{inventoryStore: inventory, taskStore: store}
+
+	taskIDs, err := manager.SubmitTask(context.Background(), &operation.Request{
+		Operation:      testPowerControlOperation(t),
+		RequiredRackID: rackID,
+		IdempotencyKey: idempotencyKey,
+		TargetSpec: operation.TargetSpec{
+			Racks: []operation.RackTarget{{
+				Identifier: identifier.Identifier{ID: rackID},
+			}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{taskID}, taskIDs)
+	require.Zero(t, inventory.getRackCalls)
+	require.Zero(t, store.createTaskCalls)
+}
+
+func TestManagerImpl_SubmitTaskRejectsUnlinkedIngestWithActualInventoryRule(t *testing.T) {
+	rackID := uuid.New()
+	ruleID := uuid.New()
+	resolvedRack := newTestRack(rackID, "rack-1")
+	unlinked := newTestComponent(
+		uuid.New(),
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	unlinked.ComponentID = ""
+	resolvedRack.AddComponent(unlinked)
+
+	rule := &operationrules.OperationRule{
+		ID:            ruleID,
+		OperationType: taskcommon.TaskTypeBringUp,
+		OperationCode: taskcommon.OpCodeIngest,
+		RuleDefinition: operationrules.RuleDefinition{Steps: []operationrules.SequenceStep{{
+			ComponentType: devicetypes.ComponentTypeCompute,
+			Stage:         1,
+			MainOperation: operationrules.ActionConfig{Name: operationrules.ActionPowerControl},
+		}}},
+	}
+	store := &managerTaskStore{rulesByID: map[uuid.UUID]*operationrules.OperationRule{ruleID: rule}}
+	manager := &ManagerImpl{
+		inventoryStore: &submitTaskInventory{rack: resolvedRack},
+		taskStore:      store,
+		ruleResolver:   operationrules.NewResolver(store),
+	}
+
+	_, err := manager.SubmitTask(context.Background(), &operation.Request{
+		Operation: testIngestOperation(t, &ruleID),
+		RuleID:    &ruleID,
+		TargetSpec: operation.TargetSpec{
+			Racks: []operation.RackTarget{{
+				Identifier: identifier.Identifier{ID: rackID},
+			}},
+		},
+	})
+
+	require.ErrorContains(t, err, "selected components not linked to actual inventory (1)")
+	require.Zero(t, store.createTaskCalls)
+}
+
 func TestManagerImpl_ExecuteTask(t *testing.T) {
 	rackID := uuid.New()
 	resolvedRack := newTestRack(rackID, "rack-1")
@@ -91,7 +170,37 @@ func TestManagerImpl_ExecuteTask(t *testing.T) {
 			Operation: testPowerControlOperation(t),
 		},
 		resolvedRack,
-		nil,
+		&operationrules.RuleDefinition{},
+	)
+
+	require.Nil(t, resp)
+	require.ErrorContains(t, err, "selected components not linked to actual inventory (1)")
+}
+
+func TestManagerImpl_ExecuteTaskRejectsUnlinkedIngestWithActualInventoryRule(t *testing.T) {
+	rackID := uuid.New()
+	resolvedRack := newTestRack(rackID, "rack-1")
+	unlinked := newTestComponent(
+		uuid.New(),
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	unlinked.ComponentID = ""
+	resolvedRack.AddComponent(unlinked)
+	ruleDef := &operationrules.RuleDefinition{Steps: []operationrules.SequenceStep{{
+		MainOperation: operationrules.ActionConfig{Name: operationrules.ActionPowerControl},
+	}}}
+
+	resp, err := (&ManagerImpl{}).executeTask(
+		context.Background(),
+		&taskdef.Task{
+			ID:        uuid.New(),
+			RackID:    rackID,
+			Operation: testIngestOperation(t, nil),
+		},
+		resolvedRack,
+		ruleDef,
 	)
 
 	require.Nil(t, resp)
@@ -102,6 +211,7 @@ func TestValidateResolvedRackTargets(t *testing.T) {
 	tests := []struct {
 		name         string
 		op           operation.Wrapper
+		ruleDef      *operationrules.RuleDefinition
 		componentIDs []string
 		wantError    string
 	}{
@@ -128,7 +238,22 @@ func TestValidateResolvedRackTargets(t *testing.T) {
 				Type: taskcommon.TaskTypeBringUp,
 				Code: taskcommon.OpCodeIngest,
 			},
+			ruleDef: &operationrules.RuleDefinition{Steps: []operationrules.SequenceStep{{
+				MainOperation: operationrules.ActionConfig{Name: operationrules.ActionInjectExpectation},
+			}}},
 			componentIDs: []string{""},
+		},
+		{
+			name: "ingestion with an actual inventory action rejects an unlinked component",
+			op: operation.Wrapper{
+				Type: taskcommon.TaskTypeBringUp,
+				Code: taskcommon.OpCodeIngest,
+			},
+			ruleDef: &operationrules.RuleDefinition{Steps: []operationrules.SequenceStep{{
+				MainOperation: operationrules.ActionConfig{Name: operationrules.ActionPowerControl},
+			}}},
+			componentIDs: []string{""},
+			wantError:    "selected components not linked to actual inventory (1)",
 		},
 		{
 			name: "inject expectation allows an unlinked expected component",
@@ -166,9 +291,11 @@ func TestValidateResolvedRackTargets(t *testing.T) {
 				resolvedRack.AddComponent(comp)
 			}
 
-			err := validateResolvedRackTargets(test.op, map[uuid.UUID]*rack.Rack{
-				rackID: resolvedRack,
-			})
+			err := validateResolvedRackTargets(
+				test.op,
+				test.ruleDef,
+				map[uuid.UUID]*rack.Rack{rackID: resolvedRack},
+			)
 			if test.wantError != "" {
 				require.ErrorContains(t, err, test.wantError)
 				for i, externalID := range test.componentIDs {
@@ -323,6 +450,23 @@ func testPowerControlOperation(t *testing.T) operation.Wrapper {
 	}
 }
 
+func testIngestOperation(t *testing.T, ruleID *uuid.UUID) operation.Wrapper {
+	t.Helper()
+
+	info := &operations.BringUpTaskInfo{OpCode: taskcommon.OpCodeIngest}
+	if ruleID != nil {
+		info.RuleID = ruleID.String()
+	}
+	raw, err := info.Marshal()
+	require.NoError(t, err)
+
+	return operation.Wrapper{
+		Type: taskcommon.TaskTypeBringUp,
+		Code: taskcommon.OpCodeIngest,
+		Info: raw,
+	}
+}
+
 type managerTaskStore struct {
 	activeTasksByRack    map[uuid.UUID][]*taskdef.Task
 	taskByIdempotencyKey map[string]*taskdef.Task
@@ -332,6 +476,7 @@ type managerTaskStore struct {
 	lockRackCalls        int
 	updateScheduledCalls int
 	updatedScheduledTask *taskdef.Task
+	rulesByID            map[uuid.UUID]*operationrules.OperationRule
 }
 
 func (s *managerTaskStore) RunInTransaction(
@@ -454,9 +599,9 @@ func (s *managerTaskStore) SetRuleAsDefault(_ context.Context, _ uuid.UUID) erro
 
 func (s *managerTaskStore) GetRule(
 	_ context.Context,
-	_ uuid.UUID,
+	id uuid.UUID,
 ) (*operationrules.OperationRule, error) {
-	panic("managerTaskStore.GetRule: not implemented")
+	return s.rulesByID[id], nil
 }
 
 func (s *managerTaskStore) GetRuleByName(

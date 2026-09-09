@@ -208,6 +208,20 @@ func (m *ManagerImpl) SubmitTask(
 		return nil, err
 	}
 
+	// A caller may retry after task submission succeeded but persisting the
+	// returned task ID failed. Once the task is scheduled, its idempotency key
+	// owns the outcome; mutable inventory and rule state must not turn that
+	// retry into a failure.
+	if req.HasIdempotencyKey() {
+		existing, err := m.taskStore.GetTaskByIdempotencyKey(ctx, req.IdempotencyKey)
+		if err != nil {
+			return nil, fmt.Errorf("look up idempotent task: %w", err)
+		}
+		if existing != nil && existing.IsScheduled() {
+			return []uuid.UUID{existing.ID}, nil
+		}
+	}
+
 	// Fail-fast: verify the requested rule exists before creating any tasks.
 	// The resolver will check again at execution time (defense-in-depth for
 	// queued tasks whose rule may be deleted while waiting).
@@ -250,7 +264,7 @@ func (m *ManagerImpl) SubmitTask(
 		}
 	}
 
-	err = validateResolvedRackTargets(req.Operation, rackMap)
+	err = m.validateSubmissionRackTargets(ctx, req.Operation, rackMap)
 	if err != nil {
 		return nil, err
 	}
@@ -283,19 +297,58 @@ func (m *ManagerImpl) SubmitTask(
 	return taskIDs, nil
 }
 
+// validateSubmissionRackTargets resolves the effective ingest rule for each
+// rack before deciding whether unlinked expected components are safe targets.
+func (m *ManagerImpl) validateSubmissionRackTargets(
+	ctx context.Context,
+	op operation.Wrapper,
+	rackMap map[uuid.UUID]*rack.Rack,
+) error {
+	if op.Type != taskcommon.TaskTypeBringUp || op.Code != taskcommon.OpCodeIngest {
+		return validateResolvedRackTargets(op, nil, rackMap)
+	}
+
+	rackIDs := make([]uuid.UUID, 0, len(rackMap))
+	for rackID := range rackMap {
+		rackIDs = append(rackIDs, rackID)
+	}
+	slices.SortFunc(rackIDs, func(a, b uuid.UUID) int {
+		return strings.Compare(a.String(), b.String())
+	})
+
+	for _, rackID := range rackIDs {
+		rule, err := m.resolveOperationRule(ctx, op, rackID)
+		if err != nil {
+			return err
+		}
+		if err := validateResolvedRackTargets(
+			op,
+			&rule.RuleDefinition,
+			map[uuid.UUID]*rack.Rack{rackID: rackMap[rackID]},
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // validateResolvedRackTargets enforces the boundary between expected
-// inventory and actionable actual devices before any task is persisted.
-// Expectation-only operations are the exception: they intentionally operate
-// on expected components that may not have an external ID yet.
+// inventory and actionable actual devices. Expectation-only operations are
+// the exception: they intentionally operate on expected components that may
+// not have an external ID yet.
 func validateResolvedRackTargets(
 	op operation.Wrapper,
+	ruleDef *operationrules.RuleDefinition,
 	rackMap map[uuid.UUID]*rack.Rack,
 ) error {
 	var emptyRacks []string
 	var unlinkedComponents []string
 	expectationOnly := (op.Type == taskcommon.TaskTypeInjectExpectation &&
 		op.Code == taskcommon.OpCodeInjectExpectation) ||
-		(op.Type == taskcommon.TaskTypeBringUp && op.Code == taskcommon.OpCodeIngest)
+		(op.Type == taskcommon.TaskTypeBringUp &&
+			op.Code == taskcommon.OpCodeIngest &&
+			ruleUsesOnlyExpectedInventory(ruleDef))
 
 	for rackID, resolvedRack := range rackMap {
 		if resolvedRack == nil || len(resolvedRack.Components) == 0 {
@@ -337,6 +390,28 @@ func validateResolvedRackTargets(
 	}
 
 	return nil
+}
+
+func ruleUsesOnlyExpectedInventory(ruleDef *operationrules.RuleDefinition) bool {
+	if ruleDef == nil {
+		return false
+	}
+
+	foundInjectExpectation := false
+	for _, step := range ruleDef.Steps {
+		for _, action := range step.OrderedActions() {
+			switch action.Name {
+			case operationrules.ActionInjectExpectation:
+				foundInjectExpectation = true
+			case operationrules.ActionSleep:
+				// Sleep has no inventory target side effect.
+			default:
+				return false
+			}
+		}
+	}
+
+	return foundInjectExpectation
 }
 
 // createAndExecuteTask creates a task for a single rack and executes it.
@@ -559,11 +634,7 @@ func (m *ManagerImpl) resolveAndExecuteTask(
 	task *taskdef.Task,
 	targetRack *rack.Rack,
 ) error {
-	ruleID := operations.ExtractRuleID(task.Operation.Info)
-
-	rule, err := m.ruleResolver.ResolveRule(
-		ctx, task.Operation.Type, task.Operation.Code, task.RackID, ruleID,
-	)
+	rule, err := m.resolveOperationRule(ctx, task.Operation, task.RackID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve operation rule: %w", err)
 	}
@@ -609,6 +680,15 @@ func (m *ManagerImpl) resolveAndExecuteTask(
 			Msgf("failed to update scheduled task %s", task.ID)
 	}
 	return nil
+}
+
+func (m *ManagerImpl) resolveOperationRule(
+	ctx context.Context,
+	op operation.Wrapper,
+	rackID uuid.UUID,
+) (*operationrules.OperationRule, error) {
+	ruleID := operations.ExtractRuleID(op.Info)
+	return m.ruleResolver.ResolveRule(ctx, op.Type, op.Code, rackID, ruleID)
 }
 
 // CancelTask cancels a task by its ID.
@@ -713,9 +793,11 @@ func (m *ManagerImpl) executeTask(
 		return nil, fmt.Errorf("task is nil")
 	}
 
-	err := validateResolvedRackTargets(task.Operation, map[uuid.UUID]*rack.Rack{
-		task.RackID: targetRack,
-	})
+	err := validateResolvedRackTargets(
+		task.Operation,
+		ruleDef,
+		map[uuid.UUID]*rack.Rack{task.RackID: targetRack},
+	)
 	if err != nil {
 		return nil, err
 	}
