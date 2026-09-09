@@ -960,6 +960,7 @@ impl<ID: MachineIdSubtypeTrait> Machine<ID> {
             health_reports: self.health_reports,
             reprovision_requested: self.reprovision_requested,
             host_reprovision_requested: self.host_reprovision_requested,
+            reset_requested: self.reset_requested,
             machine_maintenance_requested: self.machine_maintenance_requested,
             decommission_requested: self.decommission_requested,
             bmc_credential_rotation_requested: self.bmc_credential_rotation_requested,

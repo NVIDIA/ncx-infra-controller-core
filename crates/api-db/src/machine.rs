@@ -2244,7 +2244,7 @@ pub async fn clear_managed_host_reset_request(
 
 pub async fn list_machines_requested_for_reset(
     txn: impl DbReader<'_>,
-) -> Result<Vec<Machine>, DatabaseError> {
+) -> Result<Vec<HostMachine>, DatabaseError> {
     lazy_static! {
         static ref query: String = format!(
             "{} WHERE m.reset_requested IS NOT NULL",

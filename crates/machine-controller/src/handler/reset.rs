@@ -18,7 +18,6 @@
 //! Operator-requested managed host reset: delete the tenant instance, delete the host's
 //! DPF CRs, then hand the host back to DPU discovery so DPF re-ingests it from scratch.
 
-use carbide_uuid::machine::DpuMachineId;
 use eyre::eyre;
 use model::machine::{
     DpuDiscoveringState, DpuDiscoveringStates, ManagedHostState, ManagedHostStateSnapshot,
@@ -157,10 +156,7 @@ async fn start_host_reingestion(
         db::machine::clear_dpu_reprovisioning_request(&mut txn, &dpu.id, false).await?;
         db::machine_topology::set_topology_update_needed(&mut txn, &dpu.id, true).await?;
 
-        let dpu_id = DpuMachineId::try_from(dpu.id).map_err(|error| {
-            StateHandlerError::GenericError(eyre!("host {host_id} has a non-DPU snapshot: {error}"))
-        })?;
-        dpu_states.insert(dpu_id, DpuDiscoveringState::Initializing);
+        dpu_states.insert(dpu.id, DpuDiscoveringState::Initializing);
     }
 
     db::machine::clear_managed_host_reset_request(&mut txn, host_id, false).await?;

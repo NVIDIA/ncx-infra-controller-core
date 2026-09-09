@@ -47,7 +47,7 @@ pub(super) async fn reset_set(data: ResetSet, api_client: &ApiClient) -> Carbide
             let report = get_health_report(HealthReportTemplates::HostUpdate, Some(update_message));
 
             api_client
-                .machine_insert_health_report_override(data.machine, report.into(), false)
+                .machine_insert_health_report_override(&data.machine, report.into(), false)
                 .await?;
         }
     }

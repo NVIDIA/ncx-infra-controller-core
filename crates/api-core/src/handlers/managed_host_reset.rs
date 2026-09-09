@@ -86,7 +86,7 @@ pub(crate) async fn trigger_managed_host_reset(
 
     log_request_data(&request);
     let req = request.into_inner();
-    let machine_id = convert_and_log_machine_id::<MachineId>(req.machine_id.as_ref())?;
+    let machine_id: MachineId = convert_and_log_machine_id(req.machine_id.as_ref())?;
 
     // A reset tears down every attached DPU, so it is only expressible against the host.
     if !machine_id.machine_type().is_host() {
@@ -156,6 +156,12 @@ pub(crate) async fn trigger_managed_host_reset(
 
             db::machine::clear_managed_host_reset_request(&mut txn, &machine_id, true).await?;
         }
+        // An omitted mode decodes here; reject rather than pick an action for it.
+        Mode::Unspecified => {
+            return Err(
+                CarbideError::InvalidArgument("mode must be set or clear".to_string()).into(),
+            );
+        }
     }
 
     txn.commit().await?;
@@ -174,7 +180,7 @@ pub(crate) async fn list_managed_hosts_waiting_for_reset(
         .into_iter()
         .map(
             |x| rpc::managed_host_reset_list_response::ManagedHostResetListItem {
-                id: Some(x.id),
+                id: Some(*x.id.as_machine_id()),
                 state: x.current_state().to_string(),
                 requested_at: x.reset_requested.as_ref().map(|a| a.requested_at.into()),
                 initiator: x

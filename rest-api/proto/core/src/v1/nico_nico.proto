@@ -10374,8 +10374,10 @@ message InterfaceAddressConfig {
 
 message ManagedHostResetRequest {
   enum Mode {
-    Set = 0;
-    Clear = 1;
+    // Zero value so an omitted mode is rejected, not defaulted to an action.
+    Unspecified = 0;
+    Set = 1;
+    Clear = 2;
   }
   // Host to reset. Not a DPU: a reset tears down every DPU attached to the
   // host, so it is only expressible against the host.
