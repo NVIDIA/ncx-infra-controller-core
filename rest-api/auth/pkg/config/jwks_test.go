@@ -241,6 +241,34 @@ func TestJwksConfig_UpdateJWKs(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("failed update is throttled while cache is empty", func(t *testing.T) {
+		requestCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestCount++
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+
+		config := &JwksConfig{
+			URL:    server.URL,
+			Issuer: "test.example.com",
+		}
+
+		require.Error(t, config.UpdateJWKS())
+		assert.False(t, config.LastAttempted.IsZero())
+		assert.True(t, config.LastUpdated.IsZero())
+
+		assert.ErrorIs(t, config.UpdateJWKS(), core.ErrJWKSNotInitialized)
+		assert.Equal(t, 1, requestCount)
+
+		config.Lock()
+		config.LastAttempted = time.Now().Add(-minUpdateInterval)
+		config.Unlock()
+
+		require.Error(t, config.UpdateJWKS())
+		assert.Equal(t, 2, requestCount)
+	})
 }
 
 // TestJwksConfig_Concurrency tests thread safety of JWKS operations
@@ -291,17 +319,23 @@ func TestJwksConfig_Concurrency(t *testing.T) {
 	// Check for errors - allow "update already in progress" as this is expected concurrent behavior
 	var unexpectedErrors []error
 	var updateInProgressCount int
+	var notInitializedCount int
 	for err := range errors {
-		if err == core.ErrJWKSUpdateInProgress {
+		switch err {
+		case core.ErrJWKSUpdateInProgress:
 			updateInProgressCount++
-		} else {
+		case core.ErrJWKSNotInitialized:
+			notInitializedCount++
+		default:
 			unexpectedErrors = append(unexpectedErrors, err)
 		}
 	}
 
-	// Should have at most 9 "update in progress" errors (since 10 goroutines, 1 succeeds)
-	if updateInProgressCount > numGoroutines-1 {
-		t.Errorf("Too many 'update in progress' errors: expected at most %d, got %d", numGoroutines-1, updateInProgressCount)
+	// At least one goroutine performs the update; the others may observe either
+	// the in-progress state or the still-empty cache.
+	transientErrorCount := updateInProgressCount + notInitializedCount
+	if transientErrorCount > numGoroutines-1 {
+		t.Errorf("Too many transient update errors: expected at most %d, got %d", numGoroutines-1, transientErrorCount)
 	}
 
 	// Should not have any other types of errors

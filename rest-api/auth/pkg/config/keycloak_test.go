@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
@@ -163,51 +164,62 @@ func TestKeycloakConfig_GetJwksConfig(t *testing.T) {
 			}
 		})
 	}
-}
 
-func TestKeycloakConfig_RecoversAfterInitialJWKSFailure(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
+	t.Run("recovers after initial JWKS failure", func(t *testing.T) {
+		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
-	var keycloakReady atomic.Bool
-	var requestCount atomic.Int32
-	testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		requestCount.Add(1)
-		if !keycloakReady.Load() {
-			res.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
+		var keycloakReady atomic.Bool
+		var requestCount atomic.Int32
+		testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+			requestCount.Add(1)
+			if !keycloakReady.Load() {
+				res.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 
-		res.Header().Set("Content-Type", "application/json")
-		res.WriteHeader(http.StatusOK)
-		res.Write([]byte(createJWKSResponse(privateKey.Public().(*rsa.PublicKey), "test-key-id", "RS256", "sig")))
-	}))
-	defer testServer.Close()
+			res.Header().Set("Content-Type", "application/json")
+			res.WriteHeader(http.StatusOK)
+			_, err := res.Write([]byte(createJWKSResponse(privateKey.Public().(*rsa.PublicKey), "test-key-id", "RS256", "sig")))
+			assert.NoError(t, err)
+		}))
+		defer testServer.Close()
 
-	keycloakConfig := NewKeycloakConfig(
-		testServer.URL,
-		"https://keycloak.example.com",
-		"test-client",
-		"test-secret",
-		"test-realm",
-		true,
-	)
+		keycloakConfig := NewKeycloakConfig(
+			testServer.URL,
+			"https://keycloak.example.com",
+			"test-client",
+			"test-secret",
+			"test-realm",
+			true,
+		)
 
-	jwksConfig, err := keycloakConfig.GetJwksConfig()
-	require.NoError(t, err)
-	require.NotNil(t, jwksConfig)
-	assert.Nil(t, jwksConfig.GetJWKS())
-	assert.Equal(t, int32(1), requestCount.Load())
+		jwksConfig, err := keycloakConfig.GetJwksConfig()
+		require.Error(t, err)
+		require.NotNil(t, jwksConfig)
+		assert.Nil(t, jwksConfig.GetJWKS())
+		assert.Equal(t, int32(1), requestCount.Load())
 
-	keycloakReady.Store(true)
-	tokenString, err := createTokenWithGoJose(privateKey, true, "test-key-id")
-	require.NoError(t, err)
+		tokenString, err := createTokenWithGoJose(privateKey, true, "test-key-id")
+		require.NoError(t, err)
+		_, err = jwksConfig.ValidateToken(tokenString, jwt.MapClaims{})
+		require.Error(t, err)
+		assert.Equal(t, int32(1), requestCount.Load())
 
-	token, err := jwksConfig.ValidateToken(tokenString, jwt.MapClaims{})
-	require.NoError(t, err)
-	require.NotNil(t, token)
-	assert.True(t, token.Valid)
-	assert.Equal(t, int32(2), requestCount.Load())
+		keycloakReady.Store(true)
+		jwksConfig.Lock()
+		jwksConfig.LastAttempted = time.Now().Add(-minUpdateInterval)
+		jwksConfig.Unlock()
+
+		token, err := jwksConfig.ValidateToken(tokenString, jwt.MapClaims{})
+		require.NoError(t, err)
+		require.NotNil(t, token)
+		assert.True(t, token.Valid)
+		assert.Equal(t, int32(2), requestCount.Load())
+
+		_, err = keycloakConfig.GetJwksConfig()
+		require.NoError(t, err)
+	})
 }
 
 func TestKeycloakConfig_GetJwksConfig_Caching(t *testing.T) {

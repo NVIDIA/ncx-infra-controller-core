@@ -79,8 +79,12 @@ func (kc *KeycloakConfig) initializeJWKS() bool {
 func (kc *KeycloakConfig) GetJwksConfig() (*JwksConfig, error) {
 	kc.mu.RLock()
 	if kc.jwksConfig != nil {
+		jwksConfig := kc.jwksConfig
 		kc.mu.RUnlock()
-		return kc.jwksConfig, nil
+		if jwksConfig.GetJWKS() == nil {
+			return jwksConfig, fmt.Errorf("failed to fetch JWKS for realm %s", kc.Realm)
+		}
+		return jwksConfig, nil
 	}
 	kc.mu.RUnlock()
 
@@ -89,6 +93,9 @@ func (kc *KeycloakConfig) GetJwksConfig() (*JwksConfig, error) {
 
 	// Double-check in case another goroutine initialized it
 	if kc.jwksConfig != nil {
+		if kc.jwksConfig.GetJWKS() == nil {
+			return kc.jwksConfig, fmt.Errorf("failed to fetch JWKS for realm %s", kc.Realm)
+		}
 		return kc.jwksConfig, nil
 	}
 

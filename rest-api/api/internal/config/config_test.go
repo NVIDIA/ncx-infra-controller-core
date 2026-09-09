@@ -328,27 +328,29 @@ func TestConfig_ValidateIssuersConfig(t *testing.T) {
 	}
 }
 
-func TestGetOrInitTokenOriginConfig_KeycloakUnavailable(t *testing.T) {
-	testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
-		res.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer testServer.Close()
+func TestGetOrInitTokenOriginConfig(t *testing.T) {
+	t.Run("retains Keycloak config when JWKS is unavailable", func(t *testing.T) {
+		testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+			res.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer testServer.Close()
 
-	v := viper.New()
-	v.Set(ConfigKeycloakEnabled, true)
-	v.Set(ConfigKeycloakBaseURL, testServer.URL)
-	v.Set(ConfigKeycloakExternalBaseURL, "https://keycloak.example.com")
-	v.Set(ConfigKeycloakRealm, "test-realm")
-	v.Set(ConfigKeycloakClientID, "test-client")
-	v.Set(ConfigKeycloakClientSecret, "test-secret")
+		v := viper.New()
+		v.Set(ConfigKeycloakEnabled, true)
+		v.Set(ConfigKeycloakBaseURL, testServer.URL)
+		v.Set(ConfigKeycloakExternalBaseURL, "https://keycloak.example.com")
+		v.Set(ConfigKeycloakRealm, "test-realm")
+		v.Set(ConfigKeycloakClientID, "test-client")
+		v.Set(ConfigKeycloakClientSecret, "test-secret")
 
-	c := &Config{v: v}
-	tokenOriginConfig := c.GetOrInitTokenOriginConfig()
+		c := &Config{v: v}
+		tokenOriginConfig := c.GetOrInitTokenOriginConfig()
 
-	require.NotNil(t, tokenOriginConfig)
-	jwksConfig := tokenOriginConfig.GetConfig("https://keycloak.example.com/realms/test-realm")
-	require.NotNil(t, jwksConfig)
-	assert.Nil(t, jwksConfig.GetJWKS())
+		require.NotNil(t, tokenOriginConfig)
+		jwksConfig := tokenOriginConfig.GetConfig("https://keycloak.example.com/realms/test-realm")
+		require.NotNil(t, jwksConfig)
+		assert.Nil(t, jwksConfig.GetJWKS())
+	})
 }
 
 func TestConfig_WatchConfigFile(t *testing.T) {

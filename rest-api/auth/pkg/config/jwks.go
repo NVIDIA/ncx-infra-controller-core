@@ -142,15 +142,16 @@ func (cm *ClaimMapping) GetOrgNameAndDisplayName(claims jwt.MapClaims) (orgName 
 
 // JwksConfig holds configuration for a JWKS endpoint and token validation.
 type JwksConfig struct {
-	Name         string
-	IsUpdating   uint32        // atomic flag for concurrent JWKS updates
-	sync.RWMutex               // protects JWKS access
-	URL          string        // JWKS endpoint URL
-	Issuer       string        // expected "iss" claim value
-	Origin       string        // token origin type (e.g., "kas-legacy", "kas-ssa", "keycloak", "custom", "kas")
-	LastUpdated  time.Time     // last JWKS update timestamp
-	jwks         *core.JWKS    // cached JWKS keys
-	JWKSTimeout  time.Duration // fetch timeout (default: 5s)
+	Name          string
+	IsUpdating    uint32        // atomic flag for concurrent JWKS updates
+	sync.RWMutex                // protects JWKS access
+	URL           string        // JWKS endpoint URL
+	Issuer        string        // expected "iss" claim value
+	Origin        string        // token origin type (e.g., "kas-legacy", "kas-ssa", "keycloak", "custom", "kas")
+	LastUpdated   time.Time     // last successful JWKS update timestamp
+	LastAttempted time.Time     // last JWKS update attempt timestamp
+	jwks          *core.JWKS    // cached JWKS keys
+	JWKSTimeout   time.Duration // fetch timeout (default: 5s)
 
 	Audiences []string // allowed audience values (token must have at least one)
 	Scopes    []string // required scopes (token must have ALL)
@@ -240,36 +241,29 @@ func (jcfg *JwksConfig) MatchesIssuer(issuer string) bool {
 	return issuer == jcfg.Issuer
 }
 
-// shouldAllowJWKSUpdate checks if we should allow JWKS update based on throttling
-func (jcfg *JwksConfig) shouldAllowJWKSUpdate() bool {
-	jcfg.RLock()
-	defer jcfg.RUnlock()
-
-	// Always allow if we've never updated
-	if jcfg.LastUpdated.IsZero() {
-		return true
-	}
-
-	// Allow if enough time has passed since last update (regardless of success/failure)
-	return time.Since(jcfg.LastUpdated) >= minUpdateInterval
-}
-
 // UpdateJWKS fetches and validates JWKS from the configured URL. Throttled to minUpdateInterval.
 func (jcfg *JwksConfig) UpdateJWKS() error {
+	jcfg.Lock()
 	if jcfg.URL == "" {
+		jcfg.Unlock()
 		return core.ErrJWKSURLEmpty
 	}
-	if !jcfg.shouldAllowJWKSUpdate() {
+	if !jcfg.LastAttempted.IsZero() && time.Since(jcfg.LastAttempted) < minUpdateInterval {
+		hasCachedKeys := jcfg.jwks != nil
+		jcfg.Unlock()
+		if !hasCachedKeys {
+			return core.ErrJWKSNotInitialized
+		}
 		return nil
 	}
 	if !atomic.CompareAndSwapUint32(&jcfg.IsUpdating, 0, 1) {
+		jcfg.Unlock()
 		return core.ErrJWKSUpdateInProgress
 	}
-	defer atomic.StoreUint32(&jcfg.IsUpdating, 0)
-
-	jcfg.RLock()
 	urlCopy, timeout := jcfg.URL, jcfg.JWKSTimeout
-	jcfg.RUnlock()
+	jcfg.LastAttempted = time.Now()
+	jcfg.Unlock()
+	defer atomic.StoreUint32(&jcfg.IsUpdating, 0)
 
 	jwks, err := core.NewJWKSFromURL(urlCopy, timeout)
 	if err != nil {
