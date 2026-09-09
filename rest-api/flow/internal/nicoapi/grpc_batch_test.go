@@ -300,6 +300,18 @@ func TestGrpcClient_GetMachines(t *testing.T) {
 				assert.Nil(t, machines)
 			},
 		},
+		{
+			name: "honors the Core batch limit",
+			fake: &recordingForgeClient{
+				runtimeConfig: &corev1.RuntimeConfig{MaxFindByIds: 2},
+				machineIDs:    []string{"a", "b", "c", "d", "e"},
+			},
+			check: func(t *testing.T, fake *recordingForgeClient, machines []MachineDetail, err error) {
+				require.NoError(t, err)
+				assert.Len(t, machines, 5)
+				assert.Equal(t, [][]string{{"a", "b"}, {"c", "d"}, {"e"}}, fake.machineBatches)
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -406,14 +418,6 @@ func TestGrpcClient_ByIDLookupsHonorCoreBatchLimit(t *testing.T) {
 		invoke     func(context.Context, *grpcClient, []string) (int, error)
 		batchCalls func(*recordingForgeClient) [][]string
 	}{
-		{
-			name: "listed machines",
-			invoke: func(ctx context.Context, client *grpcClient, _ []string) (int, error) {
-				machines, err := client.GetMachines(ctx)
-				return len(machines), err
-			},
-			batchCalls: func(fake *recordingForgeClient) [][]string { return fake.machineBatches },
-		},
 		{
 			name: "machines by IDs",
 			invoke: func(ctx context.Context, client *grpcClient, ids []string) (int, error) {
