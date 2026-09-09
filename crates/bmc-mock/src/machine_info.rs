@@ -178,11 +178,14 @@ impl DpuType {
                 DpuFirmwareComponent::Cec => "Bluefield_FW_ERoT",
                 DpuFirmwareComponent::Nic => "DPU_NIC",
             }),
-            // TODO: Populate BF4 component IDs from captured B4240/B4240V
-            // FirmwareInventory responses. BF4 uses generation-specific names;
-            // its known BMC inventory ID is `BlueField_FW_BMC_0`:
-            // https://github.com/NVIDIA/infra-controller/issues/2862
-            Self::Bluefield4 => None,
+            Self::Bluefield4 => Some(match component {
+                DpuFirmwareComponent::Bmc => "BlueField_FW_BMC_0",
+                DpuFirmwareComponent::Uefi => "BlueField_FW_CPU_0",
+                // NVIDIA's Redfish client uses this ID for both generations.
+                DpuFirmwareComponent::Bsp => "DPU_BSP",
+                DpuFirmwareComponent::Cec => "BlueField_FW_ERoT_BMC_0",
+                DpuFirmwareComponent::Nic => "BlueField_FW_NIC_0",
+            }),
         }
     }
 }
@@ -1295,12 +1298,13 @@ mod tests {
     use super::*;
     use crate::mac_address_pool::{Config, PoolConfig};
 
-    fn bf3_dpu(
+    fn dpu(
+        hw_type: HardwareType,
         pool: &mut MacAddressPool,
         firmware_versions: DpuFirmwareVersions,
     ) -> DpuMachineInfo {
         DpuMachineInfo::new(
-            HardwareType::DellPowerEdgeR750,
+            hw_type,
             pool,
             DpuSettings {
                 firmware_versions,
@@ -1365,79 +1369,72 @@ mod tests {
     }
 
     #[test]
-    fn configured_bf3_firmware_uses_the_expected_inventory_ids() {
-        let pool_config =
-            PoolConfig::new(MacAddress::new([2, 0, 0, 0, 0, 0]), 16).expect("valid MAC pool");
-        let mut pool = MacAddressPool::new(Config {
-            ranges: None,
-            pool: Some(pool_config),
-        });
-        let dpu = bf3_dpu(
-            &mut pool,
-            DpuFirmwareVersions {
-                bmc: Some("bmc-version".to_string()),
-                uefi: Some("uefi-version".to_string()),
-                bsp: Some("bsp-version".to_string()),
-                cec: Some("cec-version".to_string()),
-                nic: Some("nic-version".to_string()),
-            },
-        );
-        let config = dpu.update_service_config();
-
-        for (id, expected) in [
-            ("BMC_Firmware", "bmc-version"),
-            ("DPU_UEFI", "uefi-version"),
-            ("DPU_BSP", "bsp-version"),
-            ("Bluefield_FW_ERoT", "cec-version"),
-            ("DPU_NIC", "nic-version"),
+    fn configured_dpu_firmware_uses_generation_specific_inventory_ids() {
+        for (hardware_type, expected_inventory) in [
+            (
+                HardwareType::DellPowerEdgeR750,
+                [
+                    ("BMC_Firmware", "bmc-version"),
+                    ("DPU_UEFI", "uefi-version"),
+                    ("DPU_BSP", "bsp-version"),
+                    ("Bluefield_FW_ERoT", "cec-version"),
+                    ("DPU_NIC", "nic-version"),
+                ],
+            ),
+            (
+                HardwareType::DellPowerEdgeR760Bf4,
+                [
+                    ("BlueField_FW_BMC_0", "bmc-version"),
+                    ("BlueField_FW_CPU_0", "uefi-version"),
+                    ("DPU_BSP", "bsp-version"),
+                    ("BlueField_FW_ERoT_BMC_0", "cec-version"),
+                    ("BlueField_FW_NIC_0", "nic-version"),
+                ],
+            ),
         ] {
-            let inventory = config
-                .firmware_inventory
-                .iter()
-                .find(|inventory| inventory.id == id)
-                .unwrap_or_else(|| panic!("missing {id}"));
-            assert_eq!(inventory.to_json()["Version"].as_str(), Some(expected));
-        }
-    }
-
-    #[test]
-    fn bf4_does_not_reuse_bf3_firmware_inventory_ids() {
-        let pool_config =
-            PoolConfig::new(MacAddress::new([2, 0, 0, 0, 0, 0]), 16).expect("valid MAC pool");
-        let mut pool = MacAddressPool::new(Config {
-            ranges: None,
-            pool: Some(pool_config),
-        });
-        let dpu = DpuMachineInfo::new(
-            HardwareType::DellPowerEdgeR760Bf4,
-            &mut pool,
-            DpuSettings {
-                firmware_versions: DpuFirmwareVersions {
+            let pool_config =
+                PoolConfig::new(MacAddress::new([2, 0, 0, 0, 0, 0]), 16).expect("valid MAC pool");
+            let mut pool = MacAddressPool::new(Config {
+                ranges: None,
+                pool: Some(pool_config),
+            });
+            let dpu = dpu(
+                hardware_type,
+                &mut pool,
+                DpuFirmwareVersions {
                     bmc: Some("bmc-version".to_string()),
                     uefi: Some("uefi-version".to_string()),
                     bsp: Some("bsp-version".to_string()),
                     cec: Some("cec-version".to_string()),
                     nic: Some("nic-version".to_string()),
                 },
-                ..DpuSettings::default()
-            },
-        );
+            );
+            let config = dpu.update_service_config();
 
-        let config = dpu.update_service_config();
-        for bf3_id in [
-            "BMC_Firmware",
-            "DPU_UEFI",
-            "DPU_BSP",
-            "Bluefield_FW_ERoT",
-            "DPU_NIC",
-        ] {
-            assert!(
-                config
+            for (id, expected) in expected_inventory {
+                let inventory = config
                     .firmware_inventory
                     .iter()
-                    .all(|inventory| inventory.id != bf3_id),
-                "unexpected BF3 inventory ID {bf3_id}",
-            );
+                    .find(|inventory| inventory.id == id)
+                    .unwrap_or_else(|| panic!("missing {id} for {hardware_type}"));
+                assert_eq!(
+                    inventory.to_json()["Version"].as_str(),
+                    Some(expected),
+                    "{hardware_type}",
+                );
+            }
+
+            if matches!(hardware_type, HardwareType::DellPowerEdgeR760Bf4) {
+                for bf3_only_id in ["BMC_Firmware", "DPU_UEFI", "Bluefield_FW_ERoT", "DPU_NIC"] {
+                    assert!(
+                        config
+                            .firmware_inventory
+                            .iter()
+                            .all(|inventory| inventory.id != bf3_only_id),
+                        "unexpected BF3-only inventory ID {bf3_only_id}",
+                    );
+                }
+            }
         }
     }
 
@@ -1449,7 +1446,8 @@ mod tests {
             ranges: None,
             pool: Some(pool_config),
         });
-        let dpu = bf3_dpu(
+        let dpu = dpu(
+            HardwareType::DellPowerEdgeR750,
             &mut pool,
             DpuFirmwareVersions {
                 bsp: Some("bsp-version".to_string()),
