@@ -144,8 +144,9 @@ pub(crate) struct CliOptions {
     )]
     #[clap(
         help = "For commands that internally retrieve data with paging, use this page size (1-100). \
-                Smaller pages keep each gRPC reply under the client's 4 MiB receive limit, which \
-                TONIC_MAX_DECODING_MESSAGE_SIZE can raise."
+                Smaller pages keep each gRPC reply under the client's 4 MiB receive limit; to raise \
+                that limit instead, set TONIC_MAX_DECODING_MESSAGE_SIZE to a byte count, for \
+                example 33554432 for 32 MiB."
     )]
     pub(crate) internal_page_size: usize,
 
