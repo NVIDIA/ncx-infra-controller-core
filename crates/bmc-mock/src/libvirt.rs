@@ -73,18 +73,32 @@ impl LibvirtCallbacks {
         }
     }
 
+    /// Binds this backend to the generated BMC state and applies its initial
+    /// persistent boot selection to the inactive libvirt domain XML.
+    ///
+    /// Binding succeeds at most once. An initial boot-selection failure leaves
+    /// the backend unbound so the caller can retry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the BMC has no controlled `ComputerSystem`, this
+    /// backend is already bound, or libvirt cannot apply the initial selection.
     pub fn bind_state(&self, state: &BmcState) -> Result<(), String> {
         let controlled_system = state
             .system_state
             .controlled_system()
             .ok_or_else(|| "libvirt backend has no controlled ComputerSystem".to_string())?;
-        self.system_state
-            .set(Arc::downgrade(&state.system_state))
-            .map_err(|_| "libvirt backend state is already bound".to_string())?;
+        let mut applied_state = self.applied_state.lock().unwrap();
+        if self.system_state.get().is_some() {
+            return Err("libvirt backend state is already bound".to_string());
+        }
         let applied = AppliedState::from(controlled_system);
         self.set_persistent_boot_selection(applied.persistent_boot_selection)
             .map_err(|error| error.to_string())?;
-        *self.applied_state.lock().unwrap() = applied;
+        self.system_state
+            .set(Arc::downgrade(&state.system_state))
+            .map_err(|_| "libvirt backend state is already bound".to_string())?;
+        *applied_state = applied;
         Ok(())
     }
 
@@ -128,10 +142,10 @@ impl LibvirtCallbacks {
             std::mem::take(&mut *restore_boot_after_power_on)
         };
         if restore_boot {
-            self.restore_persistent_boot_order()?;
             if let Some(system_state) = self.system_state.get().and_then(Weak::upgrade) {
                 system_state.on_boot_completed();
             }
+            self.restore_persistent_boot_order()?;
         }
         Ok(())
     }
@@ -728,6 +742,158 @@ esac
             .await
             .unwrap();
         response.status()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bind_state_can_retry_after_initial_boot_sync_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let virsh_path = directory.path().join("virsh");
+        let fail_define_path = directory.path().join("fail-define");
+        let defined_xml_path = directory.path().join("defined.xml");
+        fs::write(&fail_define_path, "").unwrap();
+        fs::write(
+            &virsh_path,
+            format!(
+                r#"#!/bin/sh
+case "$3" in
+  dumpxml) printf '<domain><os><type>hvm</type><boot dev="hd"/></os><devices/></domain>\n' ;;
+  define)
+    if [ -e '{}' ]; then
+      rm '{}'
+      exit 1
+    fi
+    cp "$4" '{}'
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+                fail_define_path.display(),
+                fail_define_path.display(),
+                defined_xml_path.display(),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&virsh_path, fs::Permissions::from_mode(0o755)).unwrap();
+        let callbacks = Arc::new(LibvirtCallbacks::new(Config {
+            virsh_path,
+            uri: "qemu:///system".to_string(),
+            domain: "retry-node".to_string(),
+            virtual_media_targets: BTreeMap::new(),
+        }));
+        let (_router, state) = machine_router(
+            &host_info(HardwareType::DellPowerEdgeR750),
+            callbacks.clone(),
+            "test-host-id".to_string(),
+            false,
+            MachineRouterOptions::default(),
+        );
+
+        assert!(callbacks.bind_state(&state).is_err());
+        callbacks.bind_state(&state).unwrap();
+        assert_eq!(
+            callbacks.bind_state(&state).unwrap_err(),
+            "libvirt backend state is already bound"
+        );
+        assert!(
+            fs::read_to_string(&defined_xml_path)
+                .unwrap()
+                .contains("<boot dev=\"network\"/><boot dev=\"hd\"/>")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn successful_start_consumes_once_when_boot_restoration_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let virsh_path = directory.path().join("virsh");
+        let state_path = directory.path().join("domain-state");
+        let fail_restore_path = directory.path().join("fail-restore");
+        let defined_xml_path = directory.path().join("defined.xml");
+        let active_xml_path = directory.path().join("active.xml");
+        fs::write(&state_path, "shut off\n").unwrap();
+        fs::write(
+            &virsh_path,
+            format!(
+                r#"#!/bin/sh
+case "$3" in
+  domstate) cat '{}' ;;
+  start) printf 'running\n' > '{}'; cp '{}' '{}' ;;
+  dumpxml) printf '<domain><os><type>hvm</type><boot dev="hd"/></os><devices/></domain>\n' ;;
+  define)
+    if [ -e '{}' ] && [ "$(cat '{}')" = running ]; then
+      exit 1
+    fi
+    cp "$4" '{}'
+    ;;
+  *) exit 1 ;;
+esac
+"#,
+                state_path.display(),
+                state_path.display(),
+                defined_xml_path.display(),
+                active_xml_path.display(),
+                fail_restore_path.display(),
+                state_path.display(),
+                defined_xml_path.display(),
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&virsh_path, fs::Permissions::from_mode(0o755)).unwrap();
+        let callbacks = Arc::new(LibvirtCallbacks::new(Config {
+            virsh_path,
+            uri: "qemu:///system".to_string(),
+            domain: "restore-failure-node".to_string(),
+            virtual_media_targets: BTreeMap::new(),
+        }));
+        let (router, state) = machine_router(
+            &host_info(HardwareType::DellPowerEdgeR750),
+            callbacks.clone(),
+            "test-host-id".to_string(),
+            false,
+            MachineRouterOptions::default(),
+        );
+        callbacks.bind_state(&state).unwrap();
+        let system = "/redfish/v1/Systems/System.Embedded.1";
+        let status = request(
+            &router,
+            Method::PATCH,
+            system,
+            json!({
+                "Boot": {
+                    "BootSourceOverrideEnabled": "Once",
+                    "BootSourceOverrideTarget": "Hdd",
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        fs::write(&fail_restore_path, "").unwrap();
+
+        let status = request(
+            &router,
+            Method::POST,
+            &format!("{system}/Actions/ComputerSystem.Reset"),
+            json!({"ResetType": "On"}),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let active_xml = fs::read_to_string(&active_xml_path).unwrap();
+        assert!(active_xml.contains("<boot dev=\"hd\"/>"));
+        assert!(!active_xml.contains("<boot dev=\"network\"/>"));
+        assert_eq!(
+            state
+                .system_state
+                .controlled_system()
+                .unwrap()
+                .boot_source_override()["BootSourceOverrideEnabled"],
+            "Disabled"
+        );
     }
 
     #[test]
