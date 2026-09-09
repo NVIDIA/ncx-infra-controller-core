@@ -198,10 +198,11 @@ before creating any user:
 `ADMIN_EDIT` keeps the attribute writable through the admin API while leaving it out of
 end-user profile forms, which is the policy Keycloak recommends over `ENABLED`.
 
-`firstName` and `lastName` are required by the default user profile. Omitting them
-leaves a `VERIFY_PROFILE` required action on the account, and Keycloak refuses the
-password grant for any account with a pending required action, so `nicocli login` fails
-with `Account is not fully set up`:
+`firstName` and `lastName` are required by Keycloak 24's default user profile, and the
+password grant fails with `Account is not fully set up` when either is unset. That check
+runs during authentication rather than being recorded on the account, so a user missing
+them still reports an empty `requiredActions` and looks complete in the Admin UI. Set
+both at creation:
 
 ```bash
 /opt/keycloak/bin/kcadm.sh create users -r nico \
@@ -229,10 +230,13 @@ with `oidc_id` present, which also proves the policy change above took effect:
 
 ```bash
 /opt/keycloak/bin/kcadm.sh get users -r nico \
-  --fields username,firstName,lastName,enabled,requiredActions,attributes
+  -q username=tenant-admin@acme-corp.example \
+  --fields id,username,firstName,lastName,enabled,requiredActions,attributes
 ```
 
-The bundled realm ships no human users, so this lists only the ones you created.
+`kcadm` omits fields that are unset, so read this by what is missing: `firstName`,
+`lastName`, and `attributes` all have to appear. An empty `requiredActions` does not on
+its own mean the account can authenticate.
 
 Any value for `oidc_id` works as long as it is unique within the realm and stable for
 the life of the user. Changing it later makes NICo treat the login as a new user.
@@ -440,8 +444,8 @@ authentication inactive, so confirm Keycloak is ready first.
 |---------|-------|-----------|
 | `401 Invalid authorization token in request` | Token `iss` is not `<externalBaseURL>/realms/<realm>`. Usually a token fetched over a port-forward, where Keycloak stamped the forwarded hostname instead | Decode the payload and compare `iss` with the configured issuer, then fetch the token from a host that produces a matching value |
 | `401 Service accounts are not enabled` | Token carries a `client_id` claim but `keycloak.serviceAccount` is `false` | Enable `serviceAccount` in the values and upgrade, or use a user token |
-| `nicocli login` fails with `authentication failed: Account is not fully set up` | The account has a pending required action, which Keycloak refuses to issue a password grant for. Usually `VERIFY_PROFILE` from a missing `firstName` or `lastName`, or `UPDATE_PASSWORD` from a temporary password | Read `requiredActions` with `kcadm.sh get users`, then set the missing profile fields and clear it with `kcadm.sh update users/<id> -r nico -s 'requiredActions=[]'` |
-| `403 User does not have any roles assigned` for a user whose role is assigned, or a user record that reappears on each login | The `oidc_id` claim is empty because the attribute was discarded. Keycloak 24 defaults `unmanagedAttributePolicy` to `DISABLED` | Set the policy to `ADMIN_EDIT`, re-set `oidc_id` on the user, then decode the token and confirm the claim is present |
+| `nicocli login` fails with `authentication failed: Account is not fully set up` | Usually `firstName` or `lastName` is unset, which Keycloak 24's default user profile requires. The validation runs at authentication time, so `requiredActions` is empty and the Admin UI shows nothing wrong. A temporary password produces the same message, through an `UPDATE_PASSWORD` action that *is* recorded | Read the account with `kcadm.sh get users` and treat an absent `firstName` or `lastName` as the cause, since `kcadm` omits unset fields. Set both with `kcadm.sh update users/<id>`. Clear `requiredActions` only if it is non-empty |
+| `401 Failed to retrieve or create user record, DB error` on a human user's first request, with a valid token | The `oidc_id` claim is empty because the attribute was discarded, and NICo rejects an empty user key rather than creating a row. Keycloak 24 defaults `unmanagedAttributePolicy` to `DISABLED` | Set the policy to `ADMIN_EDIT`, re-set `oidc_id` on the user, then decode the token and confirm the claim is present |
 | `403 User does not have any roles assigned` | No realm role parsed into an org. Usually a role name without exactly one colon | Check `realm_access.roles` in the decoded token |
 | `403 Requested organization not found in token claims` | The `{org}` path segment does not match any role prefix. Often a case mismatch | Use the lowercase org name in the path and in `api.org` |
 | `403 User does not have Tenant Admin role with org` | Role parsed, but it is not `TENANT_ADMIN` | Assign `acme-corp:TENANT_ADMIN` and retry after the one-minute cache expires |
