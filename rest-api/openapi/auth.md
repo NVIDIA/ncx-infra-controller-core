@@ -137,6 +137,7 @@ Key fields:
 - `scopes` is optional. If set, the token must contain all configured scopes. NICo checks the `scope`, `scopes`, and `scp` claims.
 - `claimMappings` is required and controls the organization and roles assigned to authenticated users.
 - A claim mapping may also set `audiences`. The token `aud` claim must contain at least one exact, case-sensitive match for the requested organization's mapping. If issuer and mapping audiences are both configured, both gates must pass.
+- A claim mapping may also set `scopes`, which the token must satisfy in full, exactly like the issuer-level list. Mapping scopes are an additional gate rather than a replacement: a token that satisfies the issuer-level scopes but not the requested organization's mapping is rejected for that organization with `403`, while other organizations on the same issuer are unaffected. The audience gate is evaluated first, so a token failing both reports the audience error.
 
 ### Audience Matching Examples
 
@@ -224,6 +225,30 @@ A token requesting `tenant-org` needs:
 - at least one of `tenant-client-a` or `tenant-client-b`.
 
 For example, `aud: ["api-audience", "tenant-client-a"]` authorizes `tenant-org` but not `automation-org`.
+
+### Per-Organization Scopes
+
+Scopes work the same way across the two levels, except that a configured list uses ALL-match semantics at both: the token must carry every value.
+
+```yaml
+issuers:
+  - issuer: "https://idp.example.com"
+    jwks: "https://idp.example.com/.well-known/jwks.json"
+    origin: "custom"
+    scopes: ["openid"]
+    claimMappings:
+      - orgName: "automation-org"
+        orgDisplayName: "Automation Organization"
+        roles: ["PROVIDER_ADMIN"]
+        scopes: ["nico:admin"]
+      - orgName: "tenant-org"
+        orgDisplayName: "Tenant Organization"
+        roles: ["TENANT_ADMIN"]
+```
+
+A token with `scope: "openid"` authorizes `tenant-org`, which adds no scope requirement, and is rejected for `automation-org` with `403`. `scope: "openid nico:admin"` authorizes both. A token without `openid` is rejected before any organization is resolved, because the issuer-level list applies to the whole issuer.
+
+Use this to require a stronger token for the organizations that grant provider-level access, without splitting them onto a separate issuer.
 
 NICo supports `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`, and `EdDSA` signed tokens.
 
@@ -498,7 +523,7 @@ If requests fail after authentication is enabled, check the token and REST API c
 
 - `401 Unauthorized` with an audience error usually means the token `aud` claim does not match any configured `audiences`. Update the IdP client audience, update NICo `audiences`, or omit `audiences` if audience enforcement is not needed.
 - `403 Forbidden` with an organization audience error means issuer validation passed, but token `aud` did not match the requested claim mapping's `audiences`.
-- `403 Forbidden` with a scope error usually means the token is missing one or more configured `scopes`. NICo checks `scope`, `scopes`, and `scp`.
+- `403 Forbidden` with a scope error usually means the token is missing one or more configured `scopes`. NICo checks `scope`, `scopes`, and `scp`. An organization scope error means the issuer-level list passed but the requested claim mapping's `scopes` did not.
 - Invalid token errors often come from an unreachable `jwks` URL, an unsupported signing key, or an `issuer` value that does not exactly match the token `iss` claim.
 - Missing authorization usually means the selected `claimMappings` entry did not produce a valid organization and role set. Check `orgName`, `orgAttribute`, `roles`, and `rolesAttribute`.
 - For Keycloak, confirm that `externalBaseURL` matches the token issuer and that the client secret is mounted at `clientSecretPath`.

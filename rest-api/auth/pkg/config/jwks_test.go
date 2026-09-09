@@ -922,7 +922,7 @@ func TestValidateAudiences(t *testing.T) {
 	})
 }
 
-func TestGetOrgDataFromClaimMappingAudiences(t *testing.T) {
+func TestGetOrgDataFromClaimMappingFilters(t *testing.T) {
 	tests := []struct {
 		name       string
 		config     *JwksConfig
@@ -953,13 +953,66 @@ func TestGetOrgDataFromClaimMappingAudiences(t *testing.T) {
 			wantErr:    core.ErrInvalidAudience,
 		},
 		{
-			name: "mapping without audiences remains allowed",
+			name: "mapping without audience or scope filters remains allowed",
 			config: &JwksConfig{ClaimMappings: []ClaimMapping{{
 				OrgName: "acme",
 				Roles:   []string{"TENANT_ADMIN"},
 			}}},
 			claims:     jwt.MapClaims{},
 			requestOrg: "acme",
+		},
+		{
+			name: "token carrying every required scope authorizes org",
+			config: &JwksConfig{ClaimMappings: []ClaimMapping{{
+				OrgName: "acme",
+				Roles:   []string{"TENANT_ADMIN"},
+				Scopes:  []string{"nico:read", "nico:write"},
+			}}},
+			claims:     jwt.MapClaims{"scope": "openid nico:read nico:write"},
+			requestOrg: "acme",
+		},
+		{
+			name: "token missing one required scope denies org",
+			config: &JwksConfig{ClaimMappings: []ClaimMapping{{
+				OrgName: "acme",
+				Roles:   []string{"TENANT_ADMIN"},
+				Scopes:  []string{"nico:read", "nico:write"},
+			}}},
+			claims:     jwt.MapClaims{"scope": "openid nico:read"},
+			requestOrg: "acme",
+			wantErr:    core.ErrInvalidScope,
+		},
+		{
+			name: "token with no scope claim denies a scoped org",
+			config: &JwksConfig{ClaimMappings: []ClaimMapping{{
+				OrgName: "acme",
+				Roles:   []string{"TENANT_ADMIN"},
+				Scopes:  []string{"nico:read"},
+			}}},
+			claims:     jwt.MapClaims{},
+			requestOrg: "acme",
+			wantErr:    core.ErrInvalidScope,
+		},
+		{
+			name: "scopes only gate the org that requires them",
+			config: &JwksConfig{ClaimMappings: []ClaimMapping{
+				{OrgName: "acme", Roles: []string{"TENANT_ADMIN"}, Scopes: []string{"nico:read"}},
+				{OrgName: "globex", Roles: []string{"TENANT_ADMIN"}},
+			}},
+			claims:     jwt.MapClaims{},
+			requestOrg: "globex",
+		},
+		{
+			name: "audience is rejected before scopes",
+			config: &JwksConfig{ClaimMappings: []ClaimMapping{{
+				OrgName:   "acme",
+				Roles:     []string{"TENANT_ADMIN"},
+				Audiences: []string{"org-acme"},
+				Scopes:    []string{"nico:read"},
+			}}},
+			claims:     jwt.MapClaims{"aud": "different-audience"},
+			requestOrg: "acme",
+			wantErr:    core.ErrInvalidAudience,
 		},
 		{
 			name: "reserved dynamic org is rejected before audience",

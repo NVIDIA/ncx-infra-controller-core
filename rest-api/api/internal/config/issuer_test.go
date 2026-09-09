@@ -249,11 +249,15 @@ issuers: []
 
 func TestConvertClaimMappings_LowercasesOrgName(t *testing.T) {
 	out := convertClaimMappings([]cdbm.ClaimMapping{
-		{OrgName: "ACME-Corp", Roles: []string{"TENANT_ADMIN"}},
+		{OrgName: "ACME-Corp", Roles: []string{"TENANT_ADMIN"}, Audiences: []string{"org-acme"}, Scopes: []string{"nico:read"}},
 		{OrgAttribute: "org", OrgDisplayAttribute: "org_display", RolesAttribute: "roles"},
 	})
 	require.Len(t, out, 2)
 	assert.Equal(t, "acme-corp", out[0].OrgName)
+	// The per-mapping gates decide authorization, so dropping one here would widen
+	// access silently rather than fail.
+	assert.Equal(t, []string{"org-acme"}, out[0].Audiences)
+	assert.Equal(t, []string{"nico:read"}, out[0].Scopes)
 	assert.Equal(t, "org", out[1].OrgAttribute)
 	assert.Equal(t, "", out[1].OrgName)
 }

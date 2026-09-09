@@ -106,6 +106,9 @@ type ClaimMapping struct {
 	// Audiences: optional token audiences allowed to authorize this mapping. Any one exact match is sufficient.
 	Audiences []string `mapstructure:"audiences"`
 
+	// Scopes: optional scopes the token must carry to authorize this mapping. All are required, in addition to any issuer-level scopes.
+	Scopes []string `mapstructure:"scopes"`
+
 	// IsServiceAccount: if true, assigns admin roles (PROVIDER_ADMIN, TENANT_ADMIN). Ignores RolesAttribute/Roles.
 	IsServiceAccount bool `mapstructure:"isServiceAccount"`
 }
@@ -731,15 +734,20 @@ func (jcfg *JwksConfig) ValidateAudience(claims jwt.MapClaims) error {
 	return nil
 }
 
+// hasAllScopes checks if the token carries every required scope.
+func hasAllScopes(claims jwt.MapClaims, scopes []string) bool {
+	if len(scopes) == 0 {
+		return true
+	}
+
+	tokenScopeSet := mapset.NewSet(core.GetScopes(claims)...)
+	requiredScopeSet := mapset.NewSet(scopes...)
+	return tokenScopeSet.IsSuperset(requiredScopeSet)
+}
+
 // ValidateScopes checks token has ALL configured scopes. Returns nil if none configured.
 func (jcfg *JwksConfig) ValidateScopes(claims jwt.MapClaims) error {
-	if len(jcfg.Scopes) == 0 {
-		return nil
-	}
-	tokenScopes := core.GetScopes(claims)
-	tokenScopeSet := mapset.NewSet(tokenScopes...)
-	requiredScopeSet := mapset.NewSet(jcfg.Scopes...)
-	if !tokenScopeSet.IsSuperset(requiredScopeSet) {
+	if !hasAllScopes(claims, jcfg.Scopes) {
 		return core.ErrInvalidScope
 	}
 	return nil
@@ -749,6 +757,7 @@ func (jcfg *JwksConfig) ValidateScopes(claims jwt.MapClaims) error {
 // This method validates org access and returns errors if:
 //   - core.ErrReservedOrgName: dynamic org claims a statically-configured org name
 //   - core.ErrInvalidAudience: token audience is not authorized for the requested org
+//   - core.ErrInvalidScope: token is missing a scope the requested org's mapping requires
 //   - core.ErrInvalidConfiguration: no claim mapping configured for the requested org
 //   - core.ErrNoClaimRoles: no roles found for the requested org
 //
@@ -768,6 +777,10 @@ func (jcfg *JwksConfig) GetOrgDataFromClaim(claims jwt.MapClaims, reqOrgFromRout
 
 		if !jcfg.hasAnyAudience(claims, cm.Audiences) {
 			return nil, false, core.ErrInvalidAudience
+		}
+
+		if !hasAllScopes(claims, cm.Scopes) {
+			return nil, false, core.ErrInvalidScope
 		}
 
 		roles, err := cm.GetRoles(claims)

@@ -49,6 +49,8 @@ type ClaimMapping struct {
 	Roles []string `json:"roles,omitempty"`
 	// Audiences is the optional per-mapping token audiences allowed to authorize this mapping.
 	Audiences []string `json:"audiences,omitempty"`
+	// Scopes is the optional per-mapping scope set the token must carry in full.
+	Scopes []string `json:"scopes,omitempty"`
 	// IsServiceAccount, when true, assigns admin roles (disconnected mode only).
 	IsServiceAccount bool `json:"isServiceAccount,omitempty"`
 }

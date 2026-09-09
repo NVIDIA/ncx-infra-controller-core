@@ -22,7 +22,7 @@ import (
 // checks if the AuthIssuerClaimMapping type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &AuthIssuerClaimMapping{}
 
-// AuthIssuerClaimMapping One entry in an Auth Issuer's claim mapping array.  Via the API, only `orgName` (required), `roles` (optional static list), and `isServiceAccount` (disconnected mode only) may be set. Attribute-driven fields (`orgAttribute`, `orgDisplayAttribute`, `rolesAttribute`) are reserved for ConfigMap-defined issuers and will be rejected with `400` if supplied.  An org name may be mapped at most once per issuer, and by default at most once across all issuers (both ConfigMap and API-created). Deployments that set `auth.sharedStaticOrgs` let several issuers map the same org with different roles; the name stays reserved either way, so no attribute-driven mapping can claim it. At most one `isServiceAccount: true` mapping may exist per org across all issuers, whether or not org names are shared.
+// AuthIssuerClaimMapping One entry in an Auth Issuer's claim mapping array.  Via the API, only `orgName` (required), `roles` (optional static list), `audiences`, `scopes`, and `isServiceAccount` (disconnected mode only) may be set. Attribute-driven fields (`orgAttribute`, `orgDisplayAttribute`, `rolesAttribute`) are reserved for ConfigMap-defined issuers and will be rejected with `400` if supplied.  An org name may be mapped at most once per issuer, and by default at most once across all issuers (both ConfigMap and API-created). Deployments that set `auth.sharedStaticOrgs` let several issuers map the same org with different roles; the name stays reserved either way, so no attribute-driven mapping can claim it. At most one `isServiceAccount: true` mapping may exist per org across all issuers, whether or not org names are shared.
 type AuthIssuerClaimMapping struct {
 	// Dynamic org claim path. Rejected for API-created issuers.
 	OrgAttribute *string `json:"orgAttribute,omitempty"`
@@ -36,8 +36,10 @@ type AuthIssuerClaimMapping struct {
 	Roles []string `json:"roles,omitempty"`
 	// Dynamic roles claim path. Rejected for API-created issuers.
 	RolesAttribute *string `json:"rolesAttribute,omitempty"`
-	// Optional per-mapping audience filter.
+	// Optional per-mapping audience filter. The token needs any one of these values.
 	Audiences []string `json:"audiences,omitempty"`
+	// Optional per-mapping scope requirement. The token must carry every value, in addition to any issuer-level `scopes`. A token that satisfies the issuer but not this mapping is rejected with `403` for that org only.
+	Scopes []string `json:"scopes,omitempty"`
 	// When true, auto-assigns PROVIDER_ADMIN and TENANT_ADMIN roles (disconnected mode only). Cannot be combined with `roles`, `rolesAttribute`, or `orgAttribute`. At most one service-account mapping is permitted per org across all issuers.
 	IsServiceAccount *bool `json:"isServiceAccount,omitempty"`
 }
@@ -278,6 +280,38 @@ func (o *AuthIssuerClaimMapping) SetAudiences(v []string) {
 	o.Audiences = v
 }
 
+// GetScopes returns the Scopes field value if set, zero value otherwise.
+func (o *AuthIssuerClaimMapping) GetScopes() []string {
+	if o == nil || IsNil(o.Scopes) {
+		var ret []string
+		return ret
+	}
+	return o.Scopes
+}
+
+// GetScopesOk returns a tuple with the Scopes field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *AuthIssuerClaimMapping) GetScopesOk() ([]string, bool) {
+	if o == nil || IsNil(o.Scopes) {
+		return nil, false
+	}
+	return o.Scopes, true
+}
+
+// HasScopes returns a boolean if a field has been set.
+func (o *AuthIssuerClaimMapping) HasScopes() bool {
+	if o != nil && !IsNil(o.Scopes) {
+		return true
+	}
+
+	return false
+}
+
+// SetScopes gets a reference to the given []string and assigns it to the Scopes field.
+func (o *AuthIssuerClaimMapping) SetScopes(v []string) {
+	o.Scopes = v
+}
+
 // GetIsServiceAccount returns the IsServiceAccount field value if set, zero value otherwise.
 func (o *AuthIssuerClaimMapping) GetIsServiceAccount() bool {
 	if o == nil || IsNil(o.IsServiceAccount) {
@@ -338,6 +372,9 @@ func (o AuthIssuerClaimMapping) ToMap() (map[string]interface{}, error) {
 	}
 	if !IsNil(o.Audiences) {
 		toSerialize["audiences"] = o.Audiences
+	}
+	if !IsNil(o.Scopes) {
+		toSerialize["scopes"] = o.Scopes
 	}
 	if !IsNil(o.IsServiceAccount) {
 		toSerialize["isServiceAccount"] = o.IsServiceAccount

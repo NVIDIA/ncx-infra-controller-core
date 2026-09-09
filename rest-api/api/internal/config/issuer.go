@@ -588,6 +588,7 @@ func convertClaimMappings(in []cdbm.ClaimMapping) []cauth.ClaimMapping {
 			RolesAttribute:      cm.RolesAttribute,
 			Roles:               cm.Roles,
 			Audiences:           cm.Audiences,
+			Scopes:              cm.Scopes,
 			IsServiceAccount:    cm.IsServiceAccount,
 		}
 		if out[i].OrgName != "" {

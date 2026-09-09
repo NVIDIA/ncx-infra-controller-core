@@ -80,6 +80,7 @@ type APIAuthIssuerClaimMapping struct {
 	RolesAttribute      string   `json:"rolesAttribute"`
 	Roles               []string `json:"roles"`
 	Audiences           []string `json:"audiences"`
+	Scopes              []string `json:"scopes"`
 	IsServiceAccount    bool     `json:"isServiceAccount"`
 }
 
@@ -93,6 +94,7 @@ func (m APIAuthIssuerClaimMapping) ToDBModel() cdbm.ClaimMapping {
 		RolesAttribute:      m.RolesAttribute,
 		Roles:               m.Roles,
 		Audiences:           m.Audiences,
+		Scopes:              m.Scopes,
 		IsServiceAccount:    m.IsServiceAccount,
 	}
 }
@@ -107,6 +109,10 @@ func (m *APIAuthIssuerClaimMapping) FromDBModel(dbMapping cdbm.ClaimMapping) {
 	if audiences == nil {
 		audiences = []string{}
 	}
+	scopes := dbMapping.Scopes
+	if scopes == nil {
+		scopes = []string{}
+	}
 
 	m.OrgAttribute = dbMapping.OrgAttribute
 	m.OrgDisplayAttribute = dbMapping.OrgDisplayAttribute
@@ -115,6 +121,7 @@ func (m *APIAuthIssuerClaimMapping) FromDBModel(dbMapping cdbm.ClaimMapping) {
 	m.RolesAttribute = dbMapping.RolesAttribute
 	m.Roles = roles
 	m.Audiences = audiences
+	m.Scopes = scopes
 	m.IsServiceAccount = dbMapping.IsServiceAccount
 }
 

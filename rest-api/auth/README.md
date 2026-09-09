@@ -31,6 +31,7 @@ issuers:
 - **Audiences:** token needs at least one match → 401 on failure
 - **Scopes:** token needs all configured → 403 on failure (checks `scope`, `scopes`, `scp` claims)
 - **Mapping audiences:** each mapping may require any one exact `aud` match → 403 for that organization
+- **Mapping scopes:** each mapping may require all of its own scopes, on top of the issuer-level list → 403 for that organization
 
 ---
 
@@ -156,6 +157,28 @@ issuers:
 
 A token with `aud: ["nico-api", "clientA"]` can access only `orgA`; a token with `aud: ["nico-api", "clientB"]` can access only `orgB`.
 
+### Shared Issuer with Per-Org Scopes
+
+Mapping `scopes` gate one organization the way issuer `scopes` gate the whole issuer: the token must carry every configured value, and both levels apply.
+
+```yaml
+issuers:
+  - issuer: https://idp.example.com
+    jwks: https://idp.example.com/.well-known/jwks.json
+    origin: custom
+    scopes: ["openid"]
+    claimMappings:
+      - orgName: orgA
+        orgDisplayName: Organization A
+        roles: ["PROVIDER_ADMIN"]
+        scopes: ["nico:admin"]
+      - orgName: orgB
+        orgDisplayName: Organization B
+        roles: ["TENANT_ADMIN"]
+```
+
+A token with `scope: "openid"` can access only `orgB`; `orgA` additionally requires `nico:admin`.
+
 ---
 
 ## Validation Rules
@@ -185,6 +208,7 @@ A token with `aud: ["nico-api", "clientA"]` can access only `orgA`; a token with
 | Token audience mismatch | Check `aud` claim; update `audiences` or remove to skip |
 | Organization audience mismatch | Check the selected claim mapping's `audiences`; token `aud` must match at least one |
 | Token scopes mismatch | Check `scope`/`scopes`/`scp` claim; ensure all required scopes present |
+| Organization scopes mismatch | Check the selected claim mapping's `scopes`; the token must carry all of them |
 | Invalid token | Verify `jwks` URL accessible; `issuer` matches `iss` claim exactly |
 | Invalid claim mapping | Add `roles`, `rolesAttribute`, or `isServiceAccount` |
 

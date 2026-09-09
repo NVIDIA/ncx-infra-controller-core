@@ -114,14 +114,19 @@ func TestAPIAuthIssuer_FromDBModel(t *testing.T) {
 
 	id := uuid.New()
 	db := &cdbm.Issuer{
-		ID:            id,
-		Origin:        "custom",
-		IssuerURL:     "https://idp.acme.com",
-		JWKSUrl:       "https://idp.acme.com/jwks",
-		JWKSTimeout:   "5s",
-		Audiences:     []string{"api"},
-		Scopes:        []string{"carbide"},
-		ClaimMappings: []cdbm.ClaimMapping{{OrgName: "acme", Roles: []string{"TENANT_ADMIN"}}},
+		ID:          id,
+		Origin:      "custom",
+		IssuerURL:   "https://idp.acme.com",
+		JWKSUrl:     "https://idp.acme.com/jwks",
+		JWKSTimeout: "5s",
+		Audiences:   []string{"api"},
+		Scopes:      []string{"carbide"},
+		ClaimMappings: []cdbm.ClaimMapping{{
+			OrgName:   "acme",
+			Roles:     []string{"TENANT_ADMIN"},
+			Audiences: []string{"org-acme"},
+			Scopes:    []string{"nico:read"},
+		}},
 	}
 	api := &APIAuthIssuer{}
 	api.FromDBModel(db)
@@ -129,6 +134,11 @@ func TestAPIAuthIssuer_FromDBModel(t *testing.T) {
 	assert.Equal(t, "https://idp.acme.com", api.IssuerURL)
 	require.Len(t, api.ClaimMappings, 1)
 	assert.Equal(t, "acme", api.ClaimMappings[0].OrgName)
+	assert.Equal(t, []string{"org-acme"}, api.ClaimMappings[0].Audiences)
+	assert.Equal(t, []string{"nico:read"}, api.ClaimMappings[0].Scopes)
+
+	// Per-mapping filters survive the round trip back to persistence.
+	assert.Equal(t, db.ClaimMappings, APIAuthIssuerClaimMappings(api.ClaimMappings).ToDBModel())
 
 	// nil slices are normalized to empty (stable JSON output)
 	empty := &APIAuthIssuer{}

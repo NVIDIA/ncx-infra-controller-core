@@ -16393,14 +16393,16 @@ components:
             - orgName: acme-provider
               orgDisplayName: ACME Provider
               roles: [PROVIDER_ADMIN]
+              scopes: [nico:admin]
     AuthIssuerClaimMapping:
       type: object
       title: AuthIssuerClaimMapping
       description: |-
         One entry in an Auth Issuer's claim mapping array.
 
-        Via the API, only `orgName` (required), `roles` (optional static list), and
-        `isServiceAccount` (disconnected mode only) may be set. Attribute-driven fields
+        Via the API, only `orgName` (required), `roles` (optional static list),
+        `audiences`, `scopes`, and `isServiceAccount` (disconnected mode only) may be
+        set. Attribute-driven fields
         (`orgAttribute`, `orgDisplayAttribute`, `rolesAttribute`) are reserved for
         ConfigMap-defined issuers and will be rejected with `400` if supplied.
 
@@ -16437,7 +16439,12 @@ components:
           type: array
           items:
             type: string
-          description: Optional per-mapping audience filter.
+          description: Optional per-mapping audience filter. The token needs any one of these values.
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Optional per-mapping scope requirement. The token must carry every value, in addition to any issuer-level `scopes`. A token that satisfies the issuer but not this mapping is rejected with `403` for that org only.
         isServiceAccount:
           type: boolean
           description: |-
@@ -16449,6 +16456,7 @@ components:
           orgDisplayName: ACME Provider
           roles: [PROVIDER_ADMIN]
           audiences: [nico-api]
+          scopes: [nico:admin]
           isServiceAccount: false
     MeasuredBootTrustedMachineCreateRequest:
       type: object
