@@ -61,6 +61,12 @@ nico-rest-api:
 
 See [auth documentation](../../rest-api/auth/README.md) for full issuer configuration options.
 
+Cross-issuer `orgName` uniqueness is enforced from this release, and a
+violation stops the API at startup. Before upgrading, check whether any two
+issuers in `config.issuers` map the same `orgName`; if they do, remove the
+duplicates or set `config.auth.sharedStaticOrgs: true` when several issuers are
+meant to serve one organization.
+
 ### Option B: Keycloak
 
 ```bash

@@ -478,6 +478,20 @@ Use these rules when reviewing a configuration before rollout:
 - Dynamic organizations cannot claim statically configured organization names.
 - Roles must be `TENANT_ADMIN`, `PROVIDER_ADMIN`, or both.
 
+Configuration is validated at startup, and a violation is fatal: the API logs
+`Invalid issuers configuration` with the offending issuer and exits rather than
+serving requests under an ambiguous mapping.
+
+#### Upgrade check
+
+Cross-issuer `orgName` uniqueness is enforced from this release. Before
+upgrading, check whether any two issuers in the deployed configuration map the
+same `orgName`. If they do, either remove the duplicate mappings or set
+`auth.sharedStaticOrgs: true` for a deployment that intends several issuers to
+serve one organization. A shared name stays reserved against dynamic
+organization mappings, and only one issuer may hold the organization's service
+account mapping.
+
 ### Troubleshooting
 
 If requests fail after authentication is enabled, check the token and REST API configuration together.
