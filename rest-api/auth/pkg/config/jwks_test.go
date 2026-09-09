@@ -269,6 +269,114 @@ func TestJwksConfig_UpdateJWKs(t *testing.T) {
 		require.Error(t, config.UpdateJWKS())
 		assert.Equal(t, 2, requestCount)
 	})
+
+	t.Run("in-flight update remains retryable", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			warmCache bool
+		}{
+			{name: "cold cache"},
+			{name: "warm cache", warmCache: true},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+				require.NoError(t, err)
+
+				requestStarted := make(chan struct{})
+				releaseResponse := make(chan struct{})
+				responseResult := make(chan error, 2)
+				var requestStartedOnce sync.Once
+				var releaseResponseOnce sync.Once
+				release := func() {
+					releaseResponseOnce.Do(func() { close(releaseResponse) })
+				}
+
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requestStartedOnce.Do(func() { close(requestStarted) })
+					<-releaseResponse
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, writeErr := w.Write([]byte(createJWKSResponse(privateKey.Public().(*rsa.PublicKey), "new-key-id", "RS256", "sig")))
+					responseResult <- writeErr
+				}))
+				defer server.Close()
+				defer release()
+
+				config := &JwksConfig{
+					URL:    server.URL,
+					Issuer: "test.example.com",
+				}
+				if tt.warmCache {
+					oldPrivateKey, keyErr := rsa.GenerateKey(rand.Reader, 2048)
+					require.NoError(t, keyErr)
+					config.jwks = &core.JWKS{Set: &jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+						Key:       oldPrivateKey.Public(),
+						KeyID:     "old-key-id",
+						Algorithm: "RS256",
+						Use:       "sig",
+					}}}}
+				}
+
+				tokenString, err := createTokenWithGoJose(privateKey, true, "new-key-id")
+				require.NoError(t, err)
+				updateResult := make(chan error, 1)
+				go func() {
+					updateResult <- config.UpdateJWKS()
+				}()
+
+				select {
+				case <-requestStarted:
+				case <-time.After(2 * time.Second):
+					t.Fatal("timed out waiting for JWKS request to start")
+				}
+
+				type validationResult struct {
+					token *jwt.Token
+					err   error
+				}
+				validationDone := make(chan validationResult, 1)
+				go func() {
+					token, validationErr := config.ValidateToken(tokenString, jwt.MapClaims{})
+					validationDone <- validationResult{token: token, err: validationErr}
+				}()
+
+				select {
+				case result := <-validationDone:
+					t.Fatalf("validation returned before the in-flight update completed: %v", result.err)
+				case <-time.After(50 * time.Millisecond):
+				}
+
+				release()
+				select {
+				case err := <-responseResult:
+					require.NoError(t, err)
+				case <-time.After(2 * time.Second):
+					t.Fatal("timed out waiting for JWKS response")
+				}
+				select {
+				case err := <-updateResult:
+					require.NoError(t, err)
+				case <-time.After(2 * time.Second):
+					t.Fatal("timed out waiting for JWKS update")
+				}
+				select {
+				case result := <-validationDone:
+					require.NoError(t, result.err)
+					require.NotNil(t, result.token)
+					assert.True(t, result.token.Valid)
+				case <-time.After(2 * time.Second):
+					t.Fatal("timed out waiting for token validation")
+				}
+				select {
+				case err := <-responseResult:
+					t.Fatalf("token validation started an unexpected second JWKS request: %v", err)
+				default:
+				}
+			})
+		}
+	})
 }
 
 // TestJwksConfig_Concurrency tests thread safety of JWKS operations
@@ -319,23 +427,17 @@ func TestJwksConfig_Concurrency(t *testing.T) {
 	// Check for errors - allow "update already in progress" as this is expected concurrent behavior
 	var unexpectedErrors []error
 	var updateInProgressCount int
-	var notInitializedCount int
 	for err := range errors {
-		switch err {
-		case core.ErrJWKSUpdateInProgress:
+		if err == core.ErrJWKSUpdateInProgress {
 			updateInProgressCount++
-		case core.ErrJWKSNotInitialized:
-			notInitializedCount++
-		default:
+		} else {
 			unexpectedErrors = append(unexpectedErrors, err)
 		}
 	}
 
-	// At least one goroutine performs the update; the others may observe either
-	// the in-progress state or the still-empty cache.
-	transientErrorCount := updateInProgressCount + notInitializedCount
-	if transientErrorCount > numGoroutines-1 {
-		t.Errorf("Too many transient update errors: expected at most %d, got %d", numGoroutines-1, transientErrorCount)
+	// Should have at most 9 "update in progress" errors (since 10 goroutines, 1 succeeds)
+	if updateInProgressCount > numGoroutines-1 {
+		t.Errorf("Too many 'update in progress' errors: expected at most %d, got %d", numGoroutines-1, updateInProgressCount)
 	}
 
 	// Should not have any other types of errors

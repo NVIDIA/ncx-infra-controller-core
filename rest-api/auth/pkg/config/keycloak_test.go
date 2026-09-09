@@ -202,6 +202,9 @@ func TestKeycloakConfig_GetJwksConfig(t *testing.T) {
 
 		tokenString, err := createTokenWithGoJose(privateKey, true, "test-key-id")
 		require.NoError(t, err)
+		jwksConfig.Lock()
+		jwksConfig.LastAttempted = time.Now()
+		jwksConfig.Unlock()
 		_, err = jwksConfig.ValidateToken(tokenString, jwt.MapClaims{})
 		require.Error(t, err)
 		assert.Equal(t, int32(1), requestCount.Load())

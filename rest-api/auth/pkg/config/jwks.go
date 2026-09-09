@@ -151,6 +151,7 @@ type JwksConfig struct {
 	LastUpdated   time.Time     // last successful JWKS update timestamp
 	LastAttempted time.Time     // last JWKS update attempt timestamp
 	jwks          *core.JWKS    // cached JWKS keys
+	updateDone    chan struct{} // closed when the current JWKS update finishes
 	JWKSTimeout   time.Duration // fetch timeout (default: 5s)
 
 	Audiences []string // allowed audience values (token must have at least one)
@@ -249,6 +250,10 @@ func (jcfg *JwksConfig) UpdateJWKS() error {
 		return core.ErrJWKSURLEmpty
 	}
 	if !jcfg.LastAttempted.IsZero() && time.Since(jcfg.LastAttempted) < minUpdateInterval {
+		if atomic.LoadUint32(&jcfg.IsUpdating) != 0 {
+			jcfg.Unlock()
+			return core.ErrJWKSUpdateInProgress
+		}
 		hasCachedKeys := jcfg.jwks != nil
 		jcfg.Unlock()
 		if !hasCachedKeys {
@@ -260,10 +265,17 @@ func (jcfg *JwksConfig) UpdateJWKS() error {
 		jcfg.Unlock()
 		return core.ErrJWKSUpdateInProgress
 	}
+	jcfg.updateDone = make(chan struct{})
 	urlCopy, timeout := jcfg.URL, jcfg.JWKSTimeout
 	jcfg.LastAttempted = time.Now()
 	jcfg.Unlock()
-	defer atomic.StoreUint32(&jcfg.IsUpdating, 0)
+	defer func() {
+		jcfg.Lock()
+		atomic.StoreUint32(&jcfg.IsUpdating, 0)
+		close(jcfg.updateDone)
+		jcfg.updateDone = nil
+		jcfg.Unlock()
+	}()
 
 	jwks, err := core.NewJWKSFromURL(urlCopy, timeout)
 	if err != nil {
@@ -363,30 +375,25 @@ func (jcfg *JwksConfig) getPublicKey(token *jwt.Token) (interface{}, error) {
 
 // tryUpdateJWKSWithRetry attempts to update JWKS with retry logic for concurrent updates
 func (jcfg *JwksConfig) tryUpdateJWKSWithRetry() error {
-	const maxRetries = 5
-	const retryDelay = 1 * time.Second
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt == 1 {
-			updateErr := jcfg.UpdateJWKS()
-			if updateErr == nil {
-				return nil
-			}
-			if !errors.Is(updateErr, core.ErrJWKSUpdateInProgress) {
-				return updateErr
-			}
-		}
-
-		if attempt < maxRetries {
-			time.Sleep(retryDelay)
-		}
-
-		if jcfg.GetJWKS() != nil {
-			return nil
-		}
+	updateErr := jcfg.UpdateJWKS()
+	if updateErr == nil {
+		return nil
+	}
+	if !errors.Is(updateErr, core.ErrJWKSUpdateInProgress) {
+		return updateErr
 	}
 
-	return core.ErrJWKSUpdateInProgress
+	jcfg.RLock()
+	updateDone := jcfg.updateDone
+	jcfg.RUnlock()
+	if updateDone != nil {
+		<-updateDone
+	}
+
+	if jcfg.GetJWKS() == nil {
+		return core.ErrJWKSNotInitialized
+	}
+	return nil
 }
 
 // tryMultipleKeysForValidation tries all candidate keys for algorithm-only validation
