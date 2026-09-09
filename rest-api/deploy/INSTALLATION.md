@@ -60,6 +60,7 @@ deploy/kustomize/
 - `kubectl` configured with cluster-admin access
 - `helm` (v3) — for the vendored Temporal chart at `temporal-helm/temporal/`
 - [cert-manager](https://cert-manager.io/docs/installation/) installed in the cluster (v1.13+)
+- PostgreSQL 13 or newer, if you bring your own instance instead of the reference deployment in Step 3 — migrations call the built-in `gen_random_uuid()`, which earlier versions provide only through the `pgcrypto` extension
 - Container images built and pushed to a registry accessible from the cluster — see [Building and Pushing Images](#building-and-pushing-images)
 
 ---

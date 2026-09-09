@@ -18,6 +18,9 @@ func init() {
 			handlePanic(terr, "failed to begin transaction")
 		}
 
+		// gen_random_uuid() is built in from PostgreSQL 13, the minimum this
+		// deployment supports (rest-api/deploy/INSTALLATION.md).
+		//
 		// The `issuer` table is a persistent, runtime-editable mirror of the
 		// static ConfigMap `IssuerConfig` shape. Each row is one external JWT
 		// issuer; `claim_mappings` is the same JSONB array the in-memory
