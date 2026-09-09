@@ -440,6 +440,10 @@ impl DpuFirmwareVersions {
         self,
         desired_firmware: &[DesiredFirmwareVersionEntry],
     ) -> Self {
+        // TODO: Pass the emulated DPU generation into this lookup and select its
+        // desired-firmware model before enabling BF4 firmware overrides. BF4
+        // version strings use the `BF4-` convention:
+        // https://github.com/NVIDIA/infra-controller/pull/3477
         // We emulate bf3 DPU's, find those from the desired firmware.
         let Some(bf3_firmware_map) = desired_firmware
             .iter()

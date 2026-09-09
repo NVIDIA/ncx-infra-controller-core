@@ -178,8 +178,10 @@ impl DpuType {
                 DpuFirmwareComponent::Cec => "Bluefield_FW_ERoT",
                 DpuFirmwareComponent::Nic => "DPU_NIC",
             }),
-            // BF4 uses a distinct FirmwareInventory schema. No mapping is
-            // defined without an authoritative inventory for every component.
+            // TODO: Populate BF4 component IDs from captured B4240/B4240V
+            // FirmwareInventory responses. BF4 uses generation-specific names;
+            // its known BMC inventory ID is `BlueField_FW_BMC_0`:
+            // https://github.com/NVIDIA/infra-controller/issues/2862
             Self::Bluefield4 => None,
         }
     }
