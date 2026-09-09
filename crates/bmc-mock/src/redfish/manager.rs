@@ -768,12 +768,13 @@ fn not_implemented() -> Response {
 
 #[cfg(test)]
 mod power_event_tests {
-    use super::*;
-    use crate::test_support::{NoopCallbacks, host_info};
-    use crate::{HardwareType, MachineRouterOptions, machine_router};
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use super::*;
+    use crate::test_support::{NoopCallbacks, host_info};
+    use crate::{HardwareType, MachineRouterOptions, machine_router};
 
     #[tokio::test]
     async fn hpe_event_log_records_only_accepted_power_requests() {
