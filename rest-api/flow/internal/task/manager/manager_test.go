@@ -80,6 +80,7 @@ func TestManagerImpl_SubmitTaskReturnsScheduledIdempotentTaskBeforeInventoryVali
 		taskByIdempotencyKey: map[string]*taskdef.Task{
 			idempotencyKey: {
 				ID:             taskID,
+				RackID:         rackID,
 				ExecutionID:    `{"workflow_id":"workflow","run_id":"run"}`,
 				IdempotencyKey: idempotencyKey,
 			},
@@ -101,6 +102,42 @@ func TestManagerImpl_SubmitTaskReturnsScheduledIdempotentTaskBeforeInventoryVali
 
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{taskID}, taskIDs)
+	require.Zero(t, inventory.getRackCalls)
+	require.Zero(t, store.createTaskCalls)
+}
+
+func TestManagerImpl_SubmitTaskRejectsIdempotencyKeyForDifferentRack(t *testing.T) {
+	requestedRackID := uuid.New()
+	existingRackID := uuid.New()
+	idempotencyKey := "operation-run-target:" + uuid.NewString()
+	store := &managerTaskStore{
+		taskByIdempotencyKey: map[string]*taskdef.Task{
+			idempotencyKey: {
+				ID:             uuid.New(),
+				RackID:         existingRackID,
+				ExecutionID:    `{"workflow_id":"workflow","run_id":"run"}`,
+				IdempotencyKey: idempotencyKey,
+			},
+		},
+	}
+	inventory := &submitTaskInventory{}
+	manager := &ManagerImpl{inventoryStore: inventory, taskStore: store}
+
+	taskIDs, err := manager.SubmitTask(context.Background(), &operation.Request{
+		Operation:      testPowerControlOperation(t),
+		RequiredRackID: requestedRackID,
+		IdempotencyKey: idempotencyKey,
+		TargetSpec: operation.TargetSpec{
+			Racks: []operation.RackTarget{{
+				Identifier: identifier.Identifier{ID: requestedRackID},
+			}},
+		},
+	})
+
+	require.Nil(t, taskIDs)
+	require.ErrorContains(t, err, "idempotency key")
+	require.ErrorContains(t, err, existingRackID.String())
+	require.ErrorContains(t, err, requestedRackID.String())
 	require.Zero(t, inventory.getRackCalls)
 	require.Zero(t, store.createTaskCalls)
 }
@@ -174,6 +211,7 @@ func TestManagerImpl_ExecuteTask(t *testing.T) {
 	)
 
 	require.Nil(t, resp)
+	require.ErrorContains(t, err, "operation cannot be executed")
 	require.ErrorContains(t, err, "selected components not linked to actual inventory (1)")
 }
 
@@ -204,6 +242,7 @@ func TestManagerImpl_ExecuteTaskRejectsUnlinkedIngestWithActualInventoryRule(t *
 	)
 
 	require.Nil(t, resp)
+	require.ErrorContains(t, err, "operation cannot be executed")
 	require.ErrorContains(t, err, "selected components not linked to actual inventory (1)")
 }
 
@@ -433,6 +472,38 @@ func TestCreateAndExecuteTaskSchedulesExistingIdempotentTaskWithoutExecutionID(t
 	require.Equal(t, executor.executionID, store.updatedScheduledTask.ExecutionID)
 	require.Zero(t, store.listActiveCalls)
 	require.Zero(t, store.createTaskCalls)
+}
+
+func TestCreateAndExecuteTaskRejectsExistingIdempotentTaskForDifferentRack(t *testing.T) {
+	requestedRackID := uuid.New()
+	existingRackID := uuid.New()
+	idempotencyKey := "operation-run-target:" + uuid.NewString()
+	targetRack := newTestRack(requestedRackID, "rack-1")
+	store := &managerTaskStore{
+		taskByIdempotencyKey: map[string]*taskdef.Task{
+			idempotencyKey: {
+				ID:             uuid.New(),
+				RackID:         existingRackID,
+				IdempotencyKey: idempotencyKey,
+			},
+		},
+	}
+	manager := &ManagerImpl{taskStore: store}
+
+	taskID, err := manager.createAndExecuteTask(context.Background(), &operation.Request{
+		Operation:      testPowerControlOperation(t),
+		RequiredRackID: requestedRackID,
+		IdempotencyKey: idempotencyKey,
+	}, targetRack)
+
+	require.Equal(t, uuid.Nil, taskID)
+	require.ErrorContains(t, err, "idempotency key")
+	require.ErrorContains(t, err, existingRackID.String())
+	require.ErrorContains(t, err, requestedRackID.String())
+	require.Equal(t, 1, store.lockKeyCalls)
+	require.Zero(t, store.lockRackCalls)
+	require.Zero(t, store.createTaskCalls)
+	require.Zero(t, store.updateScheduledCalls)
 }
 
 func testPowerControlOperation(t *testing.T) operation.Wrapper {

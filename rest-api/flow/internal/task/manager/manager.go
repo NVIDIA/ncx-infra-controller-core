@@ -217,6 +217,9 @@ func (m *ManagerImpl) SubmitTask(
 		if err != nil {
 			return nil, fmt.Errorf("look up idempotent task: %w", err)
 		}
+		if err := validateIdempotentTaskRack(req, existing); err != nil {
+			return nil, err
+		}
 		if existing != nil && existing.IsScheduled() {
 			return []uuid.UUID{existing.ID}, nil
 		}
@@ -305,7 +308,10 @@ func (m *ManagerImpl) validateSubmissionRackTargets(
 	rackMap map[uuid.UUID]*rack.Rack,
 ) error {
 	if op.Type != taskcommon.TaskTypeBringUp || op.Code != taskcommon.OpCodeIngest {
-		return validateResolvedRackTargets(op, nil, rackMap)
+		if err := validateResolvedRackTargets(op, nil, rackMap); err != nil {
+			return fmt.Errorf("operation cannot be submitted: %w", err)
+		}
+		return nil
 	}
 
 	rackIDs := make([]uuid.UUID, 0, len(rackMap))
@@ -326,7 +332,7 @@ func (m *ManagerImpl) validateSubmissionRackTargets(
 			&rule.RuleDefinition,
 			map[uuid.UUID]*rack.Rack{rackID: rackMap[rackID]},
 		); err != nil {
-			return err
+			return fmt.Errorf("operation cannot be submitted: %w", err)
 		}
 	}
 
@@ -376,14 +382,14 @@ func validateResolvedRackTargets(
 	if len(emptyRacks) > 0 {
 		slices.Sort(emptyRacks)
 		return fmt.Errorf(
-			"operation cannot be submitted: racks have no selected components: %s",
+			"racks have no selected components: %s",
 			strings.Join(emptyRacks, ", "),
 		)
 	}
 	if len(unlinkedComponents) > 0 {
 		slices.Sort(unlinkedComponents)
 		return fmt.Errorf(
-			"operation cannot be submitted: selected components not linked to actual inventory (%d): %s",
+			"selected components not linked to actual inventory (%d): %s",
 			len(unlinkedComponents),
 			strings.Join(unlinkedComponents, ", "),
 		)
@@ -482,6 +488,9 @@ func (m *ManagerImpl) createAndExecuteIdempotentTask(
 			}
 
 			if persistedTask != nil {
+				if err := validateIdempotentTaskRack(req, persistedTask); err != nil {
+					return err
+				}
 				// There are existing tasks with this idempotency key, reuse it.
 				task = *persistedTask
 
@@ -524,6 +533,18 @@ func (m *ManagerImpl) createAndExecuteIdempotentTask(
 	}
 
 	return task.ID, nil
+}
+
+func validateIdempotentTaskRack(req *operation.Request, existing *taskdef.Task) error {
+	if existing == nil || existing.RackID == req.RequiredRackID {
+		return nil
+	}
+	return fmt.Errorf(
+		"idempotency key %q belongs to rack %s, not requested rack %s",
+		req.IdempotencyKey,
+		existing.RackID,
+		req.RequiredRackID,
+	)
 }
 
 func newTaskForRack(req *operation.Request, targetRack *rack.Rack) taskdef.Task {
@@ -799,7 +820,7 @@ func (m *ManagerImpl) executeTask(
 		map[uuid.UUID]*rack.Rack{task.RackID: targetRack},
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("operation cannot be executed: %w", err)
 	}
 
 	req := taskdef.ExecutionRequest{
