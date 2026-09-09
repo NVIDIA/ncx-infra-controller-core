@@ -34,6 +34,7 @@ type recordingForgeClient struct {
 	shelfIDDelay      time.Duration
 	shelfDelay        time.Duration
 	versionRequests   []*corev1.VersionRequest
+	machineSearches   []*corev1.MachineSearchConfig
 	machineIDs        []string
 	switchIDs         []string
 	shelfIDs          []string
@@ -76,12 +77,16 @@ func (c *recordingForgeClient) Version(
 
 func (c *recordingForgeClient) FindMachineIds(
 	ctx context.Context,
-	_ *corev1.MachineSearchConfig,
+	request *corev1.MachineSearchConfig,
 	_ ...grpc.CallOption,
 ) (*corev1.MachineIdList, error) {
-	if c.machineIDDelay > 0 {
+	c.mu.Lock()
+	c.machineSearches = append(c.machineSearches, request)
+	delay := c.machineIDDelay
+	c.mu.Unlock()
+	if delay > 0 {
 		select {
-		case <-time.After(c.machineIDDelay):
+		case <-time.After(delay):
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -251,6 +256,16 @@ func stringsToPowerShelfIds(ids []string) []*corev1.PowerShelfId {
 		result = append(result, &corev1.PowerShelfId{Id: id})
 	}
 	return result
+}
+
+func TestGrpcClient_GetMachines(t *testing.T) {
+	fake := &recordingForgeClient{}
+
+	_, err := newRecordingGRPCClient(fake).GetMachines(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, fake.machineSearches, 1)
+	assert.True(t, fake.machineSearches[0].GetIncludeDpus())
 }
 
 func TestGrpcClient_ActualInventoryRPCsHaveIndependentTimeouts(t *testing.T) {
