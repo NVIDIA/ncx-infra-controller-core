@@ -118,7 +118,7 @@ func Test_InitTemporalClients(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			InitTemporalClients(tt.args.tConfig, true)
+			InitTemporalClients(tt.args.tConfig)
 		})
 	}
 }

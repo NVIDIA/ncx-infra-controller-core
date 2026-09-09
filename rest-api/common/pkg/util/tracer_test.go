@@ -7,10 +7,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/NVIDIA/infra-controller/rest-api/common/pkg/otelecho"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
@@ -127,69 +130,65 @@ func Test_CreateChildInContext(t *testing.T) {
 		inputSpanName string
 		inputCtx      context.Context
 		inputLogger   zerolog.Logger
-		expectSpan    oteltrace.Span
+		expectSpan    bool
 	}
 
-	// OTEL Spanner configuration
-	provider := trace.NewNoopTracerProvider()
-	sc := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID: trace.TraceID{0x01},
-		SpanID:  trace.SpanID{0x01},
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	parentTraceID := trace.TraceID{0x01}
+	parent := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    parentTraceID,
+		SpanID:     trace.SpanID{0x01},
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
 	})
-
-	ctx1 := trace.ContextWithRemoteSpanContext(context.Background(), sc)
-	tracer := provider.Tracer("Test_CreateChildInContext")
-	_, validspan := tracer.Start(ctx1, "Test_CreateChildInContext")
-
-	ctx2 := ctx1
-
-	// Set parent tracer in current context
-	ctx1 = context.WithValue(ctx1, otelecho.TracerKey, tracer)
+	parentCtx := trace.ContextWithRemoteSpanContext(context.Background(), parent)
 	tracerSpan := NewTracerSpan()
-
-	var ctx3 context.Context
 
 	tests := []struct {
 		name string
 		args args
 	}{
 		{
-			name: "test child span creation in context failure, no tracerKey presents",
+			name: "test child span creation succeeds without tracer key",
 			args: args{
-				inputCtx:      ctx2,
+				inputCtx:      parentCtx,
 				inputSpanName: "test",
-				expectSpan:    nil,
+				expectSpan:    true,
 			},
 		},
 		{
 			name: "test child span creation in context failure, empty span name",
 			args: args{
-				inputCtx:      ctx2,
+				inputCtx:      parentCtx,
 				inputSpanName: "",
-				expectSpan:    nil,
 			},
 		},
 		{
 			name: "test child span creation in context failure, empty context",
 			args: args{
-				inputCtx:      ctx3,
+				inputCtx:      nil,
 				inputSpanName: "",
-				expectSpan:    nil,
-			},
-		},
-		{
-			name: "test child span creation success",
-			args: args{
-				inputCtx:      ctx1,
-				inputSpanName: "test",
-				expectSpan:    validspan,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, span := tracerSpan.CreateChildInContext(tt.args.inputCtx, tt.args.inputSpanName, tt.args.inputLogger)
-			assert.Equal(t, span, tt.args.expectSpan)
+			ctx, span := tracerSpan.CreateChildInContext(tt.args.inputCtx, tt.args.inputSpanName, tt.args.inputLogger)
+			if !tt.args.expectSpan {
+				assert.Nil(t, span)
+				return
+			}
+
+			require.NotNil(t, span)
+			assert.Equal(t, parentTraceID, span.SpanContext().TraceID())
+			assert.Equal(t, span.SpanContext(), trace.SpanContextFromContext(ctx))
+			span.End()
 		})
 	}
+	require.Len(t, recorder.Ended(), 1)
 }

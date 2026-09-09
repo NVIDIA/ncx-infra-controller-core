@@ -17,7 +17,6 @@ import (
 
 	"github.com/NVIDIA/infra-controller/rest-api/db/pkg/db"
 	"github.com/NVIDIA/infra-controller/rest-api/db/pkg/db/paginator"
-	stracer "github.com/NVIDIA/infra-controller/rest-api/db/pkg/tracer"
 	"github.com/google/uuid"
 )
 
@@ -291,8 +290,6 @@ func TestMachineSQLDAO_Create(t *testing.T) {
 				if tc.verifyChildSpanner {
 					span := otrace.SpanFromContext(ctx)
 					assert.True(t, span.SpanContext().IsValid())
-					_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-					assert.True(t, ok)
 				}
 
 				if err != nil {
@@ -493,8 +490,6 @@ func TestMachineSQLDAO_GetByID(t *testing.T) {
 			if tc.verifyChildSpanner {
 				span := otrace.SpanFromContext(ctx)
 				assert.True(t, span.SpanContext().IsValid())
-				_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-				assert.True(t, ok)
 			}
 		})
 	}
@@ -703,8 +698,6 @@ func TestMachineSQLDAO_GetCountByStatus(t *testing.T) {
 			if tt.verifyChildSpanner {
 				span := otrace.SpanFromContext(ctx)
 				assert.True(t, span.SpanContext().IsValid())
-				_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-				assert.True(t, ok)
 			}
 		})
 	}
@@ -1263,8 +1256,6 @@ func TestMachineSQLDAO_GetAll(t *testing.T) {
 			if tc.verifyChildSpanner {
 				span := otrace.SpanFromContext(ctx)
 				assert.True(t, span.SpanContext().IsValid())
-				_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-				assert.True(t, ok)
 			}
 		})
 	}
@@ -1504,8 +1495,6 @@ func TestMachineSQLDAO_Update(t *testing.T) {
 				if tc.verifyChildSpanner {
 					span := otrace.SpanFromContext(ctx)
 					assert.True(t, span.SpanContext().IsValid())
-					_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-					assert.True(t, ok)
 				}
 			}
 		})
@@ -1658,8 +1647,6 @@ func TestMachineSQLDAO_Clear(t *testing.T) {
 			if tc.verifyChildSpanner {
 				span := otrace.SpanFromContext(ctx)
 				assert.True(t, span.SpanContext().IsValid())
-				_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-				assert.True(t, ok)
 			}
 		})
 	}
@@ -1751,8 +1738,6 @@ func TestMachineSQLDAO_Delete(t *testing.T) {
 			if tc.verifyChildSpanner {
 				span := otrace.SpanFromContext(ctx)
 				assert.True(t, span.SpanContext().IsValid())
-				_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-				assert.True(t, ok)
 			}
 		})
 	}
@@ -2249,8 +2234,6 @@ func TestMachineSQLDAO_UpdateMultiple(t *testing.T) {
 			if tc.verifyChildSpanner {
 				span := otrace.SpanFromContext(ctx)
 				assert.True(t, span.SpanContext().IsValid())
-				_, ok := ctx.Value(stracer.TracerKey).(otrace.Tracer)
-				assert.True(t, ok)
 			}
 		})
 	}
