@@ -379,39 +379,82 @@ func TestSeedAndReloadDBIssuers(t *testing.T) {
 }
 
 // TestReloadSkipsDynamicDBIssuer verifies the hard security boundary: a DB issuer
-// carrying a dynamic (orgAttribute) mapping — e.g. inserted out-of-band — is never
-// applied to the live registry.
+// carrying a dynamic mapping — e.g. inserted out-of-band — is never applied to the
+// live registry. Each attribute is exercised on its own, because any one of them
+// lets token claims drive org or role assignment; combined in a single mapping,
+// orgAttribute alone would keep this green while the other two regressed. The
+// static row is the control that proves a skip is caused by the mapping rather
+// than by something else in the reload path.
 func TestReloadSkipsDynamicDBIssuer(t *testing.T) {
-	ctx := context.Background()
-	c, err := NewConfigFromYAML(`
+	const issuerURL = "http://localhost:8082/realms/dyn"
+
+	tests := []struct {
+		name           string
+		mapping        cdbm.ClaimMapping
+		wantRegistered bool
+	}{
+		{
+			name:    "org attribute",
+			mapping: cdbm.ClaimMapping{OrgAttribute: "org"},
+		},
+		{
+			name:    "org display attribute",
+			mapping: cdbm.ClaimMapping{OrgName: "acme", OrgDisplayAttribute: "org_display", Roles: []string{"TENANT_ADMIN"}},
+		},
+		{
+			name:    "roles attribute",
+			mapping: cdbm.ClaimMapping{OrgName: "acme", RolesAttribute: "roles"},
+		},
+		{
+			name:           "fully static mapping",
+			mapping:        cdbm.ClaimMapping{OrgName: "acme", Roles: []string{"TENANT_ADMIN"}},
+			wantRegistered: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(cachedIssuerKeySet))
+			}))
+			defer idp.Close()
+
+			c, err := NewConfigFromYAML(`
 env:
   disconnected: true
 issuers: []
 `)
-	require.NoError(t, err)
-	reg := cauth.NewTokenOriginConfig()
-	c.TokenOriginConfig = reg
+			require.NoError(t, err)
+			reg := cauth.NewTokenOriginConfig()
+			c.TokenOriginConfig = reg
 
-	dbSession := dbutil.GetTestDBSession(t, false)
-	defer dbSession.Close()
-	require.NoError(t, dbSession.DB.ResetModel(ctx, (*cdbm.Issuer)(nil)))
-	dao := cdbm.NewIssuerDAO(dbSession)
+			dbSession := dbutil.GetTestDBSession(t, false)
+			defer dbSession.Close()
+			require.NoError(t, dbSession.DB.ResetModel(ctx, (*cdbm.Issuer)(nil)))
+			dao := cdbm.NewIssuerDAO(dbSession)
 
-	// A DB issuer with a DYNAMIC mapping (DAO.Create does not validate — simulates
-	// a row inserted out-of-band, bypassing the API guard).
-	require.NoError(t, cdb.WithTx(ctx, dbSession, func(tx *cdb.Tx) error {
-		_, e := dao.Create(ctx, tx, cdbm.IssuerCreateOrUpdateInput{
-			Origin:        "custom",
-			IssuerURL:     "http://localhost:8082/realms/dyn",
-			JWKSUrl:       "http://127.0.0.1:1/jwks",
-			ClaimMappings: []cdbm.ClaimMapping{{OrgAttribute: "org", OrgDisplayAttribute: "org_display", RolesAttribute: "roles"}},
+			// DAO.Create does not validate, so this is a row inserted out-of-band,
+			// bypassing the API guard.
+			require.NoError(t, cdb.WithTx(ctx, dbSession, func(tx *cdb.Tx) error {
+				_, e := dao.Create(ctx, tx, cdbm.IssuerCreateOrUpdateInput{
+					Origin:        "custom",
+					IssuerURL:     issuerURL,
+					JWKSUrl:       idp.URL + "/jwks",
+					ClaimMappings: []cdbm.ClaimMapping{tt.mapping},
+				})
+				return e
+			}))
+
+			require.NoError(t, c.ReloadDBIssuers(ctx, dbSession))
+			if tt.wantRegistered {
+				assert.NotNil(t, reg.GetConfig(issuerURL), "a static DB issuer must reach the registry")
+				return
+			}
+			assert.Nil(t, reg.GetConfig(issuerURL),
+				"a dynamic DB issuer must be skipped, never applied to the registry")
 		})
-		return e
-	}))
-
-	require.NoError(t, c.ReloadDBIssuers(ctx, dbSession))
-	assert.Nil(t, reg.GetConfig("http://localhost:8082/realms/dyn"),
-		"a dynamic DB issuer must be skipped, never applied to the registry")
+	}
 }
 
 // ~~~~~ DB-backed: JWKS cache, resolution, shutdown ~~~~~ //
