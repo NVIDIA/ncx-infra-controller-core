@@ -118,7 +118,13 @@ pub struct DpuFirmwareVersions {
     pub bmc: Option<String>,
     /// DPU UEFI firmware version.
     pub uefi: Option<String>,
-    /// DPU BSP version.
+    /// Optional opaque DPU BSP firmware version.
+    ///
+    /// Any string is accepted verbatim, including an empty string. The default,
+    /// `None`, omits `DPU_BSP` from generated firmware inventory; `Some("")`
+    /// explicitly configures that inventory entry with an empty version. This is
+    /// supported for generated BlueField-3 and BlueField-4 DPU profiles; profiles
+    /// without a generated DPU do not expose the entry.
     #[serde(default)]
     pub bsp: Option<String>,
     /// DPU CEC firmware version.
