@@ -20,10 +20,9 @@ import (
 	cotel "github.com/NVIDIA/infra-controller/rest-api/common/pkg/otel"
 )
 
-// TestFullIntegration verifies the complete flow with a real SDK provider:
-// the middleware extracts the parent trace from headers, sets the trace-id
-// header, and child spans created via the shared global-provider helper
-// parent to the server span.
+// TestFullIntegration verifies the complete flow with a real SDK provider: the
+// middleware extracts the parent trace from headers, and child spans created via
+// the shared global-provider helper parent to the server span.
 func TestFullIntegration(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -47,7 +46,6 @@ func TestFullIntegration(t *testing.T) {
 	ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(r.Header))
 
-	var headerValue string
 	var serverSpanID trace.SpanID
 
 	router := echo.New()
@@ -60,7 +58,6 @@ func TestFullIntegration(t *testing.T) {
 		_, childSpan := cotel.StartSpan(reqCtx, "child-span")
 		childSpan.End()
 
-		headerValue = c.Response().Header().Get(TraceHdr)
 		return c.NoContent(200)
 	})
 
@@ -68,7 +65,6 @@ func TestFullIntegration(t *testing.T) {
 
 	response := w.Result()
 	assert.Equal(t, http.StatusOK, response.StatusCode)
-	assert.Equal(t, parentTraceID.String(), headerValue, "X-Ngc-Trace-Id should carry the propagated trace ID")
 
 	// The recorded child span must parent to the server span in the same trace
 	var childFound bool
@@ -92,7 +88,6 @@ func TestOriginalBehaviorMatch(t *testing.T) {
 		name            string
 		setupRequest    func() *http.Request
 		expectedTraceID string
-		expectHeader    bool
 	}{
 		{
 			name: "with parent trace",
@@ -109,7 +104,6 @@ func TestOriginalBehaviorMatch(t *testing.T) {
 				return r
 			},
 			expectedTraceID: "aabbccdd000000000000000000000000",
-			expectHeader:    true,
 		},
 		{
 			name: "without parent trace",
@@ -117,7 +111,6 @@ func TestOriginalBehaviorMatch(t *testing.T) {
 				return httptest.NewRequest("GET", "/test", nil)
 			},
 			expectedTraceID: "00000000000000000000000000000000", // Empty trace ID when no parent
-			expectHeader:    false,
 		},
 	}
 
@@ -132,24 +125,12 @@ func TestOriginalBehaviorMatch(t *testing.T) {
 			router.GET("/test", func(c echo.Context) error {
 				span := trace.SpanFromContext(c.Request().Context())
 				receivedTraceID = span.SpanContext().TraceID().String()
-				headerValue := c.Response().Header().Get(TraceHdr)
-				if span.SpanContext().IsValid() {
-					assert.Equal(t, receivedTraceID, headerValue, "Header should match trace ID")
-				} else {
-					assert.Empty(t, headerValue, "invalid zero trace IDs must not be returned")
-				}
 				return c.NoContent(200)
 			})
 
 			router.ServeHTTP(w, r)
 			assert.Equal(t, http.StatusOK, w.Result().StatusCode)
 			assert.Equal(t, tt.expectedTraceID, receivedTraceID, "Trace ID should match expected")
-			if tt.expectHeader {
-				headerValue := w.Result().Header.Get(TraceHdr)
-				assert.NotEmpty(t, headerValue, "Header should be set")
-			} else {
-				assert.Empty(t, w.Result().Header.Get(TraceHdr), "Header should be omitted")
-			}
 		})
 	}
 

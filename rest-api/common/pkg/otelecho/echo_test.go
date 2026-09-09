@@ -132,45 +132,6 @@ func TestSkipper(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Result().StatusCode, "should call the 'ping' handler")
 }
 
-// TestTraceIDHeader verifies that the custom X-Ngc-Trace-Id header is set when trace ID is available
-func TestTraceIDHeader(t *testing.T) {
-	provider := trace.NewNoopTracerProvider()
-	otel.SetTextMapPropagator(propagation.TraceContext{})
-
-	r := httptest.NewRequest("GET", "/test", nil)
-	w := httptest.NewRecorder()
-
-	// Create a parent trace context to ensure we have a trace ID
-	ctx := context.Background()
-	sc := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID: trace.TraceID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10},
-		SpanID:  trace.SpanID{0x01},
-	})
-	ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
-	ctx, _ = provider.Tracer(TracerName).Start(ctx, "parent")
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(r.Header))
-
-	router := echo.New()
-	router.Use(Middleware("test-service", WithTracerProvider(provider)))
-	router.GET("/test", func(c echo.Context) error {
-		return c.NoContent(200)
-	})
-
-	router.ServeHTTP(w, r)
-
-	response := w.Result()
-	assert.Equal(t, http.StatusOK, response.StatusCode)
-
-	// Verify X-Ngc-Trace-Id header is set
-	traceIDHeader := response.Header.Get(TraceHdr)
-	assert.NotEmpty(t, traceIDHeader, "X-Ngc-Trace-Id header should be set")
-
-	// Verify it's a valid trace ID format (non-empty string)
-	assert.Greater(t, len(traceIDHeader), 0, "Trace ID should not be empty")
-
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
-}
-
 // TestTraceIDInheritance verifies that trace IDs are properly inherited from parent spans
 func TestTraceIDInheritance(t *testing.T) {
 	provider := trace.NewNoopTracerProvider()
@@ -206,10 +167,6 @@ func TestTraceIDInheritance(t *testing.T) {
 
 	// Verify trace ID is inherited from parent
 	assert.Equal(t, parentTraceID, receivedTraceID, "Trace ID should be inherited from parent")
-
-	// Verify header contains the same trace ID
-	traceIDHeader := response.Header.Get(TraceHdr)
-	assert.NotEmpty(t, traceIDHeader, "X-Ngc-Trace-Id header should be set")
 }
 
 // TestWrapperPreservesUpstreamBehavior verifies that all upstream behavior is preserved

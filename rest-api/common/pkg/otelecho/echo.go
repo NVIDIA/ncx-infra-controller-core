@@ -6,7 +6,6 @@ package otelecho
 import (
 	"github.com/labstack/echo/v4"
 	upstreamotelecho "go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -18,31 +17,16 @@ const (
 
 	// TracerName is name of the tracer
 	TracerName = "go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
-
-	// TraceHdr is header name for ngc trace id
-	TraceHdr = "X-Ngc-Trace-Id"
 )
 
-// Middleware wraps the upstream otelecho middleware and adds custom functionality:
-// - Setting X-Ngc-Trace-Id header
+// Middleware wraps the upstream otelecho middleware and ensures Echo handles a
+// returned error exactly once.
 func Middleware(service string, opts ...upstreamotelecho.Option) echo.MiddlewareFunc {
 	upstreamMiddleware := upstreamotelecho.Middleware(service, opts...)
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		// Get upstream handler
 		upstreamHandler := upstreamMiddleware(func(c echo.Context) error {
-			// This runs after upstream middleware sets up the span
-			// The upstream middleware has already:
-			// 1. Extracted context from headers
-			// 2. Created a new span
-			// 3. Set the request context with the span
-
-			span := trace.SpanFromContext(c.Request().Context())
-			if span.SpanContext().IsValid() {
-				c.Response().Header().Set(TraceHdr, span.SpanContext().TraceID().String())
-			}
-
-			// Now call the actual next handler
 			// Note: We return the error directly and let the upstream otelecho middleware
 			// handle it. The upstream middleware (v0.64.0+) will call c.Error() internally
 			// to record the status code on the span. To prevent double error handling
