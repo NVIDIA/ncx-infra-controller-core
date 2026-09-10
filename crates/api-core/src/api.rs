@@ -197,6 +197,13 @@ impl Forge for Api {
         crate::handlers::vpc::update(self, request).await
     }
 
+    async fn release_vpc_inactive_vni(
+        &self,
+        request: Request<rpc::VpcReleaseInactiveVniRequest>,
+    ) -> Result<Response<rpc::VpcReleaseInactiveVniResult>, Status> {
+        crate::handlers::vpc::release_inactive_vni(self, request).await
+    }
+
     async fn update_vpc_virtualization(
         &self,
         request: Request<rpc::VpcUpdateVirtualizationRequest>,
@@ -3405,7 +3412,7 @@ impl Forge for Api {
     async fn find_pending_dpu_service_sync_ids(
         &self,
         request: Request<rpc::FindPendingDpuServiceSyncIdsRequest>,
-    ) -> Result<Response<::rpc::common::StableHostMachineIdList>, Status> {
+    ) -> Result<Response<::rpc::common::HostMachineIdList>, Status> {
         crate::handlers::dpu_service_sync::find_pending_dpu_service_sync_ids(self, request).await
     }
 

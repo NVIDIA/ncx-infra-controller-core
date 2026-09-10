@@ -905,7 +905,7 @@ mod tests {
         };
         InstanceSnapshot {
             id: InstanceId::nil(),
-            machine_id: carbide_uuid::machine::MachineId::from_str(
+            machine_id: HostMachineId::from_str(
                 "fm100htjtiaehv1n5vh67tbmqq4eabcjdng40f7jupsadbedhruh6rag1l0",
             )
             .unwrap(),
