@@ -3412,7 +3412,7 @@ impl Forge for Api {
     async fn find_pending_dpu_service_sync_ids(
         &self,
         request: Request<rpc::FindPendingDpuServiceSyncIdsRequest>,
-    ) -> Result<Response<::rpc::common::StableHostMachineIdList>, Status> {
+    ) -> Result<Response<::rpc::common::HostMachineIdList>, Status> {
         crate::handlers::dpu_service_sync::find_pending_dpu_service_sync_ids(self, request).await
     }
 

@@ -1376,7 +1376,8 @@ type ForgeClient interface {
 	// Helm/docker versions for the nico DPF mandatory services, from both
 	// the nico config and the live DPUServiceTemplate CRs.
 	GetDPFServiceVersions(ctx context.Context, in *GetDPFServiceVersionsRequest, opts ...grpc.CallOption) (*DPFServiceVersionsResponse, error)
-	// Machines DPF is waiting on before a changed DPUService can roll out.
+	// Predicted or stable host machines DPF is waiting on before a changed
+	// DPUService can roll out.
 	//
 	// Required rather than convenient: the release RPC has no fleet-wide form, so
 	// this is the only way to discover which machines to name. Split ids-then-
@@ -7207,7 +7208,8 @@ type ForgeServer interface {
 	// Helm/docker versions for the nico DPF mandatory services, from both
 	// the nico config and the live DPUServiceTemplate CRs.
 	GetDPFServiceVersions(context.Context, *GetDPFServiceVersionsRequest) (*DPFServiceVersionsResponse, error)
-	// Machines DPF is waiting on before a changed DPUService can roll out.
+	// Predicted or stable host machines DPF is waiting on before a changed
+	// DPUService can roll out.
 	//
 	// Required rather than convenient: the release RPC has no fleet-wide form, so
 	// this is the only way to discover which machines to name. Split ids-then-
