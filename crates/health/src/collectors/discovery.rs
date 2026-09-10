@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,7 +26,7 @@ use nv_redfish::{Resource, ServiceRoot};
 
 use crate::HealthError;
 use crate::collectors::inventory::{
-    DiscoveredEntity, EntityInventory, GpuIdentity, SharedInventory,
+    DiscoveredEntity, EntityInventory, GpuIdentity, SharedInventory, ShelfPower, normalize_odata_id,
 };
 use crate::collectors::runtime::{IterationResult, PeriodicCollector};
 use crate::endpoint::BmcEndpoint;
@@ -38,6 +38,9 @@ pub struct EntityDiscoveryCollectorConfig<B: Bmc> {
     /// Bounds local fan-out to the endpoint Redfish operation limit.
     pub request_concurrency: NonZeroUsize,
 
+    /// Collect chassis and power-subsystem status. Enabled for power-shelf
+    /// endpoints only.
+    pub collect_shelf_power: bool,
     /// Label GPU telemetry with the identity of the device that produced it.
     ///
     /// Read from resources discovery already fetches, so this adds no Redfish
@@ -50,6 +53,7 @@ pub struct EntityDiscoveryCollector<B: Bmc> {
     bmc: Arc<B>,
     shared: SharedInventory<B>,
     request_concurrency: usize,
+    collect_shelf_power: bool,
     gpu_identity: bool,
     generation: u64,
 }
@@ -67,6 +71,7 @@ impl<B: Bmc + 'static> PeriodicCollector<B> for EntityDiscoveryCollector<B> {
             bmc,
             shared: config.shared,
             request_concurrency: config.request_concurrency.get(),
+            collect_shelf_power: config.collect_shelf_power,
             gpu_identity: config.gpu_identity,
             generation: 0,
         })
@@ -334,6 +339,30 @@ impl<B: Bmc + 'static> EntityDiscoveryCollector<B> {
         entities: &mut Vec<DiscoveredEntity<B>>,
         sensor_ids: &mut HashSet<String>,
     ) {
+        let liteon_links = self
+            .record_failure(
+                chassis.oem_liteon_power_supply_links().await,
+                "get LiteOn OEM power supply links",
+                fetch_failures,
+            )
+            .flatten()
+            .unwrap_or_default();
+        let fetched_liteon: Vec<_> = stream::iter(liteon_links)
+            .map(|link| async move {
+                let id = normalize_odata_id(&link.odata_id().to_string()).to_string();
+                (id, link.fetch().await)
+            })
+            .buffer_unordered(self.request_concurrency)
+            .collect()
+            .await;
+        let liteon_by_id: HashMap<_, _> = fetched_liteon
+            .into_iter()
+            .filter_map(|(id, result)| {
+                self.record_failure(result, "get LiteOn OEM power supply", fetch_failures)
+                    .map(|supply| (id, supply))
+            })
+            .collect();
+
         let power_supplies = self
             .record_failure(
                 chassis.power_supplies().await,
@@ -359,10 +388,37 @@ impl<B: Bmc + 'static> EntityDiscoveryCollector<B> {
             for sensor in &sensors {
                 sensor_ids.insert(sensor.odata_id().to_string());
             }
+            let entity_id = entity.odata_id().to_string();
+            let liteon_capacity_watts = if entity.raw().power_capacity_watts.flatten().is_some() {
+                None
+            } else {
+                liteon_by_id
+                    .get(normalize_odata_id(&entity_id))
+                    .and_then(|supply| {
+                        supply
+                            .capacity_watts
+                            .as_ref()
+                            .and_then(Option::as_deref)
+                    })
+                    .and_then(|raw| {
+                        let parsed = parse_liteon_capacity_watts(raw);
+                        if parsed.is_none() {
+                            tracing::warn!(
+                                capacity_watts = raw,
+                                power_supply = %entity.odata_id(),
+                                bmc_address = ?self.endpoint.addr,
+                                rack_id = self.endpoint.rack_id.as_ref().map(tracing::field::display),
+                                "Ignoring invalid LiteOn OEM power supply capacity"
+                            );
+                        }
+                        parsed
+                    })
+            };
             entities.push(DiscoveredEntity::PowerSupply {
                 entity,
                 chassis: chassis.clone(),
                 sensors,
+                liteon_capacity_watts,
             });
         }
     }
@@ -395,6 +451,12 @@ impl<B: Bmc + 'static> EntityDiscoveryCollector<B> {
             .filter(|sensor| sensor_ids.insert(sensor.odata_id().to_string()))
             .collect();
 
+        let shelf_power = if self.collect_shelf_power {
+            Some(self.discover_shelf_power(chassis, fetch_failures).await)
+        } else {
+            None
+        };
+
         let gpu = if self.gpu_identity {
             gpu_identity_from_chassis(chassis, gpu_processors)
         } else {
@@ -402,17 +464,42 @@ impl<B: Bmc + 'static> EntityDiscoveryCollector<B> {
         };
 
         // A sensorless chassis is normally not worth tracking, but one holding a
-        // GPU is still needed to attribute SSE log records.
-        if sensors.is_empty() && gpu.is_none() {
+        // GPU is still needed to attribute SSE log records, and a power-shelf
+        // chassis carries the shelf power evidence.
+        if sensors.is_empty() && gpu.is_none() && shelf_power.is_none() {
             return;
         }
 
         entities.push(DiscoveredEntity::Chassis {
             entity: chassis.clone(),
             sensors,
+            shelf_power,
             gpu,
         });
     }
+
+    async fn discover_shelf_power(
+        &self,
+        chassis: &nv_redfish::chassis::Chassis<B>,
+        fetch_failures: &AtomicUsize,
+    ) -> ShelfPower {
+        let Some(power_subsystem_ref) = &chassis.raw().power_subsystem else {
+            return ShelfPower { subsystem: None };
+        };
+        let subsystem = self.record_failure(
+            power_subsystem_ref.get(self.bmc.as_ref()).await,
+            "get power subsystem",
+            fetch_failures,
+        );
+        ShelfPower { subsystem }
+    }
+}
+
+fn parse_liteon_capacity_watts(raw: &str) -> Option<f64> {
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 /// Whether a processor is a GPU, per the Redfish `ProcessorType` enumeration.
