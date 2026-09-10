@@ -225,9 +225,9 @@ func (s *PostgresStore) UpdateScheduledTask(
 }
 
 // UpdateTaskStatus persists status and message, plus optional report and queue
-// deadline changes. Nil optional values leave their stored columns untouched.
-// No read-modify-write is performed, so concurrent transitions cannot lose
-// updates.
+// deadline changes. Finished statuses clear the queue deadline; otherwise nil
+// optional values leave their stored columns untouched. No read-modify-write is
+// performed, so concurrent transitions cannot lose updates.
 func (s *PostgresStore) UpdateTaskStatus(
 	ctx context.Context,
 	arg *taskdef.TaskStatusUpdate,

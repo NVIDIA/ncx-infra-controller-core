@@ -149,7 +149,8 @@ type TaskStatusUpdate struct {
 	Status  taskcommon.TaskStatus
 	Message string
 	// QueueExpiresAt, when non-nil, replaces the task's pre-execution wait
-	// deadline. A nil value leaves the stored deadline unchanged.
+	// deadline. A nil value leaves it unchanged unless Status is finished, in
+	// which case the stored deadline is cleared.
 	QueueExpiresAt *time.Time
 	// Report, when non-empty, replaces the stored report document. An
 	// empty value leaves the stored report untouched.

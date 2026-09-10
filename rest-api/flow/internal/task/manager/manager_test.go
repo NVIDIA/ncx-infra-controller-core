@@ -318,6 +318,9 @@ func TestManagerImpl_ResolveAndExecuteTaskRetriesUnlinkedTargetsUntilDeadline(t 
 	require.Len(t, store.statusUpdates, 1)
 	require.Equal(t, taskcommon.TaskStatusWaiting, store.statusUpdates[0].Status)
 	require.Equal(t, deadline, *store.statusUpdates[0].QueueExpiresAt)
+	require.Equal(t, 1, store.runTransactionCalls)
+	require.Equal(t, 1, store.lockRackCalls)
+	require.Equal(t, 1, store.countWaitingCalls)
 	require.Zero(t, executor.executeCalls)
 
 	// A later promotion reloads the same task after inventory linkage recovers.
@@ -363,7 +366,50 @@ func TestManagerImpl_ResolveAndExecuteTaskTerminatesUnlinkedTargetsAtDeadline(t 
 	require.Equal(t, taskcommon.TaskStatusTerminated, task.Status)
 	require.Len(t, store.statusUpdates, 1)
 	require.Equal(t, taskcommon.TaskStatusTerminated, store.statusUpdates[0].Status)
-	require.Equal(t, deadline, *store.statusUpdates[0].QueueExpiresAt)
+	require.Nil(t, store.statusUpdates[0].QueueExpiresAt)
+	require.Nil(t, task.QueueExpiresAt)
+	require.Zero(t, store.runTransactionCalls)
+}
+
+func TestManagerImpl_ResolveAndExecuteTaskTerminatesWhenWaitingQueueIsFull(t *testing.T) {
+	rackID := uuid.New()
+	deadline := time.Now().Add(time.Hour)
+	resolvedRack := newTestRack(rackID, "rack-1")
+	unlinked := newTestComponent(
+		uuid.New(),
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	unlinked.ComponentID = ""
+	resolvedRack.AddComponent(unlinked)
+	task := &taskdef.Task{
+		ID:             uuid.New(),
+		RackID:         rackID,
+		Operation:      testPowerControlOperation(t),
+		Status:         taskcommon.TaskStatusPending,
+		QueueExpiresAt: &deadline,
+	}
+	store := &managerTaskStore{waitingCount: 1}
+	manager := &ManagerImpl{
+		taskStore:         store,
+		executor:          &managerExecutor{},
+		ruleResolver:      operationrules.NewResolver(store),
+		maxWaitingPerRack: 1,
+	}
+
+	err := manager.resolveAndExecuteTask(context.Background(), task, resolvedRack)
+
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.TaskStatusTerminated, task.Status)
+	require.Nil(t, task.QueueExpiresAt)
+	require.Len(t, store.statusUpdates, 1)
+	require.Equal(t, taskcommon.TaskStatusTerminated, store.statusUpdates[0].Status)
+	require.Nil(t, store.statusUpdates[0].QueueExpiresAt)
+	require.Contains(t, task.Message, "waiting queue is full while target linkage is unavailable (1/1 tasks)")
+	require.Equal(t, 1, store.runTransactionCalls)
+	require.Equal(t, 1, store.lockRackCalls)
+	require.Equal(t, 1, store.countWaitingCalls)
 }
 
 func TestCreateAndExecuteTaskWaitsWhenTargetUnlinksAfterAdmission(t *testing.T) {
@@ -712,6 +758,9 @@ type managerTaskStore struct {
 	updateScheduledCalls int
 	updatedScheduledTask *taskdef.Task
 	statusUpdates        []*taskdef.TaskStatusUpdate
+	runTransactionCalls  int
+	countWaitingCalls    int
+	waitingCount         int
 	rulesByID            map[uuid.UUID]*operationrules.OperationRule
 }
 
@@ -719,6 +768,7 @@ func (s *managerTaskStore) RunInTransaction(
 	ctx context.Context,
 	fn func(context.Context) error,
 ) error {
+	s.runTransactionCalls++
 	return fn(ctx)
 }
 
@@ -804,7 +854,8 @@ func (s *managerTaskStore) ListWaitingTasksForRack(
 }
 
 func (s *managerTaskStore) CountWaitingTasksForRack(_ context.Context, _ uuid.UUID) (int, error) {
-	panic("managerTaskStore.CountWaitingTasksForRack: not implemented")
+	s.countWaitingCalls++
+	return s.waitingCount, nil
 }
 
 func (s *managerTaskStore) ListRacksWithWaitingTasks(_ context.Context) ([]uuid.UUID, error) {

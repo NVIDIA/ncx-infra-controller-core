@@ -63,9 +63,10 @@ func TestTaskUpdateTaskStatusPersistsQueueDeadline(t *testing.T) {
 	db := bun.NewDB(sqlDB, pgdialect.New())
 	defer db.Close()
 
-	mock.ExpectExec(`UPDATE "task" AS "t" SET .*"queue_expires_at".* WHERE \(id =`).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	deadline := time.Now().Add(time.Hour).UTC()
+	deadline := time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC)
+	mock.ExpectExec(
+		`UPDATE "task" AS "t" SET .*"queue_expires_at" = '2030-01-02 03:04:05\+00:00'.* WHERE \(id =`,
+	).WillReturnResult(sqlmock.NewResult(0, 1))
 	task := &Task{ID: uuid.New()}
 
 	err = task.UpdateTaskStatus(
@@ -80,6 +81,34 @@ func TestTaskUpdateTaskStatusPersistsQueueDeadline(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, taskcommon.TaskStatusWaiting, task.Status)
 	require.Equal(t, deadline, *task.QueueExpiresAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTaskUpdateTaskStatusClearsQueueDeadlineWhenFinished(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+
+	db := bun.NewDB(sqlDB, pgdialect.New())
+	defer db.Close()
+
+	mock.ExpectExec(`UPDATE "task" AS "t" SET .*"queue_expires_at" = NULL.* WHERE \(id =`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	deadline := time.Now().Add(time.Hour).UTC()
+	task := &Task{ID: uuid.New(), QueueExpiresAt: &deadline}
+
+	err = task.UpdateTaskStatus(
+		t.Context(),
+		db,
+		taskcommon.TaskStatusTerminated,
+		"Expired",
+		nil,
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.Nil(t, task.QueueExpiresAt)
+	require.NotNil(t, task.FinishedAt)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

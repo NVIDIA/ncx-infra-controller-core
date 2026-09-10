@@ -503,14 +503,6 @@ func (m *ManagerImpl) createAndExecuteIdempotentTask(
 				// There are existing tasks with this idempotency key, reuse it.
 				task = *persistedTask
 
-				if task.IsScheduled() {
-					// The task is already scheduled, so we can return it.
-					log.Info().
-						Str("task_id", task.ID.String()).
-						Str("idempotency_key", task.IdempotencyKey).
-						Msg("idempotent duplicate: returning existing scheduled task")
-					return nil
-				}
 			} else {
 				// No existing tasks with this idempotency key, create a new one.
 				task = newTaskForRack(req, targetRack)
@@ -523,22 +515,29 @@ func (m *ManagerImpl) createAndExecuteIdempotentTask(
 				}
 			}
 
-			if task.Status == taskcommon.TaskStatusWaiting {
-				// The task has conflict and is waiting, so we can return it.
-				log.Info().
-					Str("task_id", task.ID.String()).
-					Str("rack_id", targetRack.Info.ID.String()).
-					Msg("task queued: waiting for rack to become available")
-				return nil
-			}
-
-			// Resolve and execute the task.
-			return m.resolveAndExecuteTask(txCtx, &task, targetRack)
+			return nil
 		},
 	)
 
 	if txErr != nil {
 		return uuid.Nil, txErr
+	}
+	if task.IsScheduled() {
+		log.Info().
+			Str("task_id", task.ID.String()).
+			Str("idempotency_key", task.IdempotencyKey).
+			Msg("idempotent duplicate: returning existing scheduled task")
+		return task.ID, nil
+	}
+	if task.Status == taskcommon.TaskStatusWaiting {
+		log.Info().
+			Str("task_id", task.ID.String()).
+			Str("rack_id", targetRack.Info.ID.String()).
+			Msg("task queued: waiting for rack to become available")
+		return task.ID, nil
+	}
+	if err := m.resolveAndExecuteTask(ctx, &task, targetRack); err != nil {
+		return uuid.Nil, err
 	}
 
 	return task.ID, nil
@@ -744,20 +743,57 @@ func (m *ManagerImpl) deferUnlinkedTask(
 			"Expired: target linkage unavailable before queue timeout: %v",
 			unlinkedErr,
 		)
-	}
+		if err := m.taskStore.UpdateTaskStatus(ctx, &taskdef.TaskStatusUpdate{
+			ID:      task.ID,
+			Status:  status,
+			Message: statusMessage,
+		}); err != nil {
+			return true, fmt.Errorf("expire task awaiting target linkage: %w", err)
+		}
+	} else {
+		limit := m.maxWaitingPerRack
+		if limit <= 0 {
+			limit = defaultMaxWaitingPerRack
+		}
+		if err := m.taskStore.RunInTransaction(ctx, func(txCtx context.Context) error {
+			if err := m.taskStore.LockRack(txCtx, task.RackID); err != nil {
+				return err
+			}
+			count, err := m.taskStore.CountWaitingTasksForRack(txCtx, task.RackID)
+			if err != nil {
+				return err
+			}
+			if count >= limit {
+				status = taskcommon.TaskStatusTerminated
+				statusMessage = fmt.Sprintf(
+					"Terminated: rack waiting queue is full while target linkage is unavailable (%d/%d tasks): %v",
+					count,
+					limit,
+					unlinkedErr,
+				)
+			}
 
-	if err := m.taskStore.UpdateTaskStatus(ctx, &taskdef.TaskStatusUpdate{
-		ID:             task.ID,
-		Status:         status,
-		Message:        statusMessage,
-		QueueExpiresAt: deadline,
-	}); err != nil {
-		return true, fmt.Errorf("defer task awaiting target linkage: %w", err)
+			update := &taskdef.TaskStatusUpdate{
+				ID:      task.ID,
+				Status:  status,
+				Message: statusMessage,
+			}
+			if status == taskcommon.TaskStatusWaiting {
+				update.QueueExpiresAt = deadline
+			}
+			return m.taskStore.UpdateTaskStatus(txCtx, update)
+		}); err != nil {
+			return true, fmt.Errorf("defer task awaiting target linkage: %w", err)
+		}
 	}
 
 	task.Status = status
 	task.Message = statusMessage
-	task.QueueExpiresAt = deadline
+	if status == taskcommon.TaskStatusWaiting {
+		task.QueueExpiresAt = deadline
+	} else {
+		task.QueueExpiresAt = nil
+	}
 	return true, nil
 }
 

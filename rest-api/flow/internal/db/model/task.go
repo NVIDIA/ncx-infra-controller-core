@@ -134,7 +134,8 @@ func (t *Task) UpdateScheduledTask(
 }
 
 // UpdateTaskStatus updates the status of the task. Non-nil report and
-// queueExpiresAt values replace their corresponding stored columns.
+// queueExpiresAt values replace their corresponding stored columns. Finished
+// statuses clear queueExpiresAt because the deadline applies only while waiting.
 func (t *Task) UpdateTaskStatus(
 	ctx context.Context,
 	idb bun.IDB,
@@ -152,19 +153,20 @@ func (t *Task) UpdateTaskStatus(
 		t.Report = report
 		columns = append(columns, "report")
 	}
-	if queueExpiresAt != nil {
-		t.QueueExpiresAt = queueExpiresAt
-		columns = append(columns, "queue_expires_at")
-	}
-
 	if status == taskcommon.TaskStatusRunning && t.StartedAt == nil {
 		t.StartedAt = &t.UpdatedAt
 		columns = append(columns, "started_at")
 	}
 	if status.IsFinished() {
 		t.FinishedAt = &t.UpdatedAt
+		t.QueueExpiresAt = nil
+		columns = append(columns, "queue_expires_at")
 	} else {
 		t.FinishedAt = nil
+		if queueExpiresAt != nil {
+			t.QueueExpiresAt = queueExpiresAt
+			columns = append(columns, "queue_expires_at")
+		}
 	}
 
 	_, err := idb.NewUpdate().
