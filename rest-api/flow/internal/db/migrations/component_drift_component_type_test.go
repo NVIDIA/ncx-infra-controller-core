@@ -53,7 +53,7 @@ func TestComponentDriftComponentTypeMigration(t *testing.T) {
 	err = session.DB.NewSelect().
 		Table("component_drift").
 		Column("component_type").
-		Order("component_id NULLS LAST").
+		OrderExpr("component_id NULLS LAST").
 		Scan(ctx, &componentTypes)
 	require.NoError(t, err)
 	require.Len(t, componentTypes, 2)
