@@ -220,7 +220,8 @@ func (m *ManagerImpl) SubmitTask(
 		if err := validateIdempotentTaskRack(req, existing); err != nil {
 			return nil, err
 		}
-		if existing != nil && existing.IsScheduled() {
+		if existing != nil && (existing.IsScheduled() ||
+			existing.Status == taskcommon.TaskStatusWaiting) {
 			return []uuid.UUID{existing.ID}, nil
 		}
 	}
@@ -388,14 +389,22 @@ func validateResolvedRackTargets(
 	}
 	if len(unlinkedComponents) > 0 {
 		slices.Sort(unlinkedComponents)
-		return fmt.Errorf(
-			"selected components not linked to actual inventory (%d): %s",
-			len(unlinkedComponents),
-			strings.Join(unlinkedComponents, ", "),
-		)
+		return &unlinkedTargetsError{components: unlinkedComponents}
 	}
 
 	return nil
+}
+
+type unlinkedTargetsError struct {
+	components []string
+}
+
+func (e *unlinkedTargetsError) Error() string {
+	return fmt.Sprintf(
+		"selected components not linked to actual inventory (%d): %s",
+		len(e.components),
+		strings.Join(e.components, ", "),
+	)
 }
 
 func ruleUsesOnlyExpectedInventory(ruleDef *operationrules.RuleDefinition) bool {
@@ -683,6 +692,10 @@ func (m *ManagerImpl) resolveAndExecuteTask(
 
 	resp, err := m.executeTask(ctx, task, targetRack, &rule.RuleDefinition)
 	if err != nil {
+		deferred, deferErr := m.deferUnlinkedTask(ctx, task, err)
+		if deferred {
+			return deferErr
+		}
 		if uerr := m.taskStore.UpdateTaskStatus(ctx, &taskdef.TaskStatusUpdate{
 			ID:      task.ID,
 			Status:  taskcommon.TaskStatusFailed,
@@ -701,6 +714,51 @@ func (m *ManagerImpl) resolveAndExecuteTask(
 			Msgf("failed to update scheduled task %s", task.ID)
 	}
 	return nil
+}
+
+func (m *ManagerImpl) deferUnlinkedTask(
+	ctx context.Context,
+	task *taskdef.Task,
+	executionErr error,
+) (bool, error) {
+	var unlinkedErr *unlinkedTargetsError
+	if !errors.As(executionErr, &unlinkedErr) {
+		return false, nil
+	}
+
+	deadline := task.QueueExpiresAt
+	if deadline == nil {
+		timeout := m.defaultQueueTimeout
+		if timeout <= 0 {
+			timeout = defaultQueueTimeout
+		}
+		fallback := time.Now().Add(timeout)
+		deadline = &fallback
+	}
+
+	status := taskcommon.TaskStatusWaiting
+	statusMessage := fmt.Sprintf("Waiting for target linkage: %v", unlinkedErr)
+	if !time.Now().Before(*deadline) {
+		status = taskcommon.TaskStatusTerminated
+		statusMessage = fmt.Sprintf(
+			"Expired: target linkage unavailable before queue timeout: %v",
+			unlinkedErr,
+		)
+	}
+
+	if err := m.taskStore.UpdateTaskStatus(ctx, &taskdef.TaskStatusUpdate{
+		ID:             task.ID,
+		Status:         status,
+		Message:        statusMessage,
+		QueueExpiresAt: deadline,
+	}); err != nil {
+		return true, fmt.Errorf("defer task awaiting target linkage: %w", err)
+	}
+
+	task.Status = status
+	task.Message = statusMessage
+	task.QueueExpiresAt = deadline
+	return true, nil
 }
 
 func (m *ManagerImpl) resolveOperationRule(

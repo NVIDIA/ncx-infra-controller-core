@@ -48,8 +48,8 @@ type Task struct {
 	StartedAt     *time.Time                `bun:"started_at"`
 	FinishedAt    *time.Time                `bun:"finished_at"`
 
-	// QueueExpiresAt is set only for waiting tasks. After this time, the
-	// Promoter will discard the task instead of promoting it.
+	// QueueExpiresAt is set for pre-execution waits. After this time, the
+	// Promoter or task manager terminates the task instead of executing it.
 	QueueExpiresAt *time.Time `bun:"queue_expires_at"`
 
 	IdempotencyKey string     `bun:"idempotency_key,nullzero"`
@@ -133,14 +133,15 @@ func (t *Task) UpdateScheduledTask(
 	return err
 }
 
-// UpdateTaskStatus updates the status of the task.
-// report, when non-nil, replaces the stored report column.
+// UpdateTaskStatus updates the status of the task. Non-nil report and
+// queueExpiresAt values replace their corresponding stored columns.
 func (t *Task) UpdateTaskStatus(
 	ctx context.Context,
 	idb bun.IDB,
 	status taskcommon.TaskStatus,
 	message string,
 	report json.RawMessage,
+	queueExpiresAt *time.Time,
 ) error {
 	t.Status = status
 	t.Message = message
@@ -150,6 +151,10 @@ func (t *Task) UpdateTaskStatus(
 	if report != nil {
 		t.Report = report
 		columns = append(columns, "report")
+	}
+	if queueExpiresAt != nil {
+		t.QueueExpiresAt = queueExpiresAt
+		columns = append(columns, "queue_expires_at")
 	}
 
 	if status == taskcommon.TaskStatusRunning && t.StartedAt == nil {

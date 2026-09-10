@@ -46,8 +46,8 @@ type Task struct {
 	StartedAt     *time.Time
 	FinishedAt    *time.Time
 
-	// QueueExpiresAt is the deadline for a waiting task to be promoted.
-	// After this time the Promoter terminates the task automatically.
+	// QueueExpiresAt is the deadline for a pre-execution wait. After this time
+	// the Promoter or task manager terminates the task automatically.
 	// Nil for non-waiting tasks.
 	QueueExpiresAt *time.Time
 
@@ -148,6 +148,9 @@ type TaskStatusUpdate struct {
 	ID      uuid.UUID
 	Status  taskcommon.TaskStatus
 	Message string
+	// QueueExpiresAt, when non-nil, replaces the task's pre-execution wait
+	// deadline. A nil value leaves the stored deadline unchanged.
+	QueueExpiresAt *time.Time
 	// Report, when non-empty, replaces the stored report document. An
 	// empty value leaves the stored report untouched.
 	Report json.RawMessage

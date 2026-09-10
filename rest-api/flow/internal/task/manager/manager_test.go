@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -82,6 +83,42 @@ func TestManagerImpl_SubmitTaskReturnsScheduledIdempotentTaskBeforeInventoryVali
 				ID:             taskID,
 				RackID:         rackID,
 				ExecutionID:    `{"workflow_id":"workflow","run_id":"run"}`,
+				IdempotencyKey: idempotencyKey,
+			},
+		},
+	}
+	inventory := &submitTaskInventory{}
+	manager := &ManagerImpl{inventoryStore: inventory, taskStore: store}
+
+	taskIDs, err := manager.SubmitTask(context.Background(), &operation.Request{
+		Operation:      testPowerControlOperation(t),
+		RequiredRackID: rackID,
+		IdempotencyKey: idempotencyKey,
+		TargetSpec: operation.TargetSpec{
+			Racks: []operation.RackTarget{{
+				Identifier: identifier.Identifier{ID: rackID},
+			}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{taskID}, taskIDs)
+	require.Zero(t, inventory.getRackCalls)
+	require.Zero(t, store.createTaskCalls)
+}
+
+func TestManagerImpl_SubmitTaskReturnsWaitingIdempotentTaskBeforeInventoryValidation(t *testing.T) {
+	rackID := uuid.New()
+	taskID := uuid.New()
+	idempotencyKey := "operation-run-target:" + uuid.NewString()
+	deadline := time.Now().Add(time.Hour)
+	store := &managerTaskStore{
+		taskByIdempotencyKey: map[string]*taskdef.Task{
+			idempotencyKey: {
+				ID:             taskID,
+				RackID:         rackID,
+				Status:         taskcommon.TaskStatusWaiting,
+				QueueExpiresAt: &deadline,
 				IdempotencyKey: idempotencyKey,
 			},
 		},
@@ -244,6 +281,133 @@ func TestManagerImpl_ExecuteTaskRejectsUnlinkedIngestWithActualInventoryRule(t *
 	require.Nil(t, resp)
 	require.ErrorContains(t, err, "operation cannot be executed")
 	require.ErrorContains(t, err, "selected components not linked to actual inventory (1)")
+}
+
+func TestManagerImpl_ResolveAndExecuteTaskRetriesUnlinkedTargetsUntilDeadline(t *testing.T) {
+	rackID := uuid.New()
+	componentID := uuid.New()
+	deadline := time.Now().Add(time.Hour)
+	resolvedRack := newTestRack(rackID, "rack-1")
+	component := newTestComponent(
+		componentID,
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	component.ComponentID = ""
+	resolvedRack.AddComponent(component)
+	task := &taskdef.Task{
+		ID:             uuid.New(),
+		RackID:         rackID,
+		Operation:      testPowerControlOperation(t),
+		Status:         taskcommon.TaskStatusPending,
+		QueueExpiresAt: &deadline,
+	}
+	store := &managerTaskStore{}
+	executor := &managerExecutor{executionID: `{"workflow_id":"workflow","run_id":"run"}`}
+	manager := &ManagerImpl{
+		taskStore:    store,
+		executor:     executor,
+		ruleResolver: operationrules.NewResolver(store),
+	}
+
+	err := manager.resolveAndExecuteTask(context.Background(), task, resolvedRack)
+
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.TaskStatusWaiting, task.Status)
+	require.Len(t, store.statusUpdates, 1)
+	require.Equal(t, taskcommon.TaskStatusWaiting, store.statusUpdates[0].Status)
+	require.Equal(t, deadline, *store.statusUpdates[0].QueueExpiresAt)
+	require.Zero(t, executor.executeCalls)
+
+	// A later promotion reloads the same task after inventory linkage recovers.
+	task.Status = taskcommon.TaskStatusPending
+	resolvedRack.Components[0].ComponentID = "machine-1"
+	err = manager.resolveAndExecuteTask(context.Background(), task, resolvedRack)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, executor.executeCalls)
+	require.Equal(t, 1, store.updateScheduledCalls)
+	require.Equal(t, executor.executionID, store.updatedScheduledTask.ExecutionID)
+}
+
+func TestManagerImpl_ResolveAndExecuteTaskTerminatesUnlinkedTargetsAtDeadline(t *testing.T) {
+	rackID := uuid.New()
+	deadline := time.Now().Add(-time.Minute)
+	resolvedRack := newTestRack(rackID, "rack-1")
+	unlinked := newTestComponent(
+		uuid.New(),
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	unlinked.ComponentID = ""
+	resolvedRack.AddComponent(unlinked)
+	task := &taskdef.Task{
+		ID:             uuid.New(),
+		RackID:         rackID,
+		Operation:      testPowerControlOperation(t),
+		Status:         taskcommon.TaskStatusPending,
+		QueueExpiresAt: &deadline,
+	}
+	store := &managerTaskStore{}
+	manager := &ManagerImpl{
+		taskStore:    store,
+		executor:     &managerExecutor{},
+		ruleResolver: operationrules.NewResolver(store),
+	}
+
+	err := manager.resolveAndExecuteTask(context.Background(), task, resolvedRack)
+
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.TaskStatusTerminated, task.Status)
+	require.Len(t, store.statusUpdates, 1)
+	require.Equal(t, taskcommon.TaskStatusTerminated, store.statusUpdates[0].Status)
+	require.Equal(t, deadline, *store.statusUpdates[0].QueueExpiresAt)
+}
+
+func TestCreateAndExecuteTaskWaitsWhenTargetUnlinksAfterAdmission(t *testing.T) {
+	rackID := uuid.New()
+	resolvedRack := newTestRack(rackID, "rack-1")
+	unlinked := newTestComponent(
+		uuid.New(),
+		rackID,
+		devicetypes.ComponentTypeCompute,
+		"compute-1",
+	)
+	unlinked.ComponentID = ""
+	resolvedRack.AddComponent(unlinked)
+	store := &managerTaskStore{}
+	executor := &managerExecutor{}
+	manager := &ManagerImpl{
+		taskStore:           store,
+		executor:            executor,
+		ruleResolver:        operationrules.NewResolver(store),
+		conflictResolver:    conflict.NewResolver(store),
+		defaultQueueTimeout: 30 * time.Minute,
+	}
+	startedAt := time.Now()
+
+	taskID, err := manager.createAndExecuteTask(context.Background(), &operation.Request{
+		Operation:        testPowerControlOperation(t),
+		ConflictStrategy: operation.ConflictStrategyReject,
+	}, resolvedRack)
+
+	require.NoError(t, err)
+	require.NotEqual(t, uuid.Nil, taskID)
+	require.Equal(t, 1, store.createTaskCalls)
+	require.Len(t, store.statusUpdates, 1)
+	update := store.statusUpdates[0]
+	require.Equal(t, taskID, update.ID)
+	require.Equal(t, taskcommon.TaskStatusWaiting, update.Status)
+	require.NotNil(t, update.QueueExpiresAt)
+	require.WithinDuration(
+		t,
+		startedAt.Add(manager.defaultQueueTimeout),
+		*update.QueueExpiresAt,
+		time.Second,
+	)
+	require.Zero(t, executor.executeCalls)
 }
 
 func TestValidateResolvedRackTargets(t *testing.T) {
@@ -547,6 +711,7 @@ type managerTaskStore struct {
 	lockRackCalls        int
 	updateScheduledCalls int
 	updatedScheduledTask *taskdef.Task
+	statusUpdates        []*taskdef.TaskStatusUpdate
 	rulesByID            map[uuid.UUID]*operationrules.OperationRule
 }
 
@@ -559,7 +724,7 @@ func (s *managerTaskStore) RunInTransaction(
 
 func (s *managerTaskStore) CreateTask(_ context.Context, _ *taskdef.Task) error {
 	s.createTaskCalls++
-	return fmt.Errorf("CreateTask should not be called")
+	return nil
 }
 
 func (s *managerTaskStore) LockRack(_ context.Context, _ uuid.UUID) error {
@@ -610,9 +775,10 @@ func (s *managerTaskStore) UpdateScheduledTask(_ context.Context, task *taskdef.
 
 func (s *managerTaskStore) UpdateTaskStatus(
 	_ context.Context,
-	_ *taskdef.TaskStatusUpdate,
+	update *taskdef.TaskStatusUpdate,
 ) error {
-	panic("managerTaskStore.UpdateTaskStatus: not implemented")
+	s.statusUpdates = append(s.statusUpdates, update)
+	return nil
 }
 
 func (s *managerTaskStore) UpdateTaskReport(
@@ -696,7 +862,7 @@ func (s *managerTaskStore) GetRuleByOperationAndRack(
 	_ string,
 	_ *uuid.UUID,
 ) (*operationrules.OperationRule, error) {
-	panic("managerTaskStore.GetRuleByOperationAndRack: not implemented")
+	return nil, nil
 }
 
 func (s *managerTaskStore) ListRules(

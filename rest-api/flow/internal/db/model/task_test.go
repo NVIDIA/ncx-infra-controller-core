@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -51,6 +52,34 @@ func TestListTasks_DefaultOrderBeforePagination(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, tasks)
 	assert.Equal(t, int32(1), total)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTaskUpdateTaskStatusPersistsQueueDeadline(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+
+	db := bun.NewDB(sqlDB, pgdialect.New())
+	defer db.Close()
+
+	mock.ExpectExec(`UPDATE "task" AS "t" SET .*"queue_expires_at".* WHERE \(id =`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	deadline := time.Now().Add(time.Hour).UTC()
+	task := &Task{ID: uuid.New()}
+
+	err = task.UpdateTaskStatus(
+		t.Context(),
+		db,
+		taskcommon.TaskStatusWaiting,
+		"Waiting for target linkage",
+		nil,
+		&deadline,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.TaskStatusWaiting, task.Status)
+	require.Equal(t, deadline, *task.QueueExpiresAt)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
