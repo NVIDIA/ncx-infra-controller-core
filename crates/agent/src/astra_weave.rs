@@ -1309,7 +1309,8 @@ fn sync_astra_config_status_from_weave_ew_vpc_attachments(
                         .spec
                         .as_ref()
                         .is_some_and(|spec| {
-                            spec.nic_id == astra_attachment.mac_address.as_str()
+                            spec.nic_id
+                                .eq_ignore_ascii_case(astra_attachment.mac_address.as_str())
                                 && spec.vnet_id
                                     == astra_weave_ew_vpc_virtual_network_id(
                                         astra_attachment.vni as i32,
