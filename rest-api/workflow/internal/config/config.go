@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -100,6 +101,24 @@ const (
 	ConfigTracingEnabled = "tracing.enabled"
 	// ConfigTracingServiceName specifies the service name for tracing
 	ConfigTracingServiceName = "tracing.serviceName"
+
+	// ConfigWorkerMaxConcurrentActivityPollers specifies how many concurrent activity
+	// task pollers the Temporal worker runs
+	ConfigWorkerMaxConcurrentActivityPollers = "worker.maxConcurrentActivityPollers"
+	// ConfigWorkerMaxConcurrentActivityPollersEnv is the env var to override the poller count
+	ConfigWorkerMaxConcurrentActivityPollersEnv = "MAX_CONCURRENT_ACTIVITY_POLLERS"
+)
+
+const (
+	// DefaultMaxConcurrentActivityPollers is the poller count used when
+	// MAX_CONCURRENT_ACTIVITY_POLLERS is unset. Matches the historical hardcoded value.
+	DefaultMaxConcurrentActivityPollers = 10
+	// MaxMaxConcurrentActivityPollers caps the configurable poller count. Each poller can
+	// hold a DB connection from the shared pgx pool while its activity runs, and this worker
+	// also serves the cloud task queue, so the real ceiling should be sized against the
+	// target DB pool size / node CPU rather than guessed. This bound is only a conservative
+	// guard against a fat-fingered value, not a tuned limit.
+	MaxMaxConcurrentActivityPollers = 200
 )
 
 // Maintain a global config object
@@ -151,6 +170,8 @@ func NewConfig() *Config {
 
 	c.v.SetDefault(ConfigTracingEnabled, false)
 
+	c.v.SetDefault(ConfigWorkerMaxConcurrentActivityPollers, DefaultMaxConcurrentActivityPollers)
+
 	c.v.AutomaticEnv()
 	c.v.SetConfigFile(c.GetPathToConfig())
 
@@ -176,6 +197,7 @@ func NewConfig() *Config {
 
 	c.setTemporalNamespace()
 	c.setTemporalQueue()
+	c.setMaxConcurrentActivityPollers()
 
 	if c.GetTemporalEncryptionKey() == "" {
 		if c.GetTemporalEncryptionKeyPath() != "" {
@@ -244,6 +266,10 @@ func (c *Config) Validate() {
 	if c.GetNgcAPIBaseURL() == "" {
 		log.Warn().Msg("ngc api base url config not specified, NGC user lookups will be unavailable")
 	}
+
+	if p := c.GetMaxConcurrentActivityPollers(); p < 1 || p > MaxMaxConcurrentActivityPollers {
+		log.Panic().Msgf("worker max concurrent activity pollers %d must be between 1 and %d", p, MaxMaxConcurrentActivityPollers)
+	}
 }
 
 // Config setters
@@ -298,6 +324,21 @@ func (c *Config) setTemporalQueue() {
 	if tq != "" {
 		c.v.Set(ConfigTemporalQueue, tq)
 	}
+}
+
+// setMaxConcurrentActivityPollers applies the MAX_CONCURRENT_ACTIVITY_POLLERS env override.
+// AutomaticEnv cannot map this dotted config key to a shell-legal env var name, so we read
+// it explicitly like the Temporal namespace/queue overrides above.
+func (c *Config) setMaxConcurrentActivityPollers() {
+	v := os.Getenv(ConfigWorkerMaxConcurrentActivityPollersEnv)
+	if v == "" {
+		return
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		log.Panic().Err(err).Msgf("%s %q is not a valid integer", ConfigWorkerMaxConcurrentActivityPollersEnv, v)
+	}
+	c.v.Set(ConfigWorkerMaxConcurrentActivityPollers, parsed)
 }
 
 /* Get sub-configurations */
@@ -377,6 +418,12 @@ func (c *Config) GetDBPasswordPath() string {
 // GetDBPassword returns the password of the database
 func (c *Config) GetDBPassword() string {
 	return c.v.GetString(ConfigDBPassword)
+}
+
+// GetMaxConcurrentActivityPollers returns the number of concurrent activity task pollers
+// the Temporal worker should run
+func (c *Config) GetMaxConcurrentActivityPollers() int {
+	return c.v.GetInt(ConfigWorkerMaxConcurrentActivityPollers)
 }
 
 // GetTemporalHost returns the hostname for Temporal
