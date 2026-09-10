@@ -355,6 +355,8 @@ fn short_expiry_config() -> Kea6Config {
         valid_lifetime: 4,
         renew_timer: 1,
         rebind_timer: 2,
+        rapid_commit_v6: false,
+        kea_rapid_commit_v6: true,
         // Let Kea derive a conflicting MAC from the DUID so the hook must
         // replace it with the trusted relay-selected identity.
         mac_sources: Some(&["duid"]),
@@ -480,6 +482,43 @@ fn stateful_lifecycle_keeps_kea_on_the_api_address() -> Result<(), eyre::Report>
         h.kea.metrics_endpoint(),
         "reply",
         initial_replies + 6.0,
+        METRIC_TIMEOUT,
+    ));
+
+    Ok(())
+}
+
+/// Verify valid non-MAC DUIDs fail at the trusted relay-identity boundary.
+///
+/// DUID-EN and DUID-UUID are valid identifiers, but neither may select a
+/// cross-family machine row without relay-supplied option 79.
+#[test]
+fn non_mac_duids_without_option79_are_dropped() -> Result<(), eyre::Report> {
+    let h = Harness::new();
+    let initial_drops = v6_drop_metric_value(h.kea.metrics_endpoint(), "no_mac_no_option79");
+    let cases = [
+        // Enterprise identifiers are valid but deliberately contain no
+        // standardized link-layer address.
+        ("DUID-EN", 0x45, DHCPv6Factory::duid_en(12)),
+        // UUID identifiers exercise the other supported non-MAC DUID format.
+        ("DUID-UUID", 0x46, DHCPv6Factory::duid_uuid(0x46)),
+    ];
+
+    for (name, client_index, duid) in cases {
+        // Keep the relay envelope but omit its trusted client-link-layer option.
+        let response = send_and_recv_v6(
+            &h.socket,
+            DHCPv6Factory::solicit_with_duid(client_index, duid, false),
+        )?;
+        assert!(response.is_none(), "{name} must be dropped before reply");
+    }
+
+    // Both valid DUID forms must share the stable identity failure and avoid API calls.
+    assert_eq!(h.api_server.calls_for(ENDPOINT_DISCOVER_DHCP), 0);
+    assert!(wait_for_v6_drop_metric_at_least(
+        h.kea.metrics_endpoint(),
+        "no_mac_no_option79",
+        initial_drops + 2.0,
         METRIC_TIMEOUT,
     ));
 
