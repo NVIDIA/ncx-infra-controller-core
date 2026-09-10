@@ -223,8 +223,8 @@ Copy `helm-prereqs/values/machine-a-tron.yaml` and fill in the site-specific val
 | Field | Description |
 |-------|-------------|
 | `image.tag` | Tag produced by [building the container image](#building-the-container-image) (e.g. `8c35783af-amd64`) |
-| `machines.dell-hosts.oobDhcpRelayAddress` | Gateway of the OOB/underlay network from nico-core site config |
-| `machines.dell-hosts.adminDhcpRelayAddress` | Gateway of the admin network from nico-core site config |
+| `machines.dell-hosts.bmcDhcpRelayAddress` | Gateway of the BMC (OOB) network from nico-core site config; relay for BMC DHCP |
+| `machines.dell-hosts.underlayDhcpRelayAddress` | Gateway of the underlay segment that serves DPU OOB and switch NVOS DHCP (`bmcDhcpRelayAddress` and `underlayDhcpRelayAddress` remain accepted as deprecated aliases) |
 | `machines.dell-hosts.hostCount` | Must not exceed available OOB DHCP addresses (`hostCount + hostCount×dpuPerHostCount`) |
 
 ### SPIFFE URI override
@@ -333,7 +333,7 @@ with ClusterIP = BMC IP assigned by NICo DHCP. NICo dials each BMC IP directly
 Everything single-pod mode needs still applies (namespaces, CA copy, Vault
 seeds, SPIFFE URI). Multi-pod with controller adds the following requirements:
 
-1. **`oobDhcpRelayAddress` must be within Kubernetes ServiceCIDR.** All pods
+1. **`bmcDhcpRelayAddress` must be within Kubernetes ServiceCIDR.** All pods
    can share the same relay address — NICo assigns unique IPs from the network.
    Default ServiceCIDR ranges:
    - `10.96.0.0/12` - vanilla Kubernetes (kubeadm)
@@ -379,16 +379,16 @@ seeds, SPIFFE URI). Multi-pod with controller adds the following requirements:
             hwType: wiwynn_gb200_nvl
             hostCount: 100
             dpuPerHostCount: 2
-            oobDhcpRelayAddress: "10.96.64.1"  # All pods share same relay
-            adminDhcpRelayAddress: "192.168.176.1"
+            bmcDhcpRelayAddress: "10.96.64.1"  # All pods share same relay
+            underlayDhcpRelayAddress: "192.168.176.1"
       mat-1:
         machines:
           compute:
             hwType: wiwynn_gb200_nvl
             hostCount: 100
             dpuPerHostCount: 2
-            oobDhcpRelayAddress: "10.96.64.1"  # NICo assigns unique IPs
-            adminDhcpRelayAddress: "192.168.176.1"
+            bmcDhcpRelayAddress: "10.96.64.1"  # NICo assigns unique IPs
+            underlayDhcpRelayAddress: "192.168.176.1"
 
     macAddressPool:
       enabled: true
