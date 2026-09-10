@@ -21,6 +21,7 @@ import (
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 
+	"github.com/NVIDIA/infra-controller/rest-api/site-agent/pkg/components/managers/bootstrap"
 	computils "github.com/NVIDIA/infra-controller/rest-api/site-agent/pkg/components/utils"
 	swu "github.com/NVIDIA/infra-controller/rest-api/site-workflow/pkg/util"
 )
@@ -111,6 +112,18 @@ func workflowOrchestrator() error {
 		if err != nil {
 			log.Error().Msg("Workflow: Unable to read client certificates")
 			return err
+		}
+
+		// Each pod loads its own certificate on startup and reload.
+		leaf := clientcert.Leaf
+		if leaf == nil {
+			// GODEBUG=x509keypairleaf=0 leaves Leaf unset after a successful load.
+			leaf, err = x509.ParseCertificate(clientcert.Certificate[0])
+		}
+		if err == nil && leaf != nil && bootstrap.CertExpirationMetric != nil {
+			bootstrap.CertExpirationMetric.Set(float64(leaf.NotAfter.Unix()))
+		} else {
+			log.Warn().Err(err).Msg("Workflow: Unable to update Temporal certificate expiration metric")
 		}
 
 		// Load server cert
