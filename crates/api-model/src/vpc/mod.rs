@@ -152,6 +152,20 @@ pub enum PowerResourceGroupUpdate {
     Clear,
 }
 
+/// Changes a VPC's named routing profile using an observed version.
+///
+/// Core validates the destination against the persisted tenant and retains
+/// the previous VNI until the operator explicitly releases it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeVpcRoutingProfile {
+    /// VPC whose profile and active VNI will change.
+    pub id: VpcId,
+    /// Original observed version; callers must not refresh it during retries.
+    pub if_version_match: ConfigVersion,
+    /// Configuration-defined destination profile name.
+    pub routing_profile_type: String,
+}
+
 /// UpdateVpcVirtualization exists as a mechanism to translate
 /// an incoming VpcUpdateVirtualizationRequest and turn it
 /// into something we can `update()` to the database.

@@ -21,9 +21,9 @@ use carbide_uuid::network_security_group::NetworkSecurityGroupIdParseError;
 use config_version::ConfigVersion;
 use model::metadata::{LabelFilter, Metadata};
 use model::vpc::{
-    NewVpc, PowerResourceGroupUpdate, PrefixFilterPolicyEntry, RouteTargetConfig, UpdateVpc,
-    UpdateVpcVirtualization, Vpc, VpcPeering, VpcRoutingProfileOverrides, VpcSearchFilter,
-    VpcStatus,
+    ChangeVpcRoutingProfile, NewVpc, PowerResourceGroupUpdate, PrefixFilterPolicyEntry,
+    RouteTargetConfig, UpdateVpc, UpdateVpcVirtualization, Vpc, VpcPeering,
+    VpcRoutingProfileOverrides, VpcSearchFilter, VpcStatus,
 };
 
 use crate as rpc;
@@ -349,6 +349,32 @@ impl TryFrom<rpc::forge::VpcUpdateVirtualizationRequest> for UpdateVpcVirtualiza
     }
 }
 
+impl TryFrom<rpc::forge::VpcChangeRoutingProfileRequest> for ChangeVpcRoutingProfile {
+    type Error = RpcDataConversionError;
+
+    fn try_from(request: rpc::forge::VpcChangeRoutingProfileRequest) -> Result<Self, Self::Error> {
+        let id = request
+            .id
+            .ok_or(RpcDataConversionError::MissingArgument("id"))?;
+        let version = request
+            .if_version_match
+            .ok_or(RpcDataConversionError::MissingArgument("if_version_match"))?;
+        let if_version_match = version
+            .parse()
+            .map_err(|_| RpcDataConversionError::InvalidConfigVersion(version))?;
+        if request.routing_profile_type.is_empty() {
+            return Err(RpcDataConversionError::InvalidArgument(
+                "routing_profile_type must not be empty".to_string(),
+            ));
+        }
+        Ok(Self {
+            id,
+            if_version_match,
+            routing_profile_type: request.routing_profile_type,
+        })
+    }
+}
+
 impl From<Vpc> for rpc::forge::VpcDeletionResult {
     fn from(_src: Vpc) -> Self {
         rpc::forge::VpcDeletionResult {}
@@ -383,6 +409,47 @@ mod tests {
     use model::vpc::VpcConfig;
 
     use super::*;
+
+    #[test]
+    fn vpc_routing_change_requires_original_version_and_named_destination() {
+        let vpc_id = VpcId::new();
+        let request = rpc::forge::VpcChangeRoutingProfileRequest {
+            id: Some(vpc_id),
+            if_version_match: Some("V1-T0".to_string()),
+            routing_profile_type: "PARTNER".to_string(),
+        };
+        value_scenarios!(
+            run = |input| ChangeVpcRoutingProfile::try_from(input)
+                .map_err(|error| tonic::Status::from(error).code());
+            "valid configured name" {
+                request.clone() => Ok(ChangeVpcRoutingProfile {
+                    id: vpc_id,
+                    if_version_match: "V1-T0".parse().unwrap(),
+                    routing_profile_type: "PARTNER".to_string(),
+                }),
+            }
+            "missing ID" {
+                rpc::forge::VpcChangeRoutingProfileRequest {
+                    id: None, ..request.clone()
+                } => Err(tonic::Code::InvalidArgument),
+            }
+            "missing version" {
+                rpc::forge::VpcChangeRoutingProfileRequest {
+                    if_version_match: None, ..request.clone()
+                } => Err(tonic::Code::InvalidArgument),
+            }
+            "malformed version" {
+                rpc::forge::VpcChangeRoutingProfileRequest {
+                    if_version_match: Some("bad".to_string()), ..request.clone()
+                } => Err(tonic::Code::InvalidArgument),
+            }
+            "missing destination" {
+                rpc::forge::VpcChangeRoutingProfileRequest {
+                    routing_profile_type: String::new(), ..request
+                } => Err(tonic::Code::InvalidArgument),
+            }
+        );
+    }
 
     fn sample_vpc() -> Vpc {
         Vpc {

@@ -432,6 +432,28 @@ where
         .map_err(Into::into)
 }
 
+/// Returns a value shared by two integer pools, if any.
+///
+/// This compares materialized entries, including allocated and manually
+/// assigned values, rather than the configured range definitions. It does not
+/// lock the pools or prevent their definitions from changing afterward.
+pub async fn find_pool_overlap(
+    txn: &mut PgConnection,
+    first: &ResourcePool<i32>,
+    second: &ResourcePool<i32>,
+) -> Result<Option<i32>, DatabaseError> {
+    let query = "SELECT first_pool.value::integer FROM resource_pool first_pool
+        JOIN resource_pool second_pool ON first_pool.value = second_pool.value
+        WHERE first_pool.name = $1 AND second_pool.name = $2
+        LIMIT 1";
+    sqlx::query_scalar(query)
+        .bind(first.name())
+        .bind(second.name())
+        .fetch_optional(txn)
+        .await
+        .map_err(|error| DatabaseError::query(query, error))
+}
+
 /// Return a resource to the pool
 pub async fn release<T>(
     pool: &ResourcePool<T>,
