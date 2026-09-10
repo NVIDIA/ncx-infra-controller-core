@@ -1063,15 +1063,44 @@ impl EndpointExplorationReport {
         Ok(Some(self.power_shelf_id.insert(power_shelf_id)))
     }
 
+    /// Returns whether `chassis` reports a serial number usable for switch ID
+    /// generation.
+    ///
+    /// The literal `"NA"` is treated the same as a missing serial because some
+    /// switch BMCs return it in error situations (see
+    /// [`switch_id::from_hardware_info_with_type`]).
+    fn is_switch_chassis_valid(chassis: &Chassis) -> bool {
+        matches!(chassis.serial_number.as_deref(), Some(serial) if serial != "NA")
+    }
+
+    /// Returns the chassis reported under the `id` subsystem (matched
+    /// case-insensitively) only when it carries a serial number usable for
+    /// switch ID generation, per [`Self::is_switch_chassis_valid`].
+    fn query_switch_chassis_subsystem(&self, id: &str) -> Option<&Chassis> {
+        let id = id.to_lowercase();
+        self.chassis
+            .iter()
+            .find(|c| c.id.to_lowercase() == id)
+            .filter(|c| Self::is_switch_chassis_valid(c))
+    }
+
     //TODO: refactor for common code with generate_power_shelf_id
     /// Tries to generate and store a MachineId for the discovered endpoint if
     /// enough data for generation is available
     pub fn generate_switch_id(&mut self) -> ModelResult<Option<SwitchId>> {
+        // On GB200 (N5200_LD) the switch serial is reported by the
+        // `MGX_NVSwitch_0` chassis. On Vera Rubin (N6100_LD) that chassis
+        // reports `"NA"` and the usable serial is surfaced by `Chassis_0`
+        // instead, so fall back to it when the primary chassis has no valid
+        // serial.
         let chassis = self
-            .chassis
-            .iter()
-            .find(|c| c.id.to_string().to_lowercase() == "mgx_nvswitch_0")
-            .unwrap();
+            .query_switch_chassis_subsystem("mgx_nvswitch_0")
+            .or_else(|| self.query_switch_chassis_subsystem("chassis_0"))
+            .ok_or_else(|| {
+                ModelError::HardwareInfo(HardwareInfoError::MissingHardwareInfo(
+                    MissingHardwareInfo::Serial,
+                ))
+            })?;
         let serial_number = chassis.serial_number.clone();
         let manufacturer = chassis.manufacturer.clone().unwrap_or("NVIDIA".to_string());
         let model = "Switch".to_string();
