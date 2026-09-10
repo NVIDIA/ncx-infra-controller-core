@@ -94,9 +94,9 @@ pods:
         networkStatusRunInterval: "20s"
         # Set to the gateway of the OOB/underlay network in nico-core site config.
         # (setup-machine-a-tron.sh fills this from the running nico-core config.)
-        oobDhcpRelayAddress: "FILL_IN"
+        bmcDhcpRelayAddress: "FILL_IN"
         # Set to the gateway of the admin network in nico-core site config.
-        adminDhcpRelayAddress: "FILL_IN"
+        underlayDhcpRelayAddress: "FILL_IN"
         dpusInNicMode: false
 
 extraEnv:

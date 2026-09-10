@@ -209,7 +209,7 @@ NICO_DB="nico_system_nico"
 #   NICo network covering the BMC IP range. See the chart README "Controller Mode".
 MAT_MODE="${MAT_MODE:-override}"
 # Networks for scale mode. The OOB gateway must match the scale values file
-# (oobDhcpRelayAddress). Both are sized from MEASURED demand, not from the host
+# (bmcDhcpRelayAddress). Both are sized from MEASURED demand, not from the host
 # count: since the mock BMCs became DHCP clients, a 4,500-host fleet needs far
 # more addresses than the obvious "one per host" arithmetic suggests.
 #
@@ -863,7 +863,7 @@ mtu = 9000
 reserve_first = {env["SCALE_RESERVE"]}
 '''
 # DPU OOB + switch NVOS DHCP relay target (MAT underlay_dhcp_relay_address,
-# rendered as adminDhcpRelayAddress). Kept separate from the admin pool: NICo
+# rendered as underlayDhcpRelayAddress). Kept separate from the admin pool: NICo
 # predicts DPU oob interfaces on an underlay-typed segment.
 networks_underlay = f'''
 [networks.simulated-underlay]
@@ -1159,7 +1159,7 @@ if [[ "$MAT_MODE" == "scale" ]]; then
     # no live-config parsing needed.
     OOB_PREFIX="$SCALE_OOB_PREFIX";   OOB_DHCP_RELAY="${OOB_DHCP_RELAY:-$SCALE_OOB_GW}"
     ADMIN_PREFIX="$SCALE_ADMIN_PREFIX"
-    # MAT's adminDhcpRelayAddress is its underlay relay (DPU OOB + switch NVOS
+    # MAT's underlayDhcpRelayAddress is its underlay relay (DPU OOB + switch NVOS
     # DHCP); it must resolve to an underlay-typed segment, not the admin pool.
     UNDERLAY_PREFIX="$SCALE_UNDERLAY_PREFIX"; UNDERLAY_RESERVE="$SCALE_RESERVE"
     ADMIN_DHCP_RELAY="${ADMIN_DHCP_RELAY:-$SCALE_UNDERLAY_GW}"
@@ -1202,7 +1202,7 @@ _usable() { local m="${1##*/}" r="$2"; local u=$(( (1 << (32 - m)) - r - 1 )); (
 #           PLUS one admin IP per host allocated by machine creation (creation
 #           fails with "No IP addresses left in prefix <admin>" without it)
 #   underlay = hostCount*dpuPerHost + switchCount - one DPU OOB IP per DPU plus
-#           one NVOS IP per switch (scale mode; relayed via adminDhcpRelayAddress)
+#           one NVOS IP per switch (scale mode; relayed via underlayDhcpRelayAddress)
 if [[ "${OOB_PREFIX:-}" == */* && "${ADMIN_PREFIX:-}" == */* ]]; then
     OOB_USABLE="$(_usable "$OOB_PREFIX" "$OOB_RESERVE")"; ADMIN_USABLE="$(_usable "$ADMIN_PREFIX" "$ADMIN_RESERVE")"
     # max hosts each pool supports, then take the min
@@ -1255,9 +1255,9 @@ def groups_from_yaml(doc):
             out.append({
                 "hosts": hosts,
                 "dpus": int(grp.get("dpuPerHostCount") or 0),
-                "relay": str(grp.get("oobDhcpRelayAddress") or "").strip(),
+                "relay": str(grp.get("bmcDhcpRelayAddress") or grp.get("oobDhcpRelayAddress") or "").strip(),
                 "hw": str(grp.get("hwType") or "").lower(),
-                "urelay": str(grp.get("adminDhcpRelayAddress") or "").strip(),
+                "urelay": str(grp.get("underlayDhcpRelayAddress") or grp.get("adminDhcpRelayAddress") or "").strip(),
             })
     return out
 
@@ -1297,9 +1297,9 @@ for raw in text.splitlines():
         cur["hw"] = val.strip('"\'').lower()
     elif key == "dpuPerHostCount" and cur is not None:
         cur["dpus"] = int(re.sub(r"\D", "", val) or 0)
-    elif key == "oobDhcpRelayAddress" and cur is not None:
+    elif key in ("bmcDhcpRelayAddress", "oobDhcpRelayAddress") and cur is not None:
         cur["relay"] = val.strip('"\'')
-    elif key == "adminDhcpRelayAddress" and cur is not None:
+    elif key in ("underlayDhcpRelayAddress", "adminDhcpRelayAddress") and cur is not None:
         cur["urelay"] = val.strip('"\'')
 if cur is not None:
     groups.append(cur)
@@ -1347,7 +1347,7 @@ for relay, need in sorted(demand.items()):
         problems.append(f"relay {relay} needs {need} IPs but {cidr} only provides ~{cap}")
 
 # Underlay demand is additive across every group that relays DPU OOB / switch
-# NVOS DHCP to the same adminDhcpRelayAddress: one lease per DPU, one per switch.
+# NVOS DHCP to the same underlayDhcpRelayAddress: one lease per DPU, one per switch.
 underlay = {}
 for g in groups:
     need = g["hosts"] * g["dpus"] + (g["hosts"] if "switch" in g["hw"] else 0)
@@ -1488,8 +1488,8 @@ pods:
       dell-hosts:
         hostCount: ${HOST_COUNT}
         dpuPerHostCount: ${DPU_PER_HOST}
-        oobDhcpRelayAddress: "${OOB_DHCP_RELAY}"
-        adminDhcpRelayAddress: "${ADMIN_DHCP_RELAY}"
+        bmcDhcpRelayAddress: "${OOB_DHCP_RELAY}"
+        underlayDhcpRelayAddress: "${ADMIN_DHCP_RELAY}"
 EOF
 fi
 if [[ "$MAT_MODE" == "scale" ]]; then
