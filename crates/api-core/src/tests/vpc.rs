@@ -46,69 +46,230 @@ fn forge_vpc_config(vpc: &rpc::forge::Vpc) -> &rpc::forge::VpcConfig {
         .expect("structured config must be populated")
 }
 
+/// Verifies an active non-FNN VPC does not prevent repairing a historical profileless tenant, so
+/// existing non-FNN workloads do not block later FNN adoption.
 #[crate::sqlx_test]
 async fn create_vpc_for_tenant_without_profile(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let env = create_test_env(pool).await;
+    let env =
+        create_test_env_with_overrides(pool, TestEnvOverrides::default().with_fnn_config(None))
+            .await;
+    let tenant_organization_id = "historical-profileless-tenant";
 
-    // Create a tenant.
+    // Persist the historical state produced by creating a tenant before enabling FNN.
+    let mut txn = env.pool.begin().await?;
+    db::tenant::create_and_persist(
+        tenant_organization_id.to_string(),
+        Metadata {
+            name: "Historical profileless tenant".to_string(),
+            ..Default::default()
+        },
+        None,
+        txn.as_mut(),
+    )
+    .await?;
+    txn.commit().await?;
+
+    // Omitting the VPC profile must not persist an FNN VPC without named routing policy.
+    let error = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder(tenant_organization_id)
+                .metadata(rpc::forge::Metadata {
+                    name: "Profileless FNN VPC".to_string(),
+                    ..Default::default()
+                })
+                .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
+                .tonic_request(),
+        )
+        .await
+        .expect_err("an FNN VPC requires a tenant routing profile");
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert!(error.message().contains("must have a routing profile"));
+
+    // Read through the public API to prove the rejected request persisted no VPC.
+    let persisted_ids = env
+        .api
+        .find_vpc_ids(tonic::Request::new(rpc::forge::VpcSearchFilter {
+            name: None,
+            tenant_org_id: Some(tenant_organization_id.to_string()),
+            label: None,
+        }))
+        .await?
+        .into_inner()
+        .vpc_ids;
+    assert!(persisted_ids.is_empty());
+
+    // Create an ETV VPC to prove non-FNN workloads do not prevent profile remediation.
+    env.api
+        .create_vpc(
+            VpcCreationRequest::builder(tenant_organization_id)
+                .metadata(rpc::forge::Metadata {
+                    name: "Historical tenant ETV VPC".to_string(),
+                    ..Default::default()
+                })
+                .network_virtualization_type(
+                    rpc::forge::VpcVirtualizationType::EthernetVirtualizer as i32,
+                )
+                .tonic_request(),
+        )
+        .await?;
+
+    // Load the tenant through the public API so the update uses its persisted version and metadata.
     let tenant = env
         .api
-        .create_tenant(tonic::Request::new(rpc::forge::CreateTenantRequest {
-            organization_id: "sizzle".to_string(),
-            routing_profile_type: None,
-            metadata: Some(rpc::forge::Metadata {
-                name: "sizzle".to_string(),
-                description: "".to_string(),
-                labels: vec![],
-            }),
+        .find_tenant(tonic::Request::new(rpc::forge::FindTenantRequest {
+            tenant_organization_id: tenant_organization_id.to_string(),
         }))
-        .await
-        .unwrap()
+        .await?
         .into_inner()
         .tenant
-        .unwrap();
+        .expect("historical tenant");
 
-    // Try to request a VPC without sending a valid tenant org. Routing-
-    // profile validation lives behind the FNN-only path, so the request
-    // has to be an FNN VPC to exercise the "no tenant" branch.
-    assert!(
-        env.api
-            .create_vpc(
-                VpcCreationRequest::builder("")
-                    .metadata(rpc::forge::Metadata {
-                        name: "Forge".to_string(),
-                        ..Default::default()
-                    })
-                    .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
-                    .routing_profile_type("PRIVILEGED_INTERNAL".to_string())
-                    .tonic_request(),
-            )
-            .await
-            .unwrap_err()
-            .message()
-            .contains("no tenant or routing profile type found")
+    // Assign a valid profile while only the non-FNN VPC is active.
+    let updated_tenant = env
+        .api
+        .update_tenant(tonic::Request::new(rpc::forge::UpdateTenantRequest {
+            organization_id: tenant_organization_id.to_string(),
+            routing_profile_type: Some("INTERNAL".to_string()),
+            metadata: tenant.metadata,
+            if_version_match: Some(tenant.version),
+        }))
+        .await?
+        .into_inner()
+        .tenant
+        .expect("updated tenant");
+    assert_eq!(
+        updated_tenant.routing_profile_type.as_deref(),
+        Some("INTERNAL")
     );
 
-    // Try to request a VPC with a routing profile when the tenant has no routing profile type
-    assert!(
-        env.api
-            .create_vpc(
-                VpcCreationRequest::builder(tenant.organization_id)
-                    .metadata(rpc::forge::Metadata {
-                        name: "Forge".to_string(),
-                        ..Default::default()
-                    })
-                    .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
-                    .routing_profile_type("PRIVILEGED_INTERNAL".to_string())
-                    .tonic_request(),
-            )
-            .await
-            .unwrap_err()
-            .message()
-            .contains("no tenant or routing profile type found")
+    // Reload through the public API to prove the profile and new version were persisted.
+    let persisted_tenant = env
+        .api
+        .find_tenant(tonic::Request::new(rpc::forge::FindTenantRequest {
+            tenant_organization_id: tenant_organization_id.to_string(),
+        }))
+        .await?
+        .into_inner()
+        .tenant
+        .expect("persisted tenant");
+    assert_eq!(
+        persisted_tenant.routing_profile_type.as_deref(),
+        Some("INTERNAL")
     );
+    assert_eq!(persisted_tenant.version, updated_tenant.version);
+
+    // A later FNN VPC can now inherit the tenant's repaired named profile.
+    let fnn_vpc = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder(tenant_organization_id)
+                .metadata(rpc::forge::Metadata {
+                    name: "Repaired tenant FNN VPC".to_string(),
+                    ..Default::default()
+                })
+                .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
+                .tonic_request(),
+        )
+        .await?
+        .into_inner();
+    let created_config = forge_vpc_config(&fnn_vpc);
+    assert_eq!(
+        created_config.network_virtualization_type,
+        Some(rpc::forge::VpcVirtualizationType::Fnn as i32)
+    );
+    assert_eq!(
+        created_config.routing_profile_type.as_deref(),
+        Some("INTERNAL")
+    );
+
+    // Reload the FNN VPC to prove the inherited profile was persisted.
+    let persisted_vpc = env
+        .api
+        .find_vpcs_by_ids(tonic::Request::new(rpc::forge::VpcsByIdsRequest {
+            vpc_ids: vec![fnn_vpc.id.expect("created FNN VPC ID")],
+        }))
+        .await?
+        .into_inner()
+        .vpcs
+        .pop()
+        .expect("persisted FNN VPC");
+    let persisted_config = forge_vpc_config(&persisted_vpc);
+    assert_eq!(
+        persisted_config.network_virtualization_type,
+        Some(rpc::forge::VpcVirtualizationType::Fnn as i32)
+    );
+    assert_eq!(
+        persisted_config.routing_profile_type.as_deref(),
+        Some("INTERNAL")
+    );
+
+    Ok(())
+}
+
+/// Verifies only FNN VPC creation requires a persisted tenant because its routing policy depends
+/// on tenant context, while non-FNN creation retains the legacy missing-tenant behavior.
+#[crate::sqlx_test]
+async fn create_fnn_vpc_requires_existing_tenant(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let env =
+        create_test_env_with_overrides(pool, TestEnvOverrides::default().with_fnn_config(None))
+            .await;
+    let missing_tenant = "missing-vpc-tenant";
+
+    // An FNN VPC cannot resolve inherited routing policy without a tenant record.
+    let error = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder(missing_tenant)
+                .metadata(Metadata {
+                    name: "FNN without tenant".to_string(),
+                    ..Default::default()
+                })
+                .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
+                .tonic_request(),
+        )
+        .await
+        .expect_err("an FNN VPC without a tenant must fail");
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert!(
+        error
+            .message()
+            .contains("must exist before creating an FNN VPC")
+    );
+
+    // A non-FNN VPC does not consume tenant routing policy, so preserve its existing behavior.
+    let etv_vpc = env
+        .api
+        .create_vpc(
+            VpcCreationRequest::builder(missing_tenant)
+                .metadata(Metadata {
+                    name: "ETV without tenant".to_string(),
+                    ..Default::default()
+                })
+                .network_virtualization_type(
+                    rpc::forge::VpcVirtualizationType::EthernetVirtualizer as i32,
+                )
+                .tonic_request(),
+        )
+        .await?
+        .into_inner();
+
+    // Reload through the public API to prove the rejected FNN request created no additional VPC.
+    let persisted_ids = env
+        .api
+        .find_vpc_ids(tonic::Request::new(rpc::forge::VpcSearchFilter {
+            name: None,
+            tenant_org_id: Some(missing_tenant.to_string()),
+            label: None,
+        }))
+        .await?
+        .into_inner()
+        .vpc_ids;
+    assert_eq!(persisted_ids, vec![etv_vpc.id.expect("created ETV VPC ID")]);
 
     Ok(())
 }
@@ -892,28 +1053,31 @@ async fn update_vpc_rejects_unresolvable_routing_profile_base(
         create_test_env_with_overrides(pool, TestEnvOverrides::default().with_fnn_config(None))
             .await;
 
-    // Create through the supported missing-tenant fallback, which leaves an
-    // FNN VPC without a named routing profile.
-    let profileless = env
-        .api
-        .create_vpc(
-            VpcCreationRequest::builder("profileless-vpc")
-                .metadata(rpc::forge::Metadata {
-                    name: "profileless VPC".to_string(),
-                    ..Default::default()
-                })
-                .network_virtualization_type(rpc::forge::VpcVirtualizationType::Fnn as i32)
-                .tonic_request(),
-        )
-        .await?
-        .into_inner();
-    let profileless_id = profileless.id.expect("profileless VPC ID");
-
-    // Model configuration drift directly because runtime configuration is
-    // immutable after the test API starts and the database intentionally has
-    // no constraint tying profile names to that configuration.
+    // Model historical invalid rows and configuration drift directly because the public FNN
+    // creation path now requires a tenant and runtime configuration is immutable after startup.
+    let profileless_id = VpcId::new();
     let stale_profile_id = VpcId::new();
     let mut txn = env.pool.begin().await?;
+    db::vpc::persist(
+        NewVpc {
+            id: profileless_id,
+            tenant_organization_id: "profileless-vpc".to_string(),
+            network_virtualization_type: VpcVirtualizationType::Fnn,
+            metadata: Metadata {
+                name: "profileless VPC".to_string(),
+                ..Default::default()
+            },
+            network_security_group_id: None,
+            routing_profile_type: None,
+            routing_profile_overrides: None,
+            power_resource_group: None,
+            vni: None,
+            slaac_enabled: false,
+        },
+        VpcStatus { vni: None },
+        &mut txn,
+    )
+    .await?;
     let stale_vpc = db::vpc::persist(
         NewVpc {
             id: stale_profile_id,

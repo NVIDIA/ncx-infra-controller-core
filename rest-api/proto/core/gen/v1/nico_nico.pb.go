@@ -10827,9 +10827,10 @@ func (x *Vpc) GetConfig() *VpcConfig {
 }
 
 type VpcCreationRequest struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	Name                 string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                                 // Removed in v0.9.x and above, retained here for backwards compatibility
-	TenantOrganizationId string                 `protobuf:"bytes,3,opt,name=tenantOrganizationId,proto3" json:"tenantOrganizationId,omitempty"` // protolint:disable:this FIELD_NAMES_LOWER_SNAKE_CASE
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // Removed in v0.9.x and above, retained here for backwards compatibility
+	// Must identify an existing tenant with a routing profile when creating an FNN VPC.
+	TenantOrganizationId string `protobuf:"bytes,3,opt,name=tenantOrganizationId,proto3" json:"tenantOrganizationId,omitempty"` // protolint:disable:this FIELD_NAMES_LOWER_SNAKE_CASE
 	// this keyset will enable any key contained within it to access any instance associated with this VPC.
 	TenantKeysetId            *string                `protobuf:"bytes,4,opt,name=tenantKeysetId,proto3,oneof" json:"tenantKeysetId,omitempty"` // protolint:disable:this FIELD_NAMES_LOWER_SNAKE_CASE
 	NetworkVirtualizationType *VpcVirtualizationType `protobuf:"varint,5,opt,name=network_virtualization_type,json=networkVirtualizationType,proto3,enum=forge.VpcVirtualizationType,oneof" json:"network_virtualization_type,omitempty"`
@@ -32838,7 +32839,9 @@ type UpdateTenantRequest struct {
 	// if this field is set and non-empty, the request will only update the tenant if the version matches the server's view,
 	// otherwise it will return a concurrency related error.
 	IfVersionMatch *string `protobuf:"bytes,3,opt,name=if_version_match,json=ifVersionMatch,proto3,oneof" json:"if_version_match,omitempty"`
-	// Updating will only be allowed if the tenant has no active VPCs
+	// Core treats omission as a replacement with no profile, not patch-preserve behavior.
+	// When FNN is enabled, omission is rejected. When FNN is disabled, omission clears any existing
+	// profile, subject to the restriction against profile changes while active FNN VPCs exist.
 	RoutingProfileType *string `protobuf:"bytes,5,opt,name=routing_profile_type,json=routingProfileType,proto3,oneof" json:"routing_profile_type,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
