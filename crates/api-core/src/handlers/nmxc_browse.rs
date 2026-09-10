@@ -18,7 +18,9 @@
 use std::collections::HashMap;
 
 use ::rpc::forge as rpc;
-use carbide_nvlink_manager::nmx_c_endpoint::{ManagedHostGroupType, resolve_nmx_c_endpoint_url};
+use carbide_nvlink_manager::nmx_c_endpoint::{
+    ManagedHostGroupType, NmxCEndpointResolution, resolve_nmx_c_endpoint_url,
+};
 use libnmxc::nmxc_model::{
     GetComputeNodeInfoListRequest, GetGpuInfoListRequest, GetPartitionInfoListRequest,
     GetSwitchNodeInfoListRequest, GpuAttr,
@@ -163,7 +165,7 @@ pub(crate) async fn nmxc_browse(
         && nvlink_config.enabled
     {
         let mut db = api.db_reader();
-        let endpoint_url = resolve_nmx_c_endpoint_url(
+        let resolution = resolve_nmx_c_endpoint_url(
             &mut db,
             group_type,
             rack_id,
@@ -176,8 +178,14 @@ pub(crate) async fn nmxc_browse(
         )
         .await?;
 
-        let Some(url) = endpoint_url else {
-            return Err(endpoint_not_found_error(group_type, chassis_serial, rack_id).into());
+        let url = match resolution {
+            NmxCEndpointResolution::Resolved(url) => url,
+            NmxCEndpointResolution::NotFound => {
+                return Err(endpoint_not_found_error(group_type, chassis_serial, rack_id).into());
+            }
+            NmxCEndpointResolution::SwitchMissingNvosIp => {
+                return Err(switch_missing_nvos_ip_error(rack_id).into());
+            }
         };
 
         let mut nmxc = api
@@ -267,12 +275,13 @@ fn resolve_group_type(
     }
 }
 
-/// Builds the "no NMX-C endpoint" error for a failed [`resolve_nmx_c_endpoint_url`] lookup.
+/// Builds the "no NMX-C endpoint" error for a [`NmxCEndpointResolution::NotFound`] lookup.
 ///
 /// The chassis and rack paths consult disjoint data (the `nvlink_nmxc_endpoints` table vs.
 /// ready, NMX-C-configured switches in the rack), so `kind` names which lookup came up empty
 /// instead of a single generic label that can't distinguish a missing config row from a rack
-/// with no ready switch.
+/// with no ready switch. See [`switch_missing_nvos_ip_error`] for the separate case where a
+/// ready switch was found but its NVOS IP has not been resolved yet — that is not "not found".
 fn endpoint_not_found_error(
     group_type: ManagedHostGroupType,
     chassis_serial: &str,
@@ -287,6 +296,19 @@ fn endpoint_not_found_error(
             kind: "nvlink_ready_switch",
             id: rack_id.map(|r| r.to_string()).unwrap_or_default(),
         },
+    }
+}
+
+/// Builds the error for a [`NmxCEndpointResolution::SwitchMissingNvosIp`] lookup: a ready,
+/// control-plane-configured switch exists in the rack, but its NVOS IP has not been resolved.
+///
+/// This is deliberately a distinct `kind` from [`endpoint_not_found_error`]'s rack case: the
+/// switch itself was found, so reporting it as "switch not found" would misdirect an operator
+/// into investigating a nonexistent switch instead of the missing NVOS interface/IP data.
+fn switch_missing_nvos_ip_error(rack_id: Option<&carbide_uuid::rack::RackId>) -> CarbideError {
+    CarbideError::NotFoundError {
+        kind: "nvlink_switch_nvos_ip",
+        id: rack_id.map(|r| r.to_string()).unwrap_or_default(),
     }
 }
 
@@ -360,6 +382,38 @@ mod tests {
                     "a12".to_string(),
                 ),
             }
+        );
+    }
+
+    #[test]
+    fn switch_missing_nvos_ip_error_is_distinct_from_not_found() {
+        value_scenarios!(run = |rack_id_str: Option<&str>| {
+            let rack_id = rack_id_str.map(RackId::new);
+            match switch_missing_nvos_ip_error(rack_id.as_ref()) {
+                CarbideError::NotFoundError { kind, id } => (kind, id),
+                other => panic!("expected NotFoundError, got {other:?}"),
+            }
+        };
+            "names the NVOS IP gap, not the switch, keyed by rack_id" {
+                Some("a12") => ("nvlink_switch_nvos_ip", "a12".to_string()),
+            }
+        );
+
+        // The kind must not collide with the "no ready switch found" case, since the two
+        // failures point an operator at different data.
+        assert_ne!(
+            match switch_missing_nvos_ip_error(Some(&RackId::new("a12"))) {
+                CarbideError::NotFoundError { kind, .. } => kind,
+                other => panic!("expected NotFoundError, got {other:?}"),
+            },
+            match endpoint_not_found_error(
+                ManagedHostGroupType::Rack,
+                "",
+                Some(&RackId::new("a12"))
+            ) {
+                CarbideError::NotFoundError { kind, .. } => kind,
+                other => panic!("expected NotFoundError, got {other:?}"),
+            },
         );
     }
 }

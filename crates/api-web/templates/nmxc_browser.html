@@ -94,7 +94,6 @@ See the <a href="https://docs.nvidia.com/networking/display/nmxcv11/grpc+api+doc
 {% endblock %}
 
 {% block script %}
-<script>
 function nmxcUpdateEndpoint(select) {
 	var input = document.getElementById('endpoint_value_input');
 	input.name = select.value;
@@ -112,5 +111,4 @@ function nmxcSyncEndpointName() {
 	var input = document.getElementById('endpoint_value_input');
 	input.name = select.value;
 }
-</script>
 {% endblock %}
