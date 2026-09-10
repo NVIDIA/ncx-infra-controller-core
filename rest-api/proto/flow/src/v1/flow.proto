@@ -217,9 +217,9 @@ enum TaskExecutorType {
     TASK_EXECUTOR_TYPE_TEMPORAL = 1;
 }
 
-// Phase is the coarse lifecycle bucket a component is in, derived from
-// core's per-component state machine. Shared across compute, nvswitch,
-// and power shelf.
+// Phase is Flow's coarse operability bucket. Component phases are derived from
+// Core's type-specific state machines; Rack.operation_status aggregates those
+// component phases.
 enum Phase {
     PHASE_UNKNOWN = 0;
     PHASE_INITIALIZING = 1;
@@ -280,6 +280,12 @@ message Rack {
     repeated UUID nvl_domain_ids = 4;  // NVLink Domains containing this rack; empty when unassigned
     TaskStats task_stats = 5;  // All active Tasks on this rack, including component-scoped Tasks.
     string external_id = 6;
+    // Flow-derived operability summary across active Compute, NVSwitch, and PowerShelf
+    // components in this rack. Unknown or missing component status wins, followed by
+    // Error, Initializing, Deleting, InUse, and Ready. A rack with no supported active
+    // components is Unknown. This is independent of component expansion and is not the
+    // Core rack lifecycle/controller state.
+    Phase operation_status = 7;
 }
 
 message Identifier {

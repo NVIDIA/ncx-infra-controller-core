@@ -6710,6 +6710,17 @@ conflict_strategy is CONFLICT_STRATEGY_QUEUE. </p></td>
                   <td><p> </p></td>
                 </tr>
 
+                <tr>
+                  <td>operation_status</td>
+                  <td><a href="#v1.Phase">Phase</a></td>
+                  <td></td>
+                  <td><p>Flow-derived operability summary across active Compute, NVSwitch, and PowerShelf
+components in this rack. Unknown or missing component status wins, followed by
+Error, Initializing, Deleting, InUse, and Ready. A rack with no supported active
+components is Unknown. This is independent of component expansion and is not the
+Core rack lifecycle/controller state. </p></td>
+                </tr>
+
             </tbody>
           </table>
 
@@ -8749,7 +8760,7 @@ exists, this includes every materialized phase.</p></td>
         </table>
 
         <h3 id="v1.Phase">Phase</h3>
-        <p>Phase is the coarse lifecycle bucket a component is in, derived from</p><p>core's per-component state machine. Shared across compute, nvswitch,</p><p>and power shelf.</p>
+        <p>Phase is Flow's coarse operability bucket. Component phases are derived from</p><p>Core's type-specific state machines; Rack.operation_status aggregates those</p><p>component phases.</p>
         <table class="enum-table">
           <thead>
             <tr><td>Name</td><td>Number</td><td>Description</td></tr>

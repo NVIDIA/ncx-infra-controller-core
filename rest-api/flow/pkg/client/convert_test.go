@@ -17,9 +17,10 @@ func TestRackFromProto(t *testing.T) {
 	domainIDs := []uuid.UUID{uuid.New(), uuid.New()}
 
 	tests := []struct {
-		name string
-		rack *pb.Rack
-		want []uuid.UUID
+		name      string
+		rack      *pb.Rack
+		want      []uuid.UUID
+		wantPhase types.Phase
 	}{
 		{
 			name: "nil rack",
@@ -27,14 +28,19 @@ func TestRackFromProto(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "rack without domain membership",
-			rack: &pb.Rack{},
-			want: []uuid.UUID{},
+			name:      "rack without domain membership",
+			rack:      &pb.Rack{},
+			want:      []uuid.UUID{},
+			wantPhase: types.PhaseUnknown,
 		},
 		{
 			name: "rack with domain memberships",
-			rack: &pb.Rack{NvlDomainIds: uuidsToProto(domainIDs)},
-			want: domainIDs,
+			rack: &pb.Rack{
+				NvlDomainIds:    uuidsToProto(domainIDs),
+				OperationStatus: pb.Phase_PHASE_DELETING,
+			},
+			want:      domainIDs,
+			wantPhase: types.PhaseDeleting,
 		},
 	}
 
@@ -46,6 +52,7 @@ func TestRackFromProto(t *testing.T) {
 				return
 			}
 			assert.Equal(t, tt.want, got.NVLDomainIDs)
+			assert.Equal(t, tt.wantPhase, got.OperationStatus)
 		})
 	}
 }
