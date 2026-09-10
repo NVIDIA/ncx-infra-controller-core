@@ -119,7 +119,7 @@ fn weave_ew_virtual_network_attachment_spec_from_astra_attachment(
                 vf_index,
             });
         }
-        SpxAttachmentType::Ovs => {
+        SpxAttachmentType::Ovn => {
             let Some(network_name) = astra_attachment_status
                 .network_name
                 .as_ref()
