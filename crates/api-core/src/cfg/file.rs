@@ -281,6 +281,11 @@ pub struct CarbideConfig {
     /// HTTP connections.
     pub tls: Option<TlsConfig>,
 
+    /// Private carbide-ssh-console gRPC endpoint. When omitted, console-log
+    /// streaming is unavailable.
+    #[serde(default)]
+    pub ssh_console_url: Option<url::Url>,
+
     /// Transport mode for the gRPC API server.
     /// Default is `Tls`.
     #[serde(default)]
