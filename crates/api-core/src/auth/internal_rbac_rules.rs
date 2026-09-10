@@ -75,6 +75,7 @@ impl InternalRBACRules {
         x.perm("DeleteVpc", vec![Machineatron, SiteAgent]);
         x.perm("FindVpcIds", vec![SiteAgent, ForgeAdminCLI, Machineatron]);
         x.perm("FindVpcsByIds", vec![ForgeAdminCLI, SiteAgent]);
+        x.perm("GetVpcRoutingState", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("CreateSitePrefix", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("UpdateSitePrefix", vec![ForgeAdminCLI, SiteAgent]);
         x.perm("DeleteSitePrefix", vec![ForgeAdminCLI, SiteAgent]);
@@ -1127,7 +1128,7 @@ mod rbac_rule_tests {
     }
 
     #[test]
-    fn inactive_vni_release_permissions() {
+    fn vpc_allocation_operation_permissions() {
         // Operator certificates map to ExternalUser; its group label is not
         // compared when matching the rule.
         for (principal, allowed) in [
@@ -1150,15 +1151,17 @@ mod rbac_rule_tests {
             (Principal::SpiffeMachineIdentifier("dpu".to_string()), false),
             (Principal::Anonymous, false),
         ] {
-            assert_eq!(
-                InternalRBACRules::allowed_from_static(
-                    "ReleaseVpcInactiveVni",
-                    std::slice::from_ref(&principal),
-                ),
-                allowed,
-                "{}",
-                principal.as_identifier(),
-            );
+            for method in ["ReleaseVpcInactiveVni", "GetVpcRoutingState"] {
+                assert_eq!(
+                    InternalRBACRules::allowed_from_static(
+                        method,
+                        std::slice::from_ref(&principal),
+                    ),
+                    allowed,
+                    "{method}: {}",
+                    principal.as_identifier(),
+                );
+            }
         }
     }
 

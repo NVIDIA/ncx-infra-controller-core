@@ -16,6 +16,7 @@
  */
 use std::collections::HashMap;
 use std::ops::DerefMut;
+use std::time::Duration;
 
 use carbide_network::virtualization::VpcVirtualizationType;
 use carbide_test_support::Outcome::FailsWith;
@@ -41,6 +42,7 @@ use crate::tests::common::api_fixtures::vpc::create_vpc as create_fixture_vpc;
 use crate::tests::common::api_fixtures::{
     TestEnv, TestEnvOverrides, create_test_env_with_overrides,
 };
+use crate::tests::common::postgres::wait_for_blocked_query;
 use crate::tests::common::rpc_builder::{VpcCreationRequest, VpcDeletionRequest, VpcUpdateRequest};
 use crate::{DatabaseError, db_init};
 
@@ -97,7 +99,7 @@ async fn resource_pool_entry_state(
 async fn vpc_vni_pool_state(env: &TestEnv) -> Result<VpcVniPoolState, sqlx::Error> {
     sqlx::query_as(
         "SELECT name, value, state FROM resource_pool
-         WHERE name IN ($1, $2) ORDER BY name, value::integer",
+         WHERE name IN ($1, $2) ORDER BY name, value",
     )
     .bind(env.common_pools.ethernet.pool_vpc_vni.name())
     .bind(env.common_pools.ethernet.pool_external_vpc_vni.name())
@@ -1848,6 +1850,370 @@ async fn test_vpc_with_id(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::
         .into_inner();
 
     assert_eq!(forge_vpc.id.unwrap(), id);
+    Ok(())
+}
+
+#[crate::sqlx_test]
+async fn get_vpc_routing_state_reports_persisted_allocations_without_changes(
+    pool: sqlx::PgPool,
+) -> Result<(), eyre::Report> {
+    enum AllocationLayout {
+        InternalOnly,
+        RetainedExternal,
+        RetainedInternal,
+    }
+    struct TestCase {
+        scenario: &'static str,
+        virtualization: VpcVirtualizationType,
+        profile: Option<&'static str>,
+        layout: AllocationLayout,
+        internal_vni: i32,
+    }
+
+    let env = create_test_env(pool).await;
+    assert!(env.config.fnn.is_none());
+    for TestCase {
+        scenario,
+        virtualization,
+        profile,
+        layout,
+        internal_vni,
+    } in [
+        TestCase {
+            scenario: "profileless ETV with an owned active VNI of zero",
+            virtualization: VpcVirtualizationType::EthernetVirtualizer,
+            profile: None,
+            layout: AllocationLayout::InternalOnly,
+            internal_vni: 0,
+        },
+        TestCase {
+            scenario: "FNN with an active VNI beyond 24 bits and retained external allocation",
+            virtualization: VpcVirtualizationType::Fnn,
+            profile: Some("REMOVED_PROFILE"),
+            layout: AllocationLayout::RetainedExternal,
+            internal_vni: 16_777_216,
+        },
+        TestCase {
+            scenario: "Flat with a retained internal allocation",
+            virtualization: VpcVirtualizationType::Flat,
+            profile: None,
+            layout: AllocationLayout::RetainedInternal,
+            internal_vni: 20_000,
+        },
+    ] {
+        let mut txn = env.pool.begin().await?;
+        sqlx::query("UPDATE resource_pool SET auto_assign = false WHERE name = $1")
+            .bind(env.common_pools.ethernet.pool_vpc_vni.name())
+            .execute(txn.as_mut())
+            .await?;
+        db::resource_pool::populate(
+            &env.common_pools.ethernet.pool_vpc_vni,
+            txn.as_mut(),
+            vec![internal_vni],
+            true,
+        )
+        .await?;
+        txn.commit().await?;
+        let (vpc_id, created) = create_fixture_vpc(&env, scenario.to_string(), None, None).await;
+        let internal_vni = u32::try_from(internal_vni)?;
+        assert_eq!(
+            created.status.as_ref().and_then(|status| status.vni),
+            Some(internal_vni),
+            "{scenario}"
+        );
+        let (active_vni, retained) = match layout {
+            AllocationLayout::InternalOnly => (internal_vni, None),
+            AllocationLayout::RetainedExternal => (
+                internal_vni,
+                Some((
+                    env.common_pools.ethernet.pool_external_vpc_vni.name(),
+                    u32::try_from(allocate_external_vni(&env, vpc_id).await?)?,
+                )),
+            ),
+            AllocationLayout::RetainedInternal => (
+                u32::try_from(allocate_external_vni(&env, vpc_id).await?)?,
+                Some((env.common_pools.ethernet.pool_vpc_vni.name(), internal_vni)),
+            ),
+        };
+        sqlx::query(
+            "UPDATE vpcs SET network_virtualization_type = $1, routing_profile_type = $2,
+             status = $3 WHERE id = $4",
+        )
+        .bind(virtualization)
+        .bind(profile)
+        .bind(sqlx::types::Json(VpcStatus {
+            vni: Some(i32::try_from(active_vni)?),
+        }))
+        .bind(vpc_id)
+        .execute(&env.pool)
+        .await?;
+        let before =
+            db::vpc::find_by(&env.pool, ObjectColumnFilter::One(vpc::IdColumn, &vpc_id)).await?;
+        let pool_state_before = vpc_vni_pool_state(&env).await?;
+        let state = env
+            .api
+            .get_vpc_routing_state(tonic::Request::new(rpc::forge::VpcRoutingStateRequest {
+                id: Some(vpc_id),
+            }))
+            .await?
+            .into_inner();
+        assert_eq!(
+            state,
+            rpc::forge::VpcRoutingState {
+                id: Some(vpc_id),
+                version: created.version,
+                routing_profile_type: profile.map(str::to_string),
+                active_vni,
+                retained_allocation: retained.map(|(pool_name, vni)| {
+                    rpc::forge::VpcRetainedVniAllocation {
+                        pool_name: pool_name.to_string(),
+                        vni,
+                    }
+                }),
+            },
+            "{scenario}"
+        );
+        assert_eq!(
+            db::vpc::find_by(&env.pool, ObjectColumnFilter::One(vpc::IdColumn, &vpc_id)).await?,
+            before,
+            "{scenario}"
+        );
+        assert_eq!(
+            vpc_vni_pool_state(&env).await?,
+            pool_state_before,
+            "{scenario}"
+        );
+    }
+    Ok(())
+}
+
+#[crate::sqlx_test]
+async fn get_vpc_routing_state_distinguishes_absence_from_invalid_allocations(
+    pool: sqlx::PgPool,
+) -> Result<(), eyre::Report> {
+    enum InvalidState {
+        MissingStatus,
+        WrongOwnerType,
+        DuplicateRetained,
+        ActiveMismatch,
+        RetainedValue(&'static str),
+    }
+    struct TestCase {
+        scenario: &'static str,
+        invalid_state: InvalidState,
+        expected_code: tonic::Code,
+    }
+
+    let env = create_test_env(pool).await;
+    for (id, expected_code) in [
+        (None, tonic::Code::InvalidArgument),
+        (Some(VpcId::new()), tonic::Code::NotFound),
+    ] {
+        let error = env
+            .api
+            .get_vpc_routing_state(tonic::Request::new(rpc::forge::VpcRoutingStateRequest {
+                id,
+            }))
+            .await
+            .expect_err("missing identity must fail");
+        assert_eq!(error.code(), expected_code);
+    }
+
+    for TestCase {
+        scenario,
+        invalid_state,
+        expected_code,
+    } in [
+        TestCase {
+            scenario: "missing active status",
+            invalid_state: InvalidState::MissingStatus,
+            expected_code: tonic::Code::FailedPrecondition,
+        },
+        TestCase {
+            scenario: "same owner ID with another owner type",
+            invalid_state: InvalidState::WrongOwnerType,
+            expected_code: tonic::Code::FailedPrecondition,
+        },
+        TestCase {
+            scenario: "duplicate retained allocations",
+            invalid_state: InvalidState::DuplicateRetained,
+            expected_code: tonic::Code::FailedPrecondition,
+        },
+        TestCase {
+            scenario: "active status matches neither allocation",
+            invalid_state: InvalidState::ActiveMismatch,
+            expected_code: tonic::Code::FailedPrecondition,
+        },
+        TestCase {
+            scenario: "negative retained VNI",
+            invalid_state: InvalidState::RetainedValue("-1"),
+            expected_code: tonic::Code::FailedPrecondition,
+        },
+        TestCase {
+            scenario: "noninteger retained VNI",
+            invalid_state: InvalidState::RetainedValue("not-a-vni"),
+            expected_code: tonic::Code::Internal,
+        },
+    ] {
+        let (vpc_id, created) = create_fixture_vpc(&env, scenario.to_string(), None, None).await;
+        let active_vni = created
+            .status
+            .as_ref()
+            .and_then(|status| status.vni)
+            .unwrap();
+        let retained_vni = allocate_external_vni(&env, vpc_id).await?;
+        match invalid_state {
+            InvalidState::MissingStatus | InvalidState::ActiveMismatch => {
+                let vni = match invalid_state {
+                    InvalidState::MissingStatus => None,
+                    _ => Some(retained_vni + 1),
+                };
+                assert_ne!(vni, Some(i32::try_from(active_vni)?));
+                sqlx::query("UPDATE vpcs SET status = $1 WHERE id = $2")
+                    .bind(sqlx::types::Json(VpcStatus { vni }))
+                    .bind(vpc_id)
+                    .execute(&env.pool)
+                    .await?;
+            }
+            InvalidState::WrongOwnerType => {
+                sqlx::query("UPDATE resource_pool SET state = $1 WHERE name = $2 AND value = $3")
+                    .bind(sqlx::types::Json(ResourcePoolEntryState::Allocated {
+                        owner: vpc_id.to_string(),
+                        owner_type: OwnerType::Machine.to_string(),
+                    }))
+                    .bind(env.common_pools.ethernet.pool_vpc_vni.name())
+                    .bind(active_vni.to_string())
+                    .execute(&env.pool)
+                    .await?;
+            }
+            InvalidState::DuplicateRetained => {
+                allocate_external_vni(&env, vpc_id).await?;
+            }
+            InvalidState::RetainedValue(value) => {
+                sqlx::query("UPDATE resource_pool SET value = $1 WHERE name = $2 AND value = $3")
+                    .bind(value)
+                    .bind(env.common_pools.ethernet.pool_external_vpc_vni.name())
+                    .bind(retained_vni.to_string())
+                    .execute(&env.pool)
+                    .await?;
+            }
+        }
+        let before =
+            db::vpc::find_by(&env.pool, ObjectColumnFilter::One(vpc::IdColumn, &vpc_id)).await?;
+        let pool_state_before = vpc_vni_pool_state(&env).await?;
+        let error = env
+            .api
+            .get_vpc_routing_state(tonic::Request::new(rpc::forge::VpcRoutingStateRequest {
+                id: Some(vpc_id),
+            }))
+            .await
+            .expect_err(scenario);
+        assert_eq!(error.code(), expected_code, "{scenario}: {error}");
+        assert_eq!(
+            db::vpc::find_by(&env.pool, ObjectColumnFilter::One(vpc::IdColumn, &vpc_id)).await?,
+            before,
+            "{scenario}"
+        );
+        assert_eq!(
+            vpc_vni_pool_state(&env).await?,
+            pool_state_before,
+            "{scenario}"
+        );
+    }
+    Ok(())
+}
+
+#[crate::sqlx_test]
+async fn get_vpc_routing_state_holds_vpc_lock_until_allocations_are_read(
+    pool: sqlx::PgPool,
+) -> Result<(), eyre::Report> {
+    let env = create_test_env(pool).await;
+    let (vpc_id, created) =
+        create_fixture_vpc(&env, "routing state race".to_string(), None, None).await;
+    let active_vni = created
+        .status
+        .as_ref()
+        .and_then(|status| status.vni)
+        .unwrap();
+    let retained_vni = u32::try_from(allocate_external_vni(&env, vpc_id).await?)?;
+    let mut allocation_lock = env.pool.begin().await?;
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(allocation_lock.as_mut())
+        .await?;
+    assert_eq!(
+        db::resource_pool::find_owned_allocation(
+            &env.common_pools.ethernet.pool_vpc_vni,
+            allocation_lock.as_mut(),
+            OwnerType::Vpc,
+            &vpc_id.to_string(),
+        )
+        .await?,
+        Some(i32::try_from(active_vni)?)
+    );
+
+    let read =
+        env.api
+            .get_vpc_routing_state(tonic::Request::new(rpc::forge::VpcRoutingStateRequest {
+                id: Some(vpc_id),
+            }));
+    tokio::pin!(read);
+    let reader_pid = tokio::select! {
+        result = &mut read => panic!("read passed a locked allocation: {result:?}"),
+        pid = wait_for_blocked_query(&env.pool, blocker_pid, "resource_pool") => pid,
+    };
+    let cleanup = env.api.release_vpc_inactive_vni(tonic::Request::new(
+        rpc::forge::VpcReleaseInactiveVniRequest {
+            id: Some(vpc_id),
+            if_version_match: Some(created.version.clone()),
+            expected_inactive_vni: Some(retained_vni),
+        },
+    ));
+    tokio::pin!(cleanup);
+    tokio::select! {
+        result = &mut read => panic!("read passed a locked allocation: {result:?}"),
+        result = &mut cleanup => panic!("cleanup passed the reader's VPC lock: {result:?}"),
+        _ = wait_for_blocked_query(&env.pool, reader_pid, "vpcs") => {}
+    }
+    allocation_lock.commit().await?;
+    let (read, cleanup) = tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::try_join!(read, cleanup)
+    })
+    .await??;
+    let original_state = rpc::forge::VpcRoutingState {
+        id: Some(vpc_id),
+        version: created.version.clone(),
+        routing_profile_type: forge_vpc_config(&created).routing_profile_type.clone(),
+        active_vni,
+        retained_allocation: Some(rpc::forge::VpcRetainedVniAllocation {
+            pool_name: env
+                .common_pools
+                .ethernet
+                .pool_external_vpc_vni
+                .name()
+                .to_string(),
+            vni: retained_vni,
+        }),
+    };
+    assert_eq!(read.into_inner(), original_state);
+    let cleanup = cleanup.into_inner();
+    assert_eq!(cleanup.released_inactive_vni, retained_vni);
+    let updated = cleanup.vpc.expect("cleanup returns updated VPC");
+    assert_ne!(updated.version, created.version);
+    let current_state = env
+        .api
+        .get_vpc_routing_state(tonic::Request::new(rpc::forge::VpcRoutingStateRequest {
+            id: Some(vpc_id),
+        }))
+        .await?
+        .into_inner();
+    assert_eq!(
+        current_state,
+        rpc::forge::VpcRoutingState {
+            version: updated.version,
+            retained_allocation: None,
+            ..original_state
+        }
+    );
     Ok(())
 }
 

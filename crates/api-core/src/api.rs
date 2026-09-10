@@ -232,6 +232,13 @@ impl Forge for Api {
         crate::handlers::vpc::find_by_ids(self, request).await
     }
 
+    async fn get_vpc_routing_state(
+        &self,
+        request: Request<rpc::VpcRoutingStateRequest>,
+    ) -> Result<Response<rpc::VpcRoutingState>, Status> {
+        crate::handlers::vpc::get_routing_state(self, request).await
+    }
+
     async fn find_site_prefix_ids(
         &self,
         request: Request<rpc::SitePrefixSearchFilter>,
