@@ -265,14 +265,11 @@ async fn create_update_ew_vpc_virtual_networks(
                         });
                     seen_virtual_networks_hashmap.insert(
                         astra_vni,
-                        (
-                            Some(weave_ew_vpc_object_metadata(
-                                Some(astra_virtual_network_id.clone()),
-                                &astra_attachment_status.revision,
-                            )),
-                            weave_ew_vpc_state.clone(),
-                        ),
+                        (virtual_network.metadata, weave_ew_vpc_state.clone()),
                     );
+                    // Creation already wrote this revision, so later attachments sharing this
+                    // VNI must reuse its result rather than send a redundant update.
+                    virtual_network_update_states.insert(astra_vni, weave_ew_vpc_state.clone());
                     weave_ew_vpc_state
                 }
                 None => State {
@@ -1856,6 +1853,7 @@ mod tests {
         assert_eq!(calls.list_virtual_networks, 2);
         assert_eq!(calls.list_virtual_network_attachments, 2);
         assert_eq!(calls.create_virtual_networks.len(), 1);
+        assert!(calls.update_virtual_networks.is_empty());
         assert_eq!(
             calls.create_virtual_networks[0].spec.as_ref().unwrap().vni,
             100
