@@ -497,12 +497,11 @@ func (bs *BoostrapAPI) downloadCredentials(ctx context.Context) (*bootstraptypes
 		return nil, fmt.Errorf("failed to decode certificate PEM CACertificate %v", credsResponse.CACertificate)
 	}
 
-	cert, err := x509.ParseCertificate(block.Bytes)
+	_, err = x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		log.Error().Err(err).Msgf("Bootstrap: failed to parse certificate")
 		return nil, fmt.Errorf("failed to parse certificate %w", err)
 	}
 
-	CertExpirationMetric.Set(float64(cert.NotAfter.UTC().Unix()))
 	return credsResponse, nil
 }
