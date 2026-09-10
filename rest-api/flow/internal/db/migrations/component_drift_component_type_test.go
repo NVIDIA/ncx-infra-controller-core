@@ -5,6 +5,7 @@ package migrations_test
 
 import (
 	"context"
+	"database/sql"
 	_ "embed"
 	"testing"
 
@@ -49,17 +50,24 @@ func TestComponentDriftComponentTypeMigration(t *testing.T) {
 	_, err = session.DB.ExecContext(ctx, componentDriftComponentTypeUp)
 	require.NoError(t, err)
 
-	var componentTypes []*string
+	var linkedComponentType sql.NullString
 	err = session.DB.NewSelect().
 		Table("component_drift").
 		Column("component_type").
-		OrderExpr("component_id NULLS LAST").
-		Scan(ctx, &componentTypes)
+		Where("component_id = ?", componentID).
+		Scan(ctx, &linkedComponentType)
 	require.NoError(t, err)
-	require.Len(t, componentTypes, 2)
-	require.NotNil(t, componentTypes[0])
-	require.Equal(t, "Compute", *componentTypes[0])
-	require.Nil(t, componentTypes[1], "an unlinked predecessor row must not be assigned a guessed type")
+	require.True(t, linkedComponentType.Valid)
+	require.Equal(t, "Compute", linkedComponentType.String)
+
+	var unlinkedComponentType sql.NullString
+	err = session.DB.NewSelect().
+		Table("component_drift").
+		Column("component_type").
+		Where("component_id IS NULL").
+		Scan(ctx, &unlinkedComponentType)
+	require.NoError(t, err)
+	require.False(t, unlinkedComponentType.Valid, "an unlinked predecessor row must not be assigned a guessed type")
 
 	_, err = session.DB.ExecContext(
 		ctx,
