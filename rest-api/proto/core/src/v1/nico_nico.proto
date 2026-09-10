@@ -50,7 +50,13 @@ service Forge {
   // VPC
   rpc CreateVpc(VpcCreationRequest) returns (Vpc);
   rpc UpdateVpc(VpcUpdateRequest) returns (VpcUpdateResult);
+  // Operator cleanup after independently verifying that no DPU or fabric route
+  // still uses the retained VNI. Core does not verify dataplane convergence.
+  rpc ReleaseVpcInactiveVni(VpcReleaseInactiveVniRequest) returns (VpcReleaseInactiveVniResult);
   rpc UpdateVpcVirtualization(VpcUpdateVirtualizationRequest) returns (VpcUpdateVirtualizationResult);
+  // Deletion does not release a retained VNI implicitly. Call
+  // ReleaseVpcInactiveVni after verifying convergence before deleting the VPC.
+  // Retained or inconsistent owned allocations cause FailedPrecondition.
   rpc DeleteVpc(VpcDeletionRequest) returns (VpcDeletionResult);
   rpc FindVpcIds(VpcSearchFilter) returns (VpcIdList);
   rpc FindVpcsByIds(VpcsByIdsRequest) returns (VpcList);
@@ -10374,4 +10380,31 @@ enum DpuNvConfigProfile {
   DPU_NV_CONFIG_PROFILE_UNSPECIFIED = 0;
   // Version 1 of the validated GB200/B3240 CPU as Root Complex profile.
   DPU_NV_CONFIG_PROFILE_GB200_B3240_V1 = 1;
+}
+
+// Releases the VNI retained after a routing-profile change. The active VNI and
+// VPC configuration remain unchanged. Before calling, operators must verify
+// that affected DPUs (including peers) and fabric routes no longer use the
+// inactive VNI, and prevent attachment, peering, and routing changes through
+// cleanup. Unreachable consumers require retaining the allocation unless they
+// have been isolated. Core validates ownership, not dataplane convergence.
+message VpcReleaseInactiveVniRequest {
+  // Required VPC whose inactive allocation will be released.
+  common.VpcId id = 1;
+  // Required version from the operator's original observation. Repeating that
+  // exact request cannot release a later allocation. A lost response leaves the
+  // outcome unknown: a stale-version error does not prove whether cleanup ran.
+  // Inspect current state; never substitute a fresh version in an automatic retry.
+  optional string if_version_match = 2;
+  // Required exact inactive VNI observed with this version, in 1..16777215.
+  // It must differ from the active VNI and match the VPC-owned allocation in
+  // the other pool. Cleanup fails on missing or inconsistent allocations.
+  optional uint32 expected_inactive_vni = 3;
+}
+
+message VpcReleaseInactiveVniResult {
+  // Authoritative VPC with its advanced version after cleanup committed.
+  Vpc vpc = 1;
+  // Exact inactive allocation released by this operation.
+  uint32 released_inactive_vni = 2;
 }
