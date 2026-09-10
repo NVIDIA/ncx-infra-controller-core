@@ -1063,7 +1063,7 @@ service Forge {
   // details because a fleet-wide rollout can leave every host waiting at once,
   // and the worklist must not become one unbounded response.
   rpc FindPendingDPUServiceSyncIds(FindPendingDPUServiceSyncIdsRequest) returns (common.MachineIdList) {
-    option (carbide.codegen.v1.method_rust_output_type) = ".common.StableHostMachineIdList";
+    option (carbide.codegen.v1.method_rust_output_type) = ".common.HostMachineIdList";
   }
   rpc FindPendingDPUServiceSyncsByIds(FindPendingDPUServiceSyncsByIdsRequest) returns (ListPendingDPUServiceSyncsResponse);
   // One machine's recorded sync history, newest first. Needs no paging: the
@@ -9819,7 +9819,7 @@ message ReleaseDPUServiceSyncHoldRequest {
     // node, so accepting one would silently widen the request from a single DPU
     // to every DPU on its host. Assigned hosts are declined -- name the instance
     // instead.
-    common.MachineIdList machine_ids = 1 [(carbide.codegen.v1.field_rust_type) = ".common.StableHostMachineIdList"];
+    common.MachineIdList machine_ids = 1 [(carbide.codegen.v1.field_rust_type) = ".common.HostMachineIdList"];
     // Release the hosts currently holding these instances, even though they are
     // assigned. Naming an instance is the acknowledgement that its tenant will
     // be disrupted, and each consent covers only the instance named: if a host
@@ -9851,7 +9851,7 @@ enum DPUServiceSyncReleaseStatus {
 }
 
 message DPUServiceSyncReleaseResult {
-  common.MachineId machine_id = 1 [(carbide.codegen.v1.field_rust_type) = ".common.StableHostMachineId"];
+  common.MachineId machine_id = 1 [(carbide.codegen.v1.field_rust_type) = ".common.HostMachineId"];
   DPUServiceSyncReleaseStatus status = 2;
   // Names the DPU or instance responsible on the deferred statuses, and the
   // error on FAILED. Empty otherwise.
@@ -9869,17 +9869,17 @@ message FindPendingDPUServiceSyncIdsRequest {
 
 message FindPendingDPUServiceSyncsByIdsRequest {
   // Bounded by the server's `max_find_by_ids`, like every other by-ids call.
-  repeated common.MachineId machine_ids = 1 [(carbide.codegen.v1.field_rust_type) = ".common.StableHostMachineId"];
+  repeated common.MachineId machine_ids = 1 [(carbide.codegen.v1.field_rust_type) = ".common.HostMachineId"];
 }
 
 message ListDPUServiceSyncHistoryRequest {
-  common.MachineId machine_id = 1 [(carbide.codegen.v1.field_rust_type) = ".common.StableHostMachineId"];
+  common.MachineId machine_id = 1 [(carbide.codegen.v1.field_rust_type) = ".common.HostMachineId"];
 }
 
 // One recorded DPU service sync. Completed entries appear only in the history
 // form.
 message PendingDPUServiceSync {
-  common.MachineId machine_id = 1 [(carbide.codegen.v1.field_rust_type) = ".common.StableHostMachineId"];
+  common.MachineId machine_id = 1 [(carbide.codegen.v1.field_rust_type) = ".common.HostMachineId"];
   // First time DPF was seen waiting on this machine. Survives repeat requests,
   // so it measures the whole wait rather than the last observation.
   google.protobuf.Timestamp requested_at = 2;
