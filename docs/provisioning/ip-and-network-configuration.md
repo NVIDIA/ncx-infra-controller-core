@@ -68,19 +68,23 @@ For each site controller node that participates in DPU mode, a single `/31` poin
 For managed hosts (ingested machines), the host OS IP comes from the **admin network** until the host is assigned to a tenant:
 
 - The admin network is a NICo-managed pool. Allocations are made by `nico-api` and pushed to the host via DHCP.
-- Size the admin network for at least one usable IP per managed server, plus network and broadcast addresses. Multiple admin segments may be declared in `[networks.<name>]`; each managed host sources its admin IP from whichever segment matches.
+- For IPv4, size the admin network for at least one usable IP per managed server, plus network and broadcast addresses. Multiple admin segments may be declared in `[networks.<name>]`; each managed host sources its admin IP from whichever segment matches.
 - When a tenant is assigned, the host's interfaces leave the admin network and join the relevant tenant networks (see [Network Prerequisites — Tenant Networks](../getting-started/prerequisites/network.md#tenant-networks)).
 
 The admin network is defined in the `[networks.admin]` block of `siteConfig`:
 
 ```toml
 [networks.admin]
+type = "admin"
 prefix = "10.180.64.0/24"
 gateway = "10.180.64.1"
 mtu = 1500
+reserve_first = 5
 ```
 
-> **Warning:** `[networks.admin]` `prefix` and `gateway` must be non-empty. `nico-api` panics at startup if either field is the empty string.
+This IPv4 definition requires a gateway within its prefix. For other prefix
+combinations and gateway omission rules, see
+[Seed Network Configuration](#seed-network-configuration).
 
 ### 1.3 Expected Interface IP Allocation
 
@@ -159,9 +163,9 @@ segment.
 
 The conventional OOB management network is declared as one or more
 NICo-managed `Underlay` network segments in `siteConfig`
-`[networks.<name>]` blocks. Each segment carries its own prefix, gateway, and
-MTU. The switches **must run a DHCP relay** pointed at the `nico-dhcp`
-LoadBalancer VIP; they must not assign addresses themselves. See
+`[networks.<name>]` blocks. Each segment carries its own prefixes, MTU, and
+IPv4 gateway when applicable. The switches **must run a DHCP relay** pointed
+at the `nico-dhcp` LoadBalancer VIP; they must not assign addresses themselves. See
 [BMC and Out-of-Band Setup](../getting-started/prerequisites/bmc-oob-setup.md)
 for switch-side relay configuration.
 
@@ -322,16 +326,80 @@ otherwise falls back to prefix containment.
 | DPU OOB (ARM OS) | OOB management network | The relay-selected `Underlay` segment; it can share the DPU BMC segment or use another Underlay prefix |
 | Host OS NIC without managed DPUs | Host-facing physical network | The relay-selected `HostInband` segment |
 
-Each `[networks.<name>]` block declares:
+#### Seed Network Configuration
+
+The `[networks.<name>]` blocks in `siteConfig` or `initial_objects_file` seed
+network segments. Each definition supports IPv4-only, dual-stack, or IPv6-only
+prefixes. DPU provisioning requires an `admin` segment with an IPv4 prefix and
+gateway. An IPv6-only admin definition can be seeded, but DPU network
+configuration fails because it has no IPv4 admin prefix.
+
+The prefix and relay fields have the following contract:
 
 | Field | Purpose |
 |---|---|
 | `type` | Config-seeded segment classification: `admin`, `underlay`, or `hostinband`. Tenant segments are created through the API and are not config-declarable. Expected Interfaces can use the corresponding guard described in [Network Segment Selection](expected-machine-interfaces.md#network-segment-selection). |
-| `prefix` | The IPv4 CIDR for the segment. |
-| `gateway` | The IPv4 gateway associated with the prefix and returned in network configuration. It does not have to equal `giaddr`. |
-| `mtu` | MTU advertised to clients on this segment. |
+| `prefix` | Required IPv4 or IPv6 CIDR. Use an IPv4 CIDR for IPv4-only or dual-stack definitions, or an IPv6 CIDR for IPv6-only definitions. |
+| `prefix_v6` | Optional IPv6 CIDR. Omit it for single-stack definitions. Set it only alongside an IPv4 `prefix` to create a dual-stack segment. It cannot replace `prefix` or accompany an IPv6 `prefix`. |
+| `gateway` | Required when `prefix` is IPv4, including dual-stack definitions. Supply an IPv4 address within that prefix; it does not have to equal the relay's `giaddr`. IPv6-only definitions may omit it. This field does not configure an IPv6 gateway. |
+| `dhcpv6_link_address` | Optional IPv6 address, without a CIDR suffix, used to match a DHCPv6 relay's link-address. Requires an IPv6 prefix. It may lie outside that prefix but must be unique across network prefixes. Omission leaves no explicit link-address match; it does not infer a gateway or relay address. |
+| `mtu` | MTU advertised to clients on this segment, in bytes. Accepted range: 576–9000, inclusive. |
 | `reserve_first` | Number of leading addresses in the prefix to hold back from the dynamic pool. A typical value is 5. |
 | `allocation_strategy` | `dynamic` (default) permits pool allocation and Fixed reservations; `reserved` serves only reservations created before DHCP. Dynamic and Retained interfaces cannot acquire their first address on a reserved segment. |
+
+Supply `type`, `mtu`, and `reserve_first` in every definition. Optional address
+fields must be omitted rather than set to an empty string.
+
+For dual-stack or IPv6-only segments, configure an MTU of at least 1280 bytes,
+as required by [RFC 8200](https://www.rfc-editor.org/rfc/rfc8200.html#section-5).
+NICo's seed validation does not enforce this IPv6-specific minimum.
+
+The following examples show the three prefix combinations. Replace the names
+and addresses with your site values:
+
+```toml
+[networks.oob-v4]
+type = "underlay"
+prefix = "192.0.2.0/24"
+gateway = "192.0.2.1"
+mtu = 1500
+reserve_first = 5
+
+[networks.oob-dual-stack]
+type = "underlay"
+prefix = "198.51.100.0/24"
+prefix_v6 = "2001:db8:1::/64"
+gateway = "198.51.100.1"
+dhcpv6_link_address = "2001:db8:ffff::1"
+mtu = 1500
+reserve_first = 5
+
+[networks.oob-v6]
+type = "underlay"
+prefix = "2001:db8:2::/64"
+mtu = 1500
+reserve_first = 5
+```
+
+In the dual-stack example, `gateway` belongs only to the IPv4 prefix.
+`dhcpv6_link_address` selects the segment by exact match even though the
+relay address is outside its IPv6 prefix. The IPv6-only example omits both fields;
+DHCPv6 segment selection can use prefix containment when no exact configured
+link-address match exists.
+
+Gateway omission for IPv6-only seeds requires a binary containing
+[IPv6-only seed gateway support](https://github.com/NVIDIA/infra-controller/pull/5952),
+tracked in [IPv6-only seed networks without a dummy gateway](https://github.com/NVIDIA/infra-controller/issues/5401).
+Existing IPv6-only definitions may keep a supplied gateway of either address
+family. NICo accepts that value for compatibility and retains it in the stored
+seed definition, but does not attach it to the IPv6 network prefix.
+
+Seed declarations do not update existing network segments. Removing a supplied
+gateway from an already seeded IPv6-only definition produces a configuration drift
+warning; it does not rewrite the segment or its stored seed definition. Before
+creating IPv6-only seeds without a gateway, check your rollback requirements:
+binaries predating this support cannot read stored seed definitions without a
+gateway.
 
 A conventional DPU site declares an `admin` segment and one or more `underlay`
 segments covering its OOB relay scopes. A site with hosts that have no managed
@@ -613,7 +681,7 @@ the runtime checks as the first managed endpoints come online and before
 expanding the rollout to the rest of the fleet:
 
 - [ ] `siteConfig` `[pools.lo-ip]` and `[pools.vpc-dpu-lo]` populated with non-empty ranges.
-- [ ] `siteConfig` `[networks.admin]` has non-empty `prefix` and `gateway`.
+- [ ] `siteConfig` network definitions follow the [seed field requirements](#seed-network-configuration), including a gateway whenever an IPv4 prefix is present.
 - [ ] Each required physical segment declared in `[networks.<name>]`:
       `underlay` capacity for every DPU BMC/OOB pair and isolated host BMC, and
       `hostinband` capacity for every shared host BMC and host OS NIC on a host
