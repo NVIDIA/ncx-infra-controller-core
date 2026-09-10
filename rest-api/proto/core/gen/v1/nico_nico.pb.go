@@ -58708,10 +58708,10 @@ type isReleaseDPUServiceSyncHoldRequest_Target interface {
 }
 
 type ReleaseDPUServiceSyncHoldRequest_MachineIds struct {
-	// Host machines to release. DPU machine ids are rejected: the hold is per
-	// node, so accepting one would silently widen the request from a single DPU
-	// to every DPU on its host. Assigned hosts are declined -- name the instance
-	// instead.
+	// Predicted or stable host machines to release. DPU machine ids are
+	// rejected: the hold is per node, so accepting one would silently widen the
+	// request from a single DPU to every DPU on its host. Assigned hosts are
+	// declined -- name the instance instead.
 	MachineIds *MachineIdList `protobuf:"bytes,1,opt,name=machine_ids,json=machineIds,proto3,oneof"`
 }
 
@@ -58719,7 +58719,8 @@ type ReleaseDPUServiceSyncHoldRequest_InstanceIds struct {
 	// Release the hosts currently holding these instances, even though they are
 	// assigned. Naming an instance is the acknowledgement that its tenant will
 	// be disrupted, and each consent covers only the instance named: if a host
-	// has since been reallocated, that release is declined.
+	// has since been reallocated, that release is declined. Instances resolve
+	// only to stable host machines.
 	InstanceIds *InstanceIdList `protobuf:"bytes,2,opt,name=instance_ids,json=instanceIds,proto3,oneof"`
 }
 
@@ -58728,7 +58729,8 @@ func (*ReleaseDPUServiceSyncHoldRequest_MachineIds) isReleaseDPUServiceSyncHoldR
 func (*ReleaseDPUServiceSyncHoldRequest_InstanceIds) isReleaseDPUServiceSyncHoldRequest_Target() {}
 
 type DPUServiceSyncReleaseResult struct {
-	state     protoimpl.MessageState      `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The predicted or stable host acted on.
 	MachineId *MachineId                  `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
 	Status    DPUServiceSyncReleaseStatus `protobuf:"varint,2,opt,name=status,proto3,enum=forge.DPUServiceSyncReleaseStatus" json:"status,omitempty"`
 	// Names the DPU or instance responsible on the deferred statuses, and the
@@ -58873,7 +58875,8 @@ func (*FindPendingDPUServiceSyncIdsRequest) Descriptor() ([]byte, []int) {
 
 type FindPendingDPUServiceSyncsByIdsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Bounded by the server's `max_find_by_ids`, like every other by-ids call.
+	// Predicted and stable host IDs are accepted. Bounded by the server's
+	// `max_find_by_ids`, like every other by-ids call.
 	MachineIds    []*MachineId `protobuf:"bytes,1,rep,name=machine_ids,json=machineIds,proto3" json:"machine_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -58917,8 +58920,9 @@ func (x *FindPendingDPUServiceSyncsByIdsRequest) GetMachineIds() []*MachineId {
 }
 
 type ListDPUServiceSyncHistoryRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MachineId     *MachineId             `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The predicted or stable host whose history to return.
+	MachineId     *MachineId `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -58963,8 +58967,9 @@ func (x *ListDPUServiceSyncHistoryRequest) GetMachineId() *MachineId {
 // One recorded DPU service sync. Completed entries appear only in the history
 // form.
 type PendingDPUServiceSync struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	MachineId *MachineId             `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The predicted or stable host waiting for service sync.
+	MachineId *MachineId `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
 	// First time DPF was seen waiting on this machine. Survives repeat requests,
 	// so it measures the whole wait rather than the last observation.
 	RequestedAt *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=requested_at,json=requestedAt,proto3" json:"requested_at,omitempty"`
