@@ -61,6 +61,7 @@ use crate::handlers::firmware::load_desired_firmware_version_entries;
 
 const MACHINE_POWER_OVERRIDE_SOURCE: &str = "component_power_control";
 const MACHINE_POWER_OVERRIDE_MESSAGE: &str = "Compute-Tray component power control in progress";
+const UNTRACKED_SWITCH_FIRMWARE_ERROR: &str = "no firmware job tracked for this switch";
 
 fn require_component_manager(api: &Api) -> Result<&ComponentManager, Status> {
     api.component_manager
@@ -548,7 +549,7 @@ fn untracked_switch_firmware_status(switch_id: SwitchId) -> rpc::FirmwareUpdateS
     rpc::FirmwareUpdateStatus {
         result: Some(error_result(
             &switch_id.to_string(),
-            "no firmware job tracked for this switch".into(),
+            UNTRACKED_SWITCH_FIRMWARE_ERROR.into(),
         )),
         state: rpc::FirmwareUpdateState::FwStateUnknown as i32,
         target_version: String::new(),
@@ -634,7 +635,24 @@ async fn switch_firmware_statuses(
 
     let cm = require_component_manager(api)?;
     let endpoints = resolve_switch_endpoints(api, &backend_switch_ids).await?;
-    statuses.extend(unresolved_firmware_statuses(&endpoints.unresolved));
+
+    for unresolved in &endpoints.unresolved {
+        // Endpoint resolution did not produce a newer backend observation, so
+        // preserve a terminal result retained from the rack firmware job.
+        statuses.push(
+            persisted_fallbacks
+                .remove(&unresolved.id)
+                .unwrap_or_else(|| rpc::FirmwareUpdateStatus {
+                    result: Some(error_result(
+                        &unresolved.id.to_string(),
+                        unresolved.reason.clone(),
+                    )),
+                    state: rpc::FirmwareUpdateState::FwStateUnknown as i32,
+                    target_version: String::new(),
+                    updated_at: None,
+                }),
+        );
+    }
 
     if !endpoints.resolved.endpoints.is_empty() {
         let backend_statuses = cm
@@ -4301,52 +4319,11 @@ fn select_firmware_status_routing(
     }
 }
 
-/// Firmware status for a set of ingested switches by id, via the configured
-/// backend. Shared by the `switch_ids` target and the ingested branch of the
-/// `switch_bmc_macs` target.
-async fn firmware_status_switch_ids(
-    api: &Api,
-    cm: &ComponentManager,
-    switch_ids: &[SwitchId],
-) -> Result<Vec<rpc::FirmwareUpdateStatus>, Status> {
-    let endpoints = resolve_switch_endpoints(api, switch_ids).await?;
-
-    let mut statuses: Vec<_> = endpoints
-        .unresolved
-        .iter()
-        .map(|u| rpc::FirmwareUpdateStatus {
-            result: Some(error_result(&u.id.to_string(), u.reason.clone())),
-            state: rpc::FirmwareUpdateState::FwStateUnknown as i32,
-            target_version: String::new(),
-            updated_at: None,
-        })
-        .collect();
-
-    let backend_statuses = cm
-        .nv_switch
-        .get_firmware_status(&endpoints.resolved.endpoints)
-        .await
-        .map_err(component_manager_error_to_status)?;
-    statuses.extend(backend_statuses.into_iter().map(|s| {
-        let id = switch_mac_to_id_str(&s.bmc_mac, &endpoints.resolved.mac_to_id);
-        rpc::FirmwareUpdateStatus {
-            result: Some(if s.error.is_none() {
-                success_result(&id)
-            } else {
-                error_result(&id, s.error.unwrap_or_default())
-            }),
-            state: map_fw_state(s.state),
-            target_version: s.target_version,
-            updated_at: None,
-        }
-    }));
-    Ok(statuses)
-}
-
 /// Firmware status for pre-ingestion switches, dispatched to the configured
 /// backend via direct endpoints and correlated by BMC MAC. Endpoints that
 /// cannot be resolved (missing NVOS info, credentials, or expected inventory)
-/// are reported per-MAC.
+/// and resolved endpoints omitted from the backend response are reported
+/// per-MAC as unknown errors.
 async fn pre_ingestion_switch_firmware_statuses(
     api: &Api,
     cm: &ComponentManager,
@@ -4373,24 +4350,43 @@ async fn pre_ingestion_switch_firmware_statuses(
         .get_firmware_status(&endpoints)
         .await
         .map_err(component_manager_error_to_status)?;
-    statuses.extend(
-        backend_statuses
-            .into_iter()
-            .map(|s| rpc::FirmwareUpdateStatus {
-                result: Some(if s.error.is_none() {
-                    mac_result(&s.bmc_mac, rpc::ComponentManagerStatusCode::Success, None)
-                } else {
-                    mac_result(
-                        &s.bmc_mac,
-                        rpc::ComponentManagerStatusCode::InternalError,
-                        s.error,
-                    )
-                }),
-                state: map_fw_state(s.state),
-                target_version: s.target_version,
-                updated_at: None,
+
+    let mut observed_bmc_macs = HashSet::new();
+
+    statuses.extend(backend_statuses.into_iter().map(|s| {
+        observed_bmc_macs.insert(s.bmc_mac);
+        rpc::FirmwareUpdateStatus {
+            result: Some(if s.error.is_none() {
+                mac_result(&s.bmc_mac, rpc::ComponentManagerStatusCode::Success, None)
+            } else {
+                mac_result(
+                    &s.bmc_mac,
+                    rpc::ComponentManagerStatusCode::InternalError,
+                    s.error,
+                )
             }),
-    );
+            state: map_fw_state(s.state),
+            target_version: s.target_version,
+            updated_at: None,
+        }
+    }));
+
+    for endpoint in endpoints {
+        if observed_bmc_macs.contains(&endpoint.bmc_mac) {
+            continue;
+        }
+
+        statuses.push(rpc::FirmwareUpdateStatus {
+            result: Some(mac_result(
+                &endpoint.bmc_mac,
+                rpc::ComponentManagerStatusCode::InternalError,
+                Some(UNTRACKED_SWITCH_FIRMWARE_ERROR.to_owned()),
+            )),
+            state: rpc::FirmwareUpdateState::FwStateUnknown as i32,
+            target_version: String::new(),
+            updated_at: None,
+        });
+    }
 
     Ok(statuses)
 }
@@ -4580,8 +4576,8 @@ pub(crate) async fn get_component_firmware_status(
 
             // Ingested MACs: reuse the switch-id path, then echo the MAC.
             if !resolution.ingested.is_empty() {
-                let ingested =
-                    firmware_status_switch_ids(api, cm, &resolution.ingested_ids()).await?;
+                let ingested = switch_firmware_statuses(api, &resolution.ingested_ids()).await?;
+
                 statuses.extend(ingested.into_iter().map(|mut status| {
                     if let Some(result) = status.result.as_mut()
                         && let Some(mac) =

@@ -22,6 +22,7 @@ use carbide_secrets::credentials::{BmcCredentialType, CredentialKey, Credentials
 use carbide_uuid::rack::{RackId, RackProfileId};
 use carbide_uuid::switch::SwitchId;
 use component_manager::mock::MockNvSwitchManager;
+use mac_address::MacAddress;
 use model::rack::{
     FirmwareProgressState, FirmwareUpgradeDeviceStatus, FirmwareUpgradeJob, MaintenanceActivity,
     RackConfig, RackFirmwareUpgradeState, RackFirmwareUpgradeStatus,
@@ -193,7 +194,7 @@ async fn switch_firmware_status_uses_only_current_cycle_persistence(
 
 async fn create_terminal_rack_switch_firmware_failure(
     pool: sqlx::PgPool,
-) -> Result<(TestEnv, RackId, SwitchId), Box<dyn std::error::Error>> {
+) -> Result<(TestEnv, RackId, SwitchId, MacAddress), Box<dyn std::error::Error>> {
     let env = create_test_env(pool.clone()).await;
     let rack_id = RackId::new(uuid::Uuid::new_v4().to_string());
     let started_at = chrono::Utc::now() - chrono::Duration::minutes(2);
@@ -306,7 +307,7 @@ async fn create_terminal_rack_switch_firmware_failure(
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok((env, rack_id, switch_id))
+    Ok((env, rack_id, switch_id, expected_switch.bmc_mac_address))
 }
 
 async fn get_switch_firmware_status(
@@ -333,11 +334,37 @@ async fn get_switch_firmware_status(
     Ok(status)
 }
 
+async fn get_switch_firmware_status_by_bmc_mac(
+    api: &crate::api::Api,
+    bmc_mac: MacAddress,
+) -> Result<rpc::FirmwareUpdateStatus, Box<dyn std::error::Error>> {
+    let status = crate::handlers::component_manager::get_component_firmware_status(
+        api,
+        Request::new(rpc::GetComponentFirmwareStatusRequest {
+            target: Some(
+                rpc::get_component_firmware_status_request::Target::SwitchBmcMacs(
+                    rpc::MacAddressList {
+                        mac_addresses: vec![bmc_mac.to_string()],
+                    },
+                ),
+            ),
+        }),
+    )
+    .await?
+    .into_inner()
+    .statuses
+    .into_iter()
+    .next()
+    .ok_or_else(|| eyre::eyre!("the switch status response must not be empty"))?;
+
+    Ok(status)
+}
+
 #[crate::sqlx_test]
 async fn terminal_rack_switch_status_survives_request_cleanup(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (env, _, switch_id) = create_terminal_rack_switch_firmware_failure(pool).await?;
+    let (env, _, switch_id, _) = create_terminal_rack_switch_firmware_failure(pool).await?;
     let retained = get_switch_firmware_status(&env.api, switch_id).await?;
 
     assert_eq!(
@@ -363,10 +390,47 @@ async fn terminal_rack_switch_status_survives_request_cleanup(
 }
 
 #[crate::sqlx_test]
+async fn terminal_rack_switch_status_survives_endpoint_resolution_failure(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (env, _, switch_id, _) = create_terminal_rack_switch_firmware_failure(pool.clone()).await?;
+
+    let component_manager = env
+        .test_component_manager
+        .clone()
+        .ok_or_else(|| eyre::eyre!("the test environment must include a component manager"))?;
+
+    let api_without_credentials = TestApiBuilder::new(
+        pool,
+        env.common_pools.clone(),
+        env.api.work_lock_manager_handle.clone(),
+    )
+    .with_component_manager(component_manager)
+    .build();
+
+    let retained = get_switch_firmware_status(&api_without_credentials, switch_id).await?;
+
+    let result = retained
+        .result
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("the retained status must include a component result"))?;
+
+    assert_eq!(
+        retained.state,
+        rpc::FirmwareUpdateState::FwStateFailed as i32
+    );
+
+    assert_eq!(retained.target_version, "fw-42");
+    assert_eq!(result.error, "rack firmware failed");
+
+    Ok(())
+}
+
+#[crate::sqlx_test]
 async fn tracked_backend_switch_job_supersedes_terminal_rack_status(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (env, _, switch_id) = create_terminal_rack_switch_firmware_failure(pool.clone()).await?;
+    let (env, _, switch_id, _) = create_terminal_rack_switch_firmware_failure(pool.clone()).await?;
 
     let mut component_manager = env
         .test_component_manager
@@ -407,10 +471,10 @@ async fn tracked_backend_switch_job_supersedes_terminal_rack_status(
 }
 
 #[crate::sqlx_test]
-async fn untracked_backend_switch_job_remains_an_unknown_api_status(
+async fn untracked_backend_switch_job_is_unknown_for_every_switch_target(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (env, rack_id, switch_id) =
+    let (env, rack_id, switch_id, bmc_mac) =
         create_terminal_rack_switch_firmware_failure(pool.clone()).await?;
     let mut txn = pool.begin().await?;
 
@@ -418,22 +482,42 @@ async fn untracked_backend_switch_job_remains_an_unknown_api_status(
     db::switch::update_firmware_upgrade_status(txn.as_mut(), switch_id, None).await?;
     txn.commit().await?;
 
-    let untracked = get_switch_firmware_status(&env.api, switch_id).await?;
+    let by_switch_id = get_switch_firmware_status(&env.api, switch_id).await?;
+    let by_ingested_bmc_mac = get_switch_firmware_status_by_bmc_mac(&env.api, bmc_mac).await?;
 
-    assert_eq!(
-        untracked.state,
-        rpc::FirmwareUpdateState::FwStateUnknown as i32
-    );
-    let result = untracked
-        .result
-        .as_ref()
-        .ok_or_else(|| eyre::eyre!("the untracked status must include a component result"))?;
+    let mut txn = pool.begin().await?;
+    db::switch::final_delete(switch_id, txn.as_mut()).await?;
+    txn.commit().await?;
 
-    assert_eq!(
-        result.status,
-        rpc::ComponentManagerStatusCode::InternalError as i32
-    );
-    assert_eq!(result.error, "no firmware job tracked for this switch");
+    let by_pre_ingestion_bmc_mac = get_switch_firmware_status_by_bmc_mac(&env.api, bmc_mac).await?;
+
+    for (target, status) in [
+        ("switch ID", by_switch_id),
+        ("ingested BMC MAC", by_ingested_bmc_mac),
+        ("pre-ingestion BMC MAC", by_pre_ingestion_bmc_mac),
+    ] {
+        assert_eq!(
+            status.state,
+            rpc::FirmwareUpdateState::FwStateUnknown as i32,
+            "{target}"
+        );
+
+        let result = status
+            .result
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("the {target} status must include a component result"))?;
+
+        assert_eq!(
+            result.status,
+            rpc::ComponentManagerStatusCode::InternalError as i32,
+            "{target}"
+        );
+
+        assert_eq!(
+            result.error, "no firmware job tracked for this switch",
+            "{target}"
+        );
+    }
 
     Ok(())
 }
