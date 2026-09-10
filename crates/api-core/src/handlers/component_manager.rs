@@ -2308,12 +2308,18 @@ fn exploration_report_firmware_versions(
 /// there is no timestamp left to gate a persisted status against. Host-driven
 /// upgrades fill the same field in from the scout report.
 fn machine_firmware_failure_reason(machine: &HostMachine) -> Option<String> {
-    let ManagedHostState::HostReprovision {
-        reprovision_state: HostReprovisionState::FailedFirmwareUpgrade { reason, .. },
-        ..
-    } = &machine.state.value
-    else {
-        return None;
+    let reason = match &machine.state.value {
+        ManagedHostState::HostReprovision {
+            reprovision_state: HostReprovisionState::FailedFirmwareUpgrade { reason, .. },
+            ..
+        }
+        | ManagedHostState::Assigned {
+            instance_state:
+                model::machine::InstanceState::HostReprovision {
+                    reprovision_state: HostReprovisionState::FailedFirmwareUpgrade { reason, .. },
+                },
+        } => reason,
+        _ => return None,
     };
 
     reason
@@ -6492,20 +6498,30 @@ mod tests {
     fn derive_machine_firmware_update_status_failed_reports_the_reprovision_reason() {
         use super::derive_machine_firmware_update_status;
 
-        fn failed_machine(reason: Option<&str>) -> HostMachine {
-            let mut machine = machine_with_id(standalone_machine(), host_machine_id());
+        fn failed_machine(reason: Option<&str>, assigned: bool) -> HostMachine {
+            let mut machine = machine_with_id(standalone_machine(), *host_machine_id());
             machine.status.update_complete = false;
-            machine.state = Versioned::new(
-                ManagedHostState::HostReprovision {
-                    reprovision_state: HostReprovisionState::FailedFirmwareUpgrade {
-                        firmware_type: FirmwareComponentType::Unknown,
-                        report_time: Some(chrono::Utc::now()),
-                        reason: reason.map(str::to_owned),
+
+            let reprovision_state = HostReprovisionState::FailedFirmwareUpgrade {
+                firmware_type: FirmwareComponentType::Unknown,
+                report_time: Some(chrono::Utc::now()),
+                reason: reason.map(str::to_owned),
+            };
+
+            let state = if assigned {
+                ManagedHostState::Assigned {
+                    instance_state: model::machine::InstanceState::HostReprovision {
+                        reprovision_state,
                     },
+                }
+            } else {
+                ManagedHostState::HostReprovision {
+                    reprovision_state,
                     retry_count: 0,
-                },
-                ConfigVersion::initial(),
-            );
+                }
+            };
+
+            machine.state = Versioned::new(state, ConfigVersion::initial());
             machine
         }
 
@@ -6514,22 +6530,32 @@ mod tests {
             (
                 "the backend reason is reported verbatim",
                 Some("config_json.ProductName is required"),
+                false,
+                "config_json.ProductName is required",
+            ),
+            (
+                "an assigned machine reports the backend reason verbatim",
+                Some("config_json.ProductName is required"),
+                true,
                 "config_json.ProductName is required",
             ),
             (
                 "no recorded reason is reported as such",
                 None,
+                false,
                 "firmware upgrade failed without a recorded reason",
             ),
             (
                 "a blank reason is treated as absent",
                 Some("   "),
+                false,
                 "firmware upgrade failed without a recorded reason",
             ),
         ];
 
-        for (label, reason, expected_error) in cases {
-            let machine = failed_machine(reason);
+        for (label, reason, assigned, expected_error) in cases {
+            let machine = failed_machine(reason, assigned);
+
             let status =
                 derive_machine_firmware_update_status(&machine_id, Some(&machine), None, &[]);
             let result = status.result.expect("a machine status carries a result");
@@ -6558,7 +6584,7 @@ mod tests {
     fn derive_machine_firmware_update_status_non_failed_states_stay_successful() {
         use super::derive_machine_firmware_update_status;
 
-        let mut machine = machine_with_id(standalone_machine(), host_machine_id());
+        let mut machine = machine_with_id(standalone_machine(), *host_machine_id());
         machine.status.update_complete = true;
         let machine_id = host_machine_id().to_string();
 
