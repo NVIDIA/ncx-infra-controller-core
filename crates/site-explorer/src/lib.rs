@@ -90,7 +90,10 @@ use db::ObjectColumnFilter;
 use db::work_lock_manager::WorkLockManagerHandle;
 pub use managed_host::is_endpoint_in_managed_host;
 use model::DpuModel;
-use model::expected_machine::{ExpectedInterface, ExpectedInterfaceIpAllocation, HostDpuPolicy};
+use model::expected_machine::{
+    ExpectedInterface, ExpectedInterfaceIpAllocation, ExpectedMachine, ExpectedMachineRequest,
+    HostDpuPolicy,
+};
 use model::firmware::FirmwareComponentType;
 use model::network_segment::NetworkSegmentType;
 mod switch_creator;
@@ -2435,6 +2438,7 @@ impl SiteExplorer {
             let host_bmc = expected_machine.effective_host_bmc();
             try_apply_expected_interface(
                 &self.database_connection,
+                expected_machine,
                 &host_bmc,
                 self.config.retained_boot_interface_window,
             )
@@ -2447,6 +2451,7 @@ impl SiteExplorer {
             {
                 try_apply_expected_interface(
                     &self.database_connection,
+                    expected_machine,
                     nic,
                     self.config.retained_boot_interface_window,
                 )
@@ -4147,8 +4152,14 @@ pub async fn try_preallocate_one(
 ///
 /// Each interface gets its own transaction so one invalid reservation cannot
 /// stop Site Explorer from processing the remaining expected inventory.
+///
+/// The captured `expected_machine` must identify a stored row. Its declaration
+/// is revalidated under a lock held through the address write and commit.
+/// Deleted or changed declarations are skipped; the next inventory pass reads
+/// the new configuration.
 pub async fn try_apply_expected_interface(
     pool: &PgPool,
+    expected_machine: &ExpectedMachine,
     expected_interface: &ExpectedInterface,
     retained_window: Option<chrono::Duration>,
 ) {
@@ -4169,6 +4180,55 @@ pub async fn try_apply_expected_interface(
             }
         }
     };
+
+    // The inventory snapshot was read in an earlier transaction. Keep this
+    // lock through allocation so an edit or deletion cannot commit between
+    // validating the declaration and writing a `Static` address.
+    let current = match db::expected_machine::find_for_update(
+        txn.as_pgconn(),
+        &ExpectedMachineRequest {
+            id: expected_machine.id,
+            bmc_mac_address: None,
+        },
+    )
+    .await
+    {
+        Ok(Some(current)) => current,
+        Ok(None) => {
+            txn.rollback_or_log("expected machine deleted before allocation")
+                .await;
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                expected_machine_id = ?expected_machine.id,
+                mac_address = %expected_interface.mac_address,
+                "Site-explorer expected-interface allocation: configuration lookup failed"
+            );
+            txn.rollback_or_log("expected interface allocation lookup failed")
+                .await;
+            return;
+        }
+    };
+
+    let declaration_matches = if expected_interface.mac_address == current.bmc_mac_address {
+        current.effective_host_bmc() == *expected_interface
+    } else {
+        current.data.interfaces.contains(expected_interface)
+    };
+    // Replace-all can reuse an ID for a different BMC MAC. That must not
+    // authorize a declaration captured for the previous owner.
+    if current.bmc_mac_address != expected_machine.bmc_mac_address || !declaration_matches {
+        tracing::debug!(
+            expected_machine_id = ?expected_machine.id,
+            mac_address = %expected_interface.mac_address,
+            "Site-explorer expected-interface allocation: owner or declaration changed, skipping"
+        );
+        txn.rollback_or_log("expected owner or interface declaration changed before allocation")
+            .await;
+        return;
+    }
 
     let result = match allocation {
         ExpectedInterfaceIpAllocation::Dynamic => {
