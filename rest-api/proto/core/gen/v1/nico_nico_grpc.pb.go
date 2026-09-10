@@ -39,6 +39,7 @@ const (
 	Forge_DeleteVpc_FullMethodName                                          = "/forge.Forge/DeleteVpc"
 	Forge_FindVpcIds_FullMethodName                                         = "/forge.Forge/FindVpcIds"
 	Forge_FindVpcsByIds_FullMethodName                                      = "/forge.Forge/FindVpcsByIds"
+	Forge_GetVpcRoutingState_FullMethodName                                 = "/forge.Forge/GetVpcRoutingState"
 	Forge_CreateSpxPartition_FullMethodName                                 = "/forge.Forge/CreateSpxPartition"
 	Forge_DeleteSpxPartition_FullMethodName                                 = "/forge.Forge/DeleteSpxPartition"
 	Forge_FindSpxPartitionIds_FullMethodName                                = "/forge.Forge/FindSpxPartitionIds"
@@ -550,6 +551,8 @@ type ForgeClient interface {
 	DeleteVpc(ctx context.Context, in *VpcDeletionRequest, opts ...grpc.CallOption) (*VpcDeletionResult, error)
 	FindVpcIds(ctx context.Context, in *VpcSearchFilter, opts ...grpc.CallOption) (*VpcIdList, error)
 	FindVpcsByIds(ctx context.Context, in *VpcsByIdsRequest, opts ...grpc.CallOption) (*VpcList, error)
+	// Reads persisted VPC routing and allocation state without changing it.
+	GetVpcRoutingState(ctx context.Context, in *VpcRoutingStateRequest, opts ...grpc.CallOption) (*VpcRoutingState, error)
 	CreateSpxPartition(ctx context.Context, in *SpxPartitionCreationRequest, opts ...grpc.CallOption) (*SpxPartition, error)
 	DeleteSpxPartition(ctx context.Context, in *SpxPartitionDeletionRequest, opts ...grpc.CallOption) (*SpxPartitionDeletionResult, error)
 	FindSpxPartitionIds(ctx context.Context, in *SpxPartitionSearchFilter, opts ...grpc.CallOption) (*SpxPartitionIdList, error)
@@ -1586,6 +1589,16 @@ func (c *forgeClient) FindVpcsByIds(ctx context.Context, in *VpcsByIdsRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VpcList)
 	err := c.cc.Invoke(ctx, Forge_FindVpcsByIds_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *forgeClient) GetVpcRoutingState(ctx context.Context, in *VpcRoutingStateRequest, opts ...grpc.CallOption) (*VpcRoutingState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VpcRoutingState)
+	err := c.cc.Invoke(ctx, Forge_GetVpcRoutingState_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -6382,6 +6395,8 @@ type ForgeServer interface {
 	DeleteVpc(context.Context, *VpcDeletionRequest) (*VpcDeletionResult, error)
 	FindVpcIds(context.Context, *VpcSearchFilter) (*VpcIdList, error)
 	FindVpcsByIds(context.Context, *VpcsByIdsRequest) (*VpcList, error)
+	// Reads persisted VPC routing and allocation state without changing it.
+	GetVpcRoutingState(context.Context, *VpcRoutingStateRequest) (*VpcRoutingState, error)
 	CreateSpxPartition(context.Context, *SpxPartitionCreationRequest) (*SpxPartition, error)
 	DeleteSpxPartition(context.Context, *SpxPartitionDeletionRequest) (*SpxPartitionDeletionResult, error)
 	FindSpxPartitionIds(context.Context, *SpxPartitionSearchFilter) (*SpxPartitionIdList, error)
@@ -7306,6 +7321,9 @@ func (UnimplementedForgeServer) FindVpcIds(context.Context, *VpcSearchFilter) (*
 }
 func (UnimplementedForgeServer) FindVpcsByIds(context.Context, *VpcsByIdsRequest) (*VpcList, error) {
 	return nil, status.Error(codes.Unimplemented, "method FindVpcsByIds not implemented")
+}
+func (UnimplementedForgeServer) GetVpcRoutingState(context.Context, *VpcRoutingStateRequest) (*VpcRoutingState, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetVpcRoutingState not implemented")
 }
 func (UnimplementedForgeServer) CreateSpxPartition(context.Context, *SpxPartitionCreationRequest) (*SpxPartition, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateSpxPartition not implemented")
@@ -9036,6 +9054,24 @@ func _Forge_FindVpcsByIds_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ForgeServer).FindVpcsByIds(ctx, req.(*VpcsByIdsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Forge_GetVpcRoutingState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VpcRoutingStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ForgeServer).GetVpcRoutingState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Forge_GetVpcRoutingState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ForgeServer).GetVpcRoutingState(ctx, req.(*VpcRoutingStateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -17649,6 +17685,10 @@ var Forge_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FindVpcsByIds",
 			Handler:    _Forge_FindVpcsByIds_Handler,
+		},
+		{
+			MethodName: "GetVpcRoutingState",
+			Handler:    _Forge_GetVpcRoutingState_Handler,
 		},
 		{
 			MethodName: "CreateSpxPartition",

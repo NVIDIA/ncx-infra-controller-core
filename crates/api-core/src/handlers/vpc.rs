@@ -333,12 +333,46 @@ async fn release_inactive_vpc_vni(
     vpc: &model::vpc::Vpc,
     expected_inactive_vni: u32,
 ) -> Result<i32, CarbideError> {
+    let allocations = find_vpc_vni_allocations(api, txn, vpc).await?;
+    let (inactive_pool, inactive_vni) = allocations.inactive.ok_or_else(|| {
+        CarbideError::FailedPrecondition(format!(
+            "VPC `{}` does not have an inactive VNI allocation (active VNI `{}`)",
+            vpc.id, allocations.active_vni,
+        ))
+    })?;
+
+    if i64::from(inactive_vni) != i64::from(expected_inactive_vni) {
+        return Err(CarbideError::FailedPrecondition(format!(
+            "VPC `{}` has inactive VNI `{inactive_vni}`, not expected VNI `{expected_inactive_vni}`",
+            vpc.id,
+        )));
+    }
+
+    // The ownership lookup holds this allocation's row lock through commit,
+    // so releasing the checked value cannot free another owner's allocation.
+    db::resource_pool::release(inactive_pool, txn, inactive_vni).await?;
+
+    Ok(inactive_vni)
+}
+
+struct VpcVniAllocations<'a> {
+    active_vni: i32,
+    inactive: Option<(&'a resource_pool::ResourcePool<i32>, i32)>,
+}
+
+// Callers hold the VPC mutation lock through these reads and any dependent
+// writes. Read the internal pool first, matching deletion's lock order.
+async fn find_vpc_vni_allocations<'a>(
+    api: &'a Api,
+    txn: &mut PgConnection,
+    vpc: &model::vpc::Vpc,
+) -> Result<VpcVniAllocations<'a>, CarbideError> {
     let active_vni = vpc.status.vni.ok_or_else(|| {
         CarbideError::FailedPrecondition(format!("VPC `{}` does not have an active VNI", vpc.id))
     })?;
 
-    let internal_pool = &api.common_pools.ethernet.pool_vpc_vni;
-    let external_pool = &api.common_pools.ethernet.pool_external_vpc_vni;
+    let internal_pool = api.common_pools.ethernet.pool_vpc_vni.as_ref();
+    let external_pool = api.common_pools.ethernet.pool_external_vpc_vni.as_ref();
     let owner_id = vpc.id.to_string();
     let internal_vni = db::resource_pool::find_owned_allocation(
         internal_pool,
@@ -357,29 +391,19 @@ async fn release_inactive_vpc_vni(
     .await
     .map_err(db::DatabaseError::from)?;
 
-    let (inactive_pool, inactive_vni) = match (internal_vni, external_vni) {
+    let inactive = match (internal_vni, external_vni) {
         (Some(internal_vni), Some(external_vni))
             if internal_vni == active_vni && external_vni != active_vni =>
         {
-            (external_pool, external_vni)
+            Some((external_pool, external_vni))
         }
         (Some(internal_vni), Some(external_vni))
             if external_vni == active_vni && internal_vni != active_vni =>
         {
-            (internal_pool, internal_vni)
+            Some((internal_pool, internal_vni))
         }
-        (Some(internal_vni), None) if internal_vni == active_vni => {
-            return Err(CarbideError::FailedPrecondition(format!(
-                "VPC `{}` does not have an inactive VNI allocation (active VNI `{active_vni}`)",
-                vpc.id,
-            )));
-        }
-        (None, Some(external_vni)) if external_vni == active_vni => {
-            return Err(CarbideError::FailedPrecondition(format!(
-                "VPC `{}` does not have an inactive VNI allocation (active VNI `{active_vni}`)",
-                vpc.id,
-            )));
-        }
+        (Some(internal_vni), None) if internal_vni == active_vni => None,
+        (None, Some(external_vni)) if external_vni == active_vni => None,
         _ => {
             return Err(CarbideError::FailedPrecondition(format!(
                 "VPC `{}` has inconsistent VNI allocations: active VNI `{active_vni}`, internal allocation {internal_vni:?}, external allocation {external_vni:?}",
@@ -388,18 +412,10 @@ async fn release_inactive_vpc_vni(
         }
     };
 
-    if i64::from(inactive_vni) != i64::from(expected_inactive_vni) {
-        return Err(CarbideError::FailedPrecondition(format!(
-            "VPC `{}` has inactive VNI `{inactive_vni}`, not expected VNI `{expected_inactive_vni}`",
-            vpc.id,
-        )));
-    }
-
-    // The ownership lookup holds this allocation's row lock through commit,
-    // so releasing the checked value cannot free another owner's allocation.
-    db::resource_pool::release(inactive_pool, txn, inactive_vni).await?;
-
-    Ok(inactive_vni)
+    Ok(VpcVniAllocations {
+        active_vni,
+        inactive,
+    })
 }
 
 pub(crate) async fn update_virtualization(
@@ -590,6 +606,56 @@ pub(crate) async fn find_by_ids(
         .map(Response::new)?;
 
     Ok(result)
+}
+
+pub(crate) async fn get_routing_state(
+    api: &Api,
+    request: Request<rpc::VpcRoutingStateRequest>,
+) -> Result<Response<rpc::VpcRoutingState>, Status> {
+    log_request_data(&request);
+    let vpc_id = request
+        .into_inner()
+        .id
+        .ok_or(CarbideError::MissingArgument("id"))?;
+
+    let mut txn = api.txn_begin().await?;
+    // Keep the VPC lock until both allocation reads finish. Otherwise cleanup
+    // could commit between reads and pair an old version with newer ownership.
+    let vpc = db::vpc::find_by_with_lock(
+        txn.as_mut(),
+        ObjectColumnFilter::One(vpc::IdColumn, &vpc_id),
+        db::vpc::VpcRowLock::Mutation,
+    )
+    .await?
+    .pop()
+    .ok_or_else(|| CarbideError::NotFoundError {
+        kind: "Vpc",
+        id: vpc_id.to_string(),
+    })?;
+    let allocations = find_vpc_vni_allocations(api, &mut txn, &vpc).await?;
+    let to_rpc_vni = |vni| {
+        u32::try_from(vni).map_err(|_| {
+            CarbideError::FailedPrecondition(format!(
+                "VPC `{vpc_id}` has allocated VNI `{vni}` that cannot be represented by the RPC API",
+            ))
+        })
+    };
+    let retained_allocation = match allocations.inactive {
+        Some((pool, vni)) => Some(rpc::VpcRetainedVniAllocation {
+            pool_name: pool.name().to_string(),
+            vni: to_rpc_vni(vni)?,
+        }),
+        None => None,
+    };
+    let state = rpc::VpcRoutingState {
+        id: Some(vpc.id),
+        version: vpc.version.to_string(),
+        routing_profile_type: vpc.config.routing_profile_type,
+        active_vni: to_rpc_vni(allocations.active_vni)?,
+        retained_allocation,
+    };
+    txn.commit().await?;
+    Ok(Response::new(state))
 }
 
 /// Converts a persisted VPC to RPC and populates its runtime-derived effective routing profile.
