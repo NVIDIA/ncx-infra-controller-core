@@ -37,7 +37,7 @@ By default this script assumes an empty cluster and will idempotently:
 - deploy the local Keycloak realm
 - share the Core CA with REST so the site agent can use mTLS with Core
 - create the Secrets and ConfigMaps that the Helm chart expects
-- write [`values.generated.yaml`](values.generated.yaml) for the app deploy step
+- write `values.generated.yaml` for the app deploy step
 
 It is safe to re-run. It uses `helm upgrade --install`, `kubectl apply`, and Vault checks before writing mounts/roles/secrets.
 
@@ -286,7 +286,7 @@ Without that link every image build fails with `unknown flag: --tag`, and only a
 
 ### Pinned tooling
 
-The script installs `darwin-arm64` builds of DevSpace `v6.3.21`, kind `v0.32.0`, kubectl `v1.36.3`, and Helm `v3.21.3` into `$HOME/.nico-devspace/bin`, verifying each published checksum. These are the versions [`setup-devspace-on-host.sh`](setup-devspace-on-host.sh) pins. Helm 3 matters in particular, because the charts are not exercised against Helm 4.
+The script installs `darwin-arm64` builds of DevSpace, kind, kubectl, and Helm into `$HOME/.nico-devspace/bin`, verifying each published checksum. The versions come from [`versions.env`](versions.env), which [`setup-devspace-on-host.sh`](setup-devspace-on-host.sh) and [`prepare-ubuntu-host-for-dev.sh`](prepare-ubuntu-host-for-dev.sh) source as well, so the macOS and Ubuntu paths cannot drift apart. Helm 3 matters in particular, because the charts are not exercised against Helm 4. Run `help` to print the resolved versions.
 
 Nothing in Homebrew's prefix is modified, so that directory has to come first on `PATH` when running `kubectl`, `helm`, or `devspace` by hand:
 
@@ -385,5 +385,6 @@ devspace deploy -n nico-system
 - [`setup-rest-integration.sh`](setup-rest-integration.sh)
 - [`devspace.yaml`](../../../devspace.yaml)
 - [`values.base.yaml`](values.base.yaml)
+- [`versions.env`](versions.env)
 - `values.generated.yaml`, written by `bootstrap-prereqs.sh` and not tracked
 - [`nuke-postgres.sh`](nuke-postgres.sh)

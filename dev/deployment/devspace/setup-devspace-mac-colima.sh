@@ -29,14 +29,8 @@ CLUSTER_NAME="${CLUSTER_NAME:-nico-dev}"
 # How long a container or build cache record has to have gone unused before
 # `prune` reclaims it.
 PRUNE_UNUSED_FOR="${PRUNE_UNUSED_FOR:-6h}"
-KIND_NODE_IMAGE="kindest/node:v1.36.1"
-POSTGRES_IMAGE="postgres:14.5-alpine"
-POSTGRES_WAIT_IMAGE="postgres:14.4-alpine"
-
-DEVSPACE_VERSION="v6.3.21"
-KIND_VERSION="v0.32.0"
-KUBECTL_VERSION="v1.36.3"
-HELM_VERSION="v3.21.3"
+# shellcheck source=versions.env
+source "${SCRIPT_DIR}/versions.env"
 
 # Kept out of the Homebrew prefix so the pinned Helm 3 does not shadow an
 # existing Helm 4 for anything but this stack.
@@ -81,24 +75,30 @@ Actions:
   status      Show the Colima, Docker, and cluster state.
   reset       Delete the kind cluster. Leaves Colima and its images alone.
   help        Show this help.
+EOF
+  # Expanding heredoc so the reported values are the ones this run will use,
+  # including any overrides, rather than a copy that drifts from versions.env.
+  cat <<EOF
 
 Resources:
-  CPUs/memory:  6 CPUs / 16 GiB
-  Disk:         200 GiB
+  Profile:      ${COLIMA_PROFILE}
+  CPUs/memory:  ${COLIMA_CPUS} CPUs / ${COLIMA_MEMORY_GIB} GiB
+  Disk:         ${COLIMA_DISK_GIB} GiB
   Hypervisor:   Apple Virtualization.framework via Colima's vz VM type
-  Cluster:      kind nico-dev on kindest/node:v1.36.1
+  Cluster:      kind ${CLUSTER_NAME} on ${KIND_NODE_IMAGE}
+  Tooling:      DevSpace ${DEVSPACE_VERSION}, kind ${KIND_VERSION},
+                kubectl ${KUBECTL_VERSION}, Helm ${HELM_VERSION}
+  Tool dir:     ${TOOL_DIR}
+  Prune age:    ${PRUNE_UNUSED_FOR}
+EOF
+  cat <<'EOF'
 
 The checkout stays on the macOS filesystem and reaches the Docker daemon over
 virtiofs, so every build context is read across that share.
 
-Environment overrides:
-  COLIMA_PROFILE      Default: default
-  COLIMA_CPUS         Default: 6
-  COLIMA_MEMORY_GIB   Default: 16
-  COLIMA_DISK_GIB     Default: 200
-  CLUSTER_NAME        Default: nico-dev
-  TOOL_DIR            Default: $HOME/.nico-devspace/bin
-  PRUNE_UNUSED_FOR    Default: 6h
+Override any of the above with COLIMA_PROFILE, COLIMA_CPUS, COLIMA_MEMORY_GIB,
+COLIMA_DISK_GIB, CLUSTER_NAME, TOOL_DIR, or PRUNE_UNUSED_FOR. Toolchain and
+image pins live in versions.env, shared with the other setup scripts.
 EOF
 }
 
@@ -358,14 +358,14 @@ configure_kind_node_tls() {
 # pulled a second time.
 preload_postgres_image() {
   local node="${CLUSTER_NAME}-control-plane"
-  local node_image="docker.io/library/${POSTGRES_IMAGE}"
-  local wait_image="docker.io/library/${POSTGRES_WAIT_IMAGE}"
+  local node_image="docker.io/library/${CORE_POSTGRES_IMAGE}"
+  local wait_image="docker.io/library/${REST_POSTGRES_IMAGE}"
 
   if ! kind_node_has_image "${node}" "${node_image}"; then
-    docker image inspect "${POSTGRES_IMAGE}" >/dev/null 2>&1 || \
-      docker pull "${POSTGRES_IMAGE}"
-    log "Loading ${POSTGRES_IMAGE} into ${node}"
-    docker save "${POSTGRES_IMAGE}" |
+    docker image inspect "${CORE_POSTGRES_IMAGE}" >/dev/null 2>&1 || \
+      docker pull "${CORE_POSTGRES_IMAGE}"
+    log "Loading ${CORE_POSTGRES_IMAGE} into ${node}"
+    docker save "${CORE_POSTGRES_IMAGE}" |
       docker exec -i "${node}" \
         ctr -n k8s.io images import --digests --snapshotter=overlayfs -
   fi
@@ -417,9 +417,9 @@ verify_environment() {
   [[ "$(docker image inspect "${KIND_NODE_IMAGE}" \
     --format '{{.Architecture}}')" == arm64 ]] || \
     die "${KIND_NODE_IMAGE} is not arm64"
-  [[ "$(docker image inspect "${POSTGRES_IMAGE}" \
+  [[ "$(docker image inspect "${CORE_POSTGRES_IMAGE}" \
     --format '{{.Architecture}}')" == arm64 ]] || \
-    die "${POSTGRES_IMAGE} is not arm64"
+    die "${CORE_POSTGRES_IMAGE} is not arm64"
 
   colima status --profile "${COLIMA_PROFILE}"
   docker info --format 'Docker: {{.ServerVersion}}, {{.Architecture}}, root={{.DockerRootDir}}'
