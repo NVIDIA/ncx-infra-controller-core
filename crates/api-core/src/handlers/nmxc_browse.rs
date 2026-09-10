@@ -177,14 +177,7 @@ pub(crate) async fn nmxc_browse(
         .await?;
 
         let Some(url) = endpoint_url else {
-            let endpoint_id = rack_id
-                .map(|r| r.to_string())
-                .unwrap_or_else(|| chassis_serial.to_string());
-            return Err(CarbideError::NotFoundError {
-                kind: "nvlink_nmxc_endpoint",
-                id: endpoint_id,
-            }
-            .into());
+            return Err(endpoint_not_found_error(group_type, chassis_serial, rack_id).into());
         };
 
         let mut nmxc = api
@@ -274,10 +267,33 @@ fn resolve_group_type(
     }
 }
 
+/// Builds the "no NMX-C endpoint" error for a failed [`resolve_nmx_c_endpoint_url`] lookup.
+///
+/// The chassis and rack paths consult disjoint data (the `nvlink_nmxc_endpoints` table vs.
+/// ready, NMX-C-configured switches in the rack), so `kind` names which lookup came up empty
+/// instead of a single generic label that can't distinguish a missing config row from a rack
+/// with no ready switch.
+fn endpoint_not_found_error(
+    group_type: ManagedHostGroupType,
+    chassis_serial: &str,
+    rack_id: Option<&carbide_uuid::rack::RackId>,
+) -> CarbideError {
+    match group_type {
+        ManagedHostGroupType::Chassis => CarbideError::NotFoundError {
+            kind: "nvlink_nmxc_endpoints",
+            id: chassis_serial.to_string(),
+        },
+        ManagedHostGroupType::Rack => CarbideError::NotFoundError {
+            kind: "nvlink_ready_switch",
+            id: rack_id.map(|r| r.to_string()).unwrap_or_default(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use carbide_test_support::Outcome::{FailsWith, Yields};
-    use carbide_test_support::scenarios;
+    use carbide_test_support::{scenarios, value_scenarios};
     use carbide_uuid::rack::RackId;
 
     use super::*;
@@ -314,6 +330,35 @@ mod tests {
             "neither provided" {
                 ("", None) => FailsWith(SelectionError::Neither),
                 ("   ", None) => FailsWith(SelectionError::Neither),
+            }
+        );
+    }
+
+    #[test]
+    fn endpoint_not_found_error_names_the_path_specific_lookup() {
+        value_scenarios!(run = |(group_type, chassis_serial, rack_id_str): (
+            ManagedHostGroupType,
+            &str,
+            Option<&str>,
+        )| {
+            let rack_id = rack_id_str.map(RackId::new);
+            match endpoint_not_found_error(group_type, chassis_serial, rack_id.as_ref()) {
+                CarbideError::NotFoundError { kind, id } => (kind, id),
+                other => panic!("expected NotFoundError, got {other:?}"),
+            }
+        };
+            "chassis path names the config table, keyed by chassis_serial" {
+                (ManagedHostGroupType::Chassis, "SN-123", None) => (
+                    "nvlink_nmxc_endpoints",
+                    "SN-123".to_string(),
+                ),
+            }
+
+            "rack path names the switch lookup, keyed by rack_id" {
+                (ManagedHostGroupType::Rack, "", Some("a12")) => (
+                    "nvlink_ready_switch",
+                    "a12".to_string(),
+                ),
             }
         );
     }
