@@ -290,6 +290,8 @@ mod tests {
     const DHCP: BmcSuppressionSubsystem = BmcSuppressionSubsystem::Dhcp;
     const DECOMMISSIONING: BmcSuppressionSource = BmcSuppressionSource::Decommissioning;
     const ROTATION: BmcSuppressionSource = BmcSuppressionSource::BmcCredentialRotation;
+    const SOURCE_MIGRATION: &str =
+        include_str!("../migrations/20260909213700_bmc_suppressions_source.sql");
 
     fn mac(last: u8) -> MacAddress {
         MacAddress::new([0x02, 0x00, 0x00, 0x00, 0x00, last])
@@ -636,6 +638,106 @@ mod tests {
         );
         assert!(
             find(txn.as_mut(), mac(2), DHCP, DECOMMISSIONING)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    // sqlx_test applies every migration on an empty table, which never runs
+    // the reason backfill. Rewind to the pre-source schema first.
+    #[crate::sqlx_test]
+    async fn source_migration_backfills_from_reason_and_requires_source(pool: sqlx::PgPool) {
+        sqlx::raw_sql(
+            "ALTER TABLE bmc_suppressions
+                 DROP CONSTRAINT bmc_suppressions_pkey;
+             ALTER TABLE bmc_suppressions
+                 DROP CONSTRAINT bmc_suppressions_source_check;
+             ALTER TABLE bmc_suppressions
+                 DROP COLUMN source;
+             ALTER TABLE bmc_suppressions
+                 ADD CONSTRAINT bmc_suppressions_pkey
+                     PRIMARY KEY (bmc_mac_address, subsystem);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO bmc_suppressions (bmc_mac_address, subsystem, reason)
+             VALUES
+                ($1, 'site_explorer', 'bmc_credential_rotation'),
+                ($2, 'site_explorer', 'factory_reset_bmc'),
+                ($3, 'site_explorer', 'managed host x is being decommissioned')",
+        )
+        .bind(mac(1))
+        .bind(mac(2))
+        .bind(mac(3))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::raw_sql(SOURCE_MIGRATION)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let rows: Vec<(MacAddress, BmcSuppressionSource)> = sqlx::query_as(
+            "SELECT bmc_mac_address, source FROM bmc_suppressions
+             ORDER BY bmc_mac_address",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (mac(1), ROTATION),
+                (mac(2), BmcSuppressionSource::FactoryResetBmc),
+                (mac(3), DECOMMISSIONING),
+            ]
+        );
+
+        let (is_nullable, column_default): (String, Option<String>) = sqlx::query_as(
+            "SELECT is_nullable, column_default
+             FROM information_schema.columns
+             WHERE table_name = 'bmc_suppressions' AND column_name = 'source'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(is_nullable, "NO");
+        assert_eq!(column_default, None);
+
+        sqlx::query(
+            "INSERT INTO bmc_suppressions (bmc_mac_address, subsystem, reason)
+             VALUES ($1, 'site_explorer', 'omitted source')",
+        )
+        .bind(mac(4))
+        .execute(&pool)
+        .await
+        .unwrap_err();
+
+        let mut txn = pool.begin().await.unwrap();
+        upsert(
+            txn.as_mut(),
+            &NewBmcSuppression {
+                bmc_mac_address: mac(3),
+                subsystem: SITE_EXPLORER,
+                source: ROTATION,
+                reason: "bmc_credential_rotation".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            find(txn.as_mut(), mac(3), SITE_EXPLORER, DECOMMISSIONING)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            find(txn.as_mut(), mac(3), SITE_EXPLORER, ROTATION)
                 .await
                 .unwrap()
                 .is_some()
