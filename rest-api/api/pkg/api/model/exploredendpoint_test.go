@@ -68,6 +68,9 @@ func TestNewAPIExploredEndpoint_FromProto(t *testing.T) {
 		LastRedfishReboot:     "2026-01-03T00:00:00Z",
 		LastRedfishPowercycle: "2026-01-04T00:00:00Z",
 		PauseRemediation:      true,
+		Warnings: []string{
+			"DPU OOB interface is missing from the exploration report.",
+		},
 		Report: &corev1.EndpointExplorationReport{
 			EndpointType:           "HostBmc",
 			LastExplorationError:   &lastErr,
@@ -132,6 +135,7 @@ func TestNewAPIExploredEndpoint_FromProto(t *testing.T) {
 	assert.True(t, got.ExplorationRequested)
 	assert.Equal(t, "WaitingForNetwork", got.PreingestionState)
 	assert.True(t, got.PauseRemediation)
+	assert.Equal(t, protoEP.Warnings, got.Warnings)
 	require.NotNil(t, got.Report)
 	assert.Equal(t, "HostBmc", got.Report.EndpointType)
 	require.NotNil(t, got.Report.LastExplorationError)
@@ -201,6 +205,7 @@ func TestAPIExploredEndpoint_ResponseFieldsAreNotOmitted(t *testing.T) {
 	assert.JSONEq(t, `{
 		"address":"", "report":null, "reportVersion":"", "explorationRequested":false,
 		"preingestionState":"", "lastRedfishBmcReset":"", "lastIpmitoolBmcReset":"",
-		"lastRedfishReboot":"", "lastRedfishPowercycle":"", "pauseRemediation":false
+		"lastRedfishReboot":"", "lastRedfishPowercycle":"", "pauseRemediation":false,
+		"warnings":null
 	}`, string(data))
 }
