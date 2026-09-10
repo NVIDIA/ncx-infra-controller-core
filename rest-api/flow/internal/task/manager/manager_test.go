@@ -6,6 +6,8 @@ package manager
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -559,41 +561,185 @@ func TestValidateResolvedRackTargets(t *testing.T) {
 	}
 }
 
-func TestCreateAndExecuteTaskReturnsExistingIdempotentTaskBeforeRackConflict(t *testing.T) {
-	ctx := context.Background()
-	rackID := uuid.New()
-	componentID := uuid.New()
-	taskID := uuid.New()
-	idempotencyKey := "operation-run-target:" + uuid.NewString()
-	op := testPowerControlOperation(t)
-	targetRack := newTestRack(rackID, "rack-1")
-	targetRack.AddComponent(newTestComponent(
-		componentID,
-		rackID,
-		devicetypes.ComponentTypeCompute,
-		"compute-1",
-	))
-	existingTask := &taskdef.Task{
-		ID:             taskID,
-		Operation:      op,
-		RackID:         rackID,
-		Status:         taskcommon.TaskStatusPending,
-		ExecutionID:    `{"workflow_id":"workflow","run_id":"run"}`,
-		IdempotencyKey: idempotencyKey,
-		Attributes: taskcommon.TaskAttributes{
-			ComponentsByType: map[devicetypes.ComponentType][]uuid.UUID{
-				devicetypes.ComponentTypeCompute: {componentID},
+func TestManagerImpl_CreateAndExecuteIdempotentTask(t *testing.T) {
+	t.Run("returns an existing scheduled task before rack conflict", func(t *testing.T) {
+		ctx := context.Background()
+		rackID := uuid.New()
+		componentID := uuid.New()
+		taskID := uuid.New()
+		idempotencyKey := "operation-run-target:" + uuid.NewString()
+		op := testPowerControlOperation(t)
+		targetRack := newTestRack(rackID, "rack-1")
+		targetRack.AddComponent(newTestComponent(
+			componentID,
+			rackID,
+			devicetypes.ComponentTypeCompute,
+			"compute-1",
+		))
+		existingTask := &taskdef.Task{
+			ID:             taskID,
+			Operation:      op,
+			RackID:         rackID,
+			Status:         taskcommon.TaskStatusPending,
+			ExecutionID:    `{"workflow_id":"workflow","run_id":"run"}`,
+			IdempotencyKey: idempotencyKey,
+			Attributes: taskcommon.TaskAttributes{
+				ComponentsByType: map[devicetypes.ComponentType][]uuid.UUID{
+					devicetypes.ComponentTypeCompute: {componentID},
+				},
 			},
-		},
-	}
-	store := &managerTaskStore{
-		activeTasksByRack: map[uuid.UUID][]*taskdef.Task{
-			rackID: {
-				{
-					ID:        uuid.New(),
-					Operation: op,
-					RackID:    rackID,
-					Status:    taskcommon.TaskStatusRunning,
+		}
+		store := &managerTaskStore{
+			activeTasksByRack: map[uuid.UUID][]*taskdef.Task{
+				rackID: {
+					{
+						ID:        uuid.New(),
+						Operation: op,
+						RackID:    rackID,
+						Status:    taskcommon.TaskStatusRunning,
+						Attributes: taskcommon.TaskAttributes{
+							ComponentsByType: map[devicetypes.ComponentType][]uuid.UUID{
+								devicetypes.ComponentTypeCompute: {componentID},
+							},
+						},
+					},
+				},
+			},
+			taskByIdempotencyKey: map[string]*taskdef.Task{
+				idempotencyKey: existingTask,
+			},
+		}
+		manager := &ManagerImpl{
+			taskStore:           store,
+			conflictResolver:    conflict.NewResolver(store),
+			maxWaitingPerRack:   defaultMaxWaitingPerRack,
+			defaultQueueTimeout: defaultQueueTimeout,
+		}
+
+		gotTaskID, err := manager.createAndExecuteTask(ctx, &operation.Request{
+			Operation:        op,
+			Description:      "retry operation-run target",
+			ConflictStrategy: operation.ConflictStrategyReject,
+			RequiredRackID:   rackID,
+			IdempotencyKey:   idempotencyKey,
+		}, targetRack)
+
+		require.NoError(t, err)
+		require.Equal(t, taskID, gotTaskID)
+		require.Zero(t, store.listActiveCalls)
+		require.Zero(t, store.createTaskCalls)
+	})
+
+	t.Run("schedules an existing pending task without an execution ID", func(t *testing.T) {
+		ctx := context.Background()
+		rackID := uuid.New()
+		componentID := uuid.New()
+		taskID := uuid.New()
+		idempotencyKey := "operation-run-target:" + uuid.NewString()
+		op := testPowerControlOperation(t)
+		targetRack := newTestRack(rackID, "rack-1")
+		targetRack.AddComponent(newTestComponent(
+			componentID,
+			rackID,
+			devicetypes.ComponentTypeCompute,
+			"compute-1",
+		))
+		existingTask := &taskdef.Task{
+			ID:             taskID,
+			Operation:      op,
+			RackID:         rackID,
+			Status:         taskcommon.TaskStatusPending,
+			IdempotencyKey: idempotencyKey,
+			Attributes: taskcommon.TaskAttributes{
+				ComponentsByType: map[devicetypes.ComponentType][]uuid.UUID{
+					devicetypes.ComponentTypeCompute: {componentID},
+				},
+			},
+		}
+		store := &managerTaskStore{
+			taskByIdempotencyKey: map[string]*taskdef.Task{
+				idempotencyKey: existingTask,
+			},
+		}
+		executor := &managerExecutor{executionID: `{"workflow_id":"workflow","run_id":"run"}`}
+		manager := &ManagerImpl{
+			taskStore:           store,
+			executor:            executor,
+			maxWaitingPerRack:   defaultMaxWaitingPerRack,
+			defaultQueueTimeout: defaultQueueTimeout,
+		}
+
+		gotTaskID, err := manager.createAndExecuteTask(ctx, &operation.Request{
+			Operation:        op,
+			Description:      "retry operation-run target",
+			ConflictStrategy: operation.ConflictStrategyReject,
+			RequiredRackID:   rackID,
+			IdempotencyKey:   idempotencyKey,
+		}, targetRack)
+
+		require.NoError(t, err)
+		require.Equal(t, taskID, gotTaskID)
+		require.Equal(t, 1, executor.executeCalls)
+		require.Equal(t, taskID, executor.lastRequest.Info.TaskID)
+		require.Equal(t, 1, store.updateScheduledCalls)
+		require.Equal(t, executor.executionID, store.updatedScheduledTask.ExecutionID)
+		require.Zero(t, store.listActiveCalls)
+		require.Zero(t, store.createTaskCalls)
+	})
+
+	t.Run("rejects an existing task for a different rack", func(t *testing.T) {
+		requestedRackID := uuid.New()
+		existingRackID := uuid.New()
+		idempotencyKey := "operation-run-target:" + uuid.NewString()
+		targetRack := newTestRack(requestedRackID, "rack-1")
+		store := &managerTaskStore{
+			taskByIdempotencyKey: map[string]*taskdef.Task{
+				idempotencyKey: {
+					ID:             uuid.New(),
+					RackID:         existingRackID,
+					IdempotencyKey: idempotencyKey,
+				},
+			},
+		}
+		manager := &ManagerImpl{taskStore: store}
+
+		taskID, err := manager.createAndExecuteTask(context.Background(), &operation.Request{
+			Operation:      testPowerControlOperation(t),
+			RequiredRackID: requestedRackID,
+			IdempotencyKey: idempotencyKey,
+		}, targetRack)
+
+		require.Equal(t, uuid.Nil, taskID)
+		require.ErrorContains(t, err, "idempotency key")
+		require.ErrorContains(t, err, existingRackID.String())
+		require.ErrorContains(t, err, requestedRackID.String())
+		require.Equal(t, 1, store.lockKeyCalls)
+		require.Zero(t, store.lockRackCalls)
+		require.Zero(t, store.createTaskCalls)
+		require.Zero(t, store.updateScheduledCalls)
+	})
+
+	t.Run("serializes concurrent retries until execution is persisted", func(t *testing.T) {
+		rackID := uuid.New()
+		componentID := uuid.New()
+		taskID := uuid.New()
+		idempotencyKey := "operation-run-target:" + uuid.NewString()
+		op := testPowerControlOperation(t)
+		targetRack := newTestRack(rackID, "rack-1")
+		targetRack.AddComponent(newTestComponent(
+			componentID,
+			rackID,
+			devicetypes.ComponentTypeCompute,
+			"compute-1",
+		))
+		baseStore := &managerTaskStore{
+			taskByIdempotencyKey: map[string]*taskdef.Task{
+				idempotencyKey: {
+					ID:             taskID,
+					Operation:      op,
+					RackID:         rackID,
+					Status:         taskcommon.TaskStatusPending,
+					IdempotencyKey: idempotencyKey,
 					Attributes: taskcommon.TaskAttributes{
 						ComponentsByType: map[devicetypes.ComponentType][]uuid.UUID{
 							devicetypes.ComponentTypeCompute: {componentID},
@@ -601,119 +747,60 @@ func TestCreateAndExecuteTaskReturnsExistingIdempotentTaskBeforeRackConflict(t *
 					},
 				},
 			},
-		},
-		taskByIdempotencyKey: map[string]*taskdef.Task{
-			idempotencyKey: existingTask,
-		},
-	}
-	manager := &ManagerImpl{
-		taskStore:           store,
-		conflictResolver:    conflict.NewResolver(store),
-		maxWaitingPerRack:   defaultMaxWaitingPerRack,
-		defaultQueueTimeout: defaultQueueTimeout,
-	}
-
-	gotTaskID, err := manager.createAndExecuteTask(ctx, &operation.Request{
-		Operation:        op,
-		Description:      "retry operation-run target",
-		ConflictStrategy: operation.ConflictStrategyReject,
-		RequiredRackID:   rackID,
-		IdempotencyKey:   idempotencyKey,
-	}, targetRack)
-
-	require.NoError(t, err)
-	require.Equal(t, taskID, gotTaskID)
-	require.Zero(t, store.listActiveCalls)
-	require.Zero(t, store.createTaskCalls)
-}
-
-func TestCreateAndExecuteTaskSchedulesExistingIdempotentTaskWithoutExecutionID(t *testing.T) {
-	ctx := context.Background()
-	rackID := uuid.New()
-	componentID := uuid.New()
-	taskID := uuid.New()
-	idempotencyKey := "operation-run-target:" + uuid.NewString()
-	op := testPowerControlOperation(t)
-	targetRack := newTestRack(rackID, "rack-1")
-	targetRack.AddComponent(newTestComponent(
-		componentID,
-		rackID,
-		devicetypes.ComponentTypeCompute,
-		"compute-1",
-	))
-	existingTask := &taskdef.Task{
-		ID:             taskID,
-		Operation:      op,
-		RackID:         rackID,
-		Status:         taskcommon.TaskStatusPending,
-		IdempotencyKey: idempotencyKey,
-		Attributes: taskcommon.TaskAttributes{
-			ComponentsByType: map[devicetypes.ComponentType][]uuid.UUID{
-				devicetypes.ComponentTypeCompute: {componentID},
+		}
+		transactionAttempts := make(chan struct{}, 2)
+		store := &serialManagerTaskStore{
+			managerTaskStore:    baseStore,
+			transactionAttempts: transactionAttempts,
+		}
+		executor := &blockingManagerExecutor{
+			managerExecutor: managerExecutor{
+				executionID: `{"workflow_id":"workflow","run_id":"run"}`,
 			},
-		},
-	}
-	store := &managerTaskStore{
-		taskByIdempotencyKey: map[string]*taskdef.Task{
-			idempotencyKey: existingTask,
-		},
-	}
-	executor := &managerExecutor{executionID: `{"workflow_id":"workflow","run_id":"run"}`}
-	manager := &ManagerImpl{
-		taskStore:           store,
-		executor:            executor,
-		maxWaitingPerRack:   defaultMaxWaitingPerRack,
-		defaultQueueTimeout: defaultQueueTimeout,
-	}
+			started: make(chan struct{}),
+			release: make(chan struct{}),
+		}
+		manager := &ManagerImpl{
+			taskStore: store,
+			executor:  executor,
+		}
+		req := &operation.Request{
+			Operation:        op,
+			ConflictStrategy: operation.ConflictStrategyReject,
+			RequiredRackID:   rackID,
+			IdempotencyKey:   idempotencyKey,
+		}
 
-	gotTaskID, err := manager.createAndExecuteTask(ctx, &operation.Request{
-		Operation:        op,
-		Description:      "retry operation-run target",
-		ConflictStrategy: operation.ConflictStrategyReject,
-		RequiredRackID:   rackID,
-		IdempotencyKey:   idempotencyKey,
-	}, targetRack)
+		results := make(chan uuid.UUID, 2)
+		errs := make(chan error, 2)
+		var submissions sync.WaitGroup
+		submissions.Add(2)
+		submit := func() {
+			defer submissions.Done()
+			gotTaskID, err := manager.createAndExecuteTask(t.Context(), req, targetRack)
+			results <- gotTaskID
+			errs <- err
+		}
 
-	require.NoError(t, err)
-	require.Equal(t, taskID, gotTaskID)
-	require.Equal(t, 1, executor.executeCalls)
-	require.Equal(t, taskID, executor.lastRequest.Info.TaskID)
-	require.Equal(t, 1, store.updateScheduledCalls)
-	require.Equal(t, executor.executionID, store.updatedScheduledTask.ExecutionID)
-	require.Zero(t, store.listActiveCalls)
-	require.Zero(t, store.createTaskCalls)
-}
+		go submit()
+		<-transactionAttempts
+		<-executor.started
+		go submit()
+		<-transactionAttempts
+		close(executor.release)
+		submissions.Wait()
+		close(results)
+		close(errs)
 
-func TestCreateAndExecuteTaskRejectsExistingIdempotentTaskForDifferentRack(t *testing.T) {
-	requestedRackID := uuid.New()
-	existingRackID := uuid.New()
-	idempotencyKey := "operation-run-target:" + uuid.NewString()
-	targetRack := newTestRack(requestedRackID, "rack-1")
-	store := &managerTaskStore{
-		taskByIdempotencyKey: map[string]*taskdef.Task{
-			idempotencyKey: {
-				ID:             uuid.New(),
-				RackID:         existingRackID,
-				IdempotencyKey: idempotencyKey,
-			},
-		},
-	}
-	manager := &ManagerImpl{taskStore: store}
-
-	taskID, err := manager.createAndExecuteTask(context.Background(), &operation.Request{
-		Operation:      testPowerControlOperation(t),
-		RequiredRackID: requestedRackID,
-		IdempotencyKey: idempotencyKey,
-	}, targetRack)
-
-	require.Equal(t, uuid.Nil, taskID)
-	require.ErrorContains(t, err, "idempotency key")
-	require.ErrorContains(t, err, existingRackID.String())
-	require.ErrorContains(t, err, requestedRackID.String())
-	require.Equal(t, 1, store.lockKeyCalls)
-	require.Zero(t, store.lockRackCalls)
-	require.Zero(t, store.createTaskCalls)
-	require.Zero(t, store.updateScheduledCalls)
+		for err := range errs {
+			require.NoError(t, err)
+		}
+		for gotTaskID := range results {
+			require.Equal(t, taskID, gotTaskID)
+		}
+		require.EqualValues(t, 1, executor.calls.Load())
+		require.Equal(t, 1, baseStore.updateScheduledCalls)
+	})
 }
 
 func testPowerControlOperation(t *testing.T) operation.Wrapper {
@@ -762,6 +849,41 @@ type managerTaskStore struct {
 	countWaitingCalls    int
 	waitingCount         int
 	rulesByID            map[uuid.UUID]*operationrules.OperationRule
+}
+
+type serialManagerTaskStore struct {
+	*managerTaskStore
+	idempotencyMu       sync.Mutex
+	transactionAttempts chan<- struct{}
+}
+
+func (s *serialManagerTaskStore) RunInTransaction(
+	ctx context.Context,
+	fn func(context.Context) error,
+) error {
+	s.transactionAttempts <- struct{}{}
+	err := fn(ctx)
+	s.idempotencyMu.Unlock()
+	return err
+}
+
+func (s *serialManagerTaskStore) LockIdempotencyKey(_ context.Context, _ string) error {
+	s.idempotencyMu.Lock()
+	return nil
+}
+
+func (s *serialManagerTaskStore) UpdateScheduledTask(
+	ctx context.Context,
+	task *taskdef.Task,
+) error {
+	err := s.managerTaskStore.UpdateScheduledTask(ctx, task)
+	if err != nil {
+		return err
+	}
+
+	persisted := *task
+	s.taskByIdempotencyKey[task.IdempotencyKey] = &persisted
+	return nil
 }
 
 func (s *managerTaskStore) RunInTransaction(
@@ -965,6 +1087,24 @@ type managerExecutor struct {
 	executionID  string
 	executeCalls int
 	lastRequest  *taskdef.ExecutionRequest
+}
+
+type blockingManagerExecutor struct {
+	managerExecutor
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *blockingManagerExecutor) Execute(
+	_ context.Context,
+	_ *taskdef.ExecutionRequest,
+) (*taskdef.ExecutionResponse, error) {
+	if e.calls.Add(1) == 1 {
+		close(e.started)
+	}
+	<-e.release
+	return &taskdef.ExecutionResponse{ExecutionID: e.executionID}, nil
 }
 
 func (e *managerExecutor) Start(context.Context) error {

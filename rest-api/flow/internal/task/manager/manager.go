@@ -484,7 +484,8 @@ func (m *ManagerImpl) createAndExecuteIdempotentTask(
 	txErr := m.taskStore.RunInTransaction(
 		ctx,
 		func(txCtx context.Context) error {
-			if err := m.taskStore.LockIdempotencyKey(txCtx, req.IdempotencyKey); err != nil {
+			err := m.taskStore.LockIdempotencyKey(txCtx, req.IdempotencyKey)
+			if err != nil {
 				return err
 			}
 
@@ -497,7 +498,8 @@ func (m *ManagerImpl) createAndExecuteIdempotentTask(
 			}
 
 			if persistedTask != nil {
-				if err := validateIdempotentTaskRack(req, persistedTask); err != nil {
+				err = validateIdempotentTaskRack(req, persistedTask)
+				if err != nil {
 					return err
 				}
 				// There are existing tasks with this idempotency key, reuse it.
@@ -506,40 +508,42 @@ func (m *ManagerImpl) createAndExecuteIdempotentTask(
 			} else {
 				// No existing tasks with this idempotency key, create a new one.
 				task = newTaskForRack(req, targetRack)
-				if err := m.lockRackAndResolveConflict(txCtx, req, targetRack, &task); err != nil {
+				err = m.lockRackAndResolveConflict(txCtx, req, targetRack, &task)
+				if err != nil {
 					return err
 				}
 
-				if err := m.taskStore.CreateTask(txCtx, &task); err != nil {
+				err = m.taskStore.CreateTask(txCtx, &task)
+				if err != nil {
 					return err
 				}
 			}
 
-			return nil
+			if task.IsScheduled() {
+				log.Info().
+					Str("task_id", task.ID.String()).
+					Str("idempotency_key", task.IdempotencyKey).
+					Msg("idempotent duplicate: returning existing scheduled task")
+				return nil
+			}
+			if task.Status == taskcommon.TaskStatusWaiting {
+				log.Info().
+					Str("task_id", task.ID.String()).
+					Str("rack_id", targetRack.Info.ID.String()).
+					Msg("task queued: waiting for rack to become available")
+				return nil
+			}
+
+			// Keep the idempotency lock until the execution ID or deferred
+			// status is persisted so a concurrent retry cannot execute the
+			// same pending task.
+			return m.resolveAndExecuteTaskInTransaction(txCtx, &task, targetRack)
 		},
 	)
 
 	if txErr != nil {
 		return uuid.Nil, txErr
 	}
-	if task.IsScheduled() {
-		log.Info().
-			Str("task_id", task.ID.String()).
-			Str("idempotency_key", task.IdempotencyKey).
-			Msg("idempotent duplicate: returning existing scheduled task")
-		return task.ID, nil
-	}
-	if task.Status == taskcommon.TaskStatusWaiting {
-		log.Info().
-			Str("task_id", task.ID.String()).
-			Str("rack_id", targetRack.Info.ID.String()).
-			Msg("task queued: waiting for rack to become available")
-		return task.ID, nil
-	}
-	if err := m.resolveAndExecuteTask(ctx, &task, targetRack); err != nil {
-		return uuid.Nil, err
-	}
-
 	return task.ID, nil
 }
 
@@ -663,6 +667,23 @@ func (m *ManagerImpl) resolveAndExecuteTask(
 	task *taskdef.Task,
 	targetRack *rack.Rack,
 ) error {
+	return m.resolveAndExecuteTaskWithTransaction(ctx, task, targetRack, false)
+}
+
+func (m *ManagerImpl) resolveAndExecuteTaskInTransaction(
+	ctx context.Context,
+	task *taskdef.Task,
+	targetRack *rack.Rack,
+) error {
+	return m.resolveAndExecuteTaskWithTransaction(ctx, task, targetRack, true)
+}
+
+func (m *ManagerImpl) resolveAndExecuteTaskWithTransaction(
+	ctx context.Context,
+	task *taskdef.Task,
+	targetRack *rack.Rack,
+	transactionActive bool,
+) error {
 	rule, err := m.resolveOperationRule(ctx, task.Operation, task.RackID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve operation rule: %w", err)
@@ -691,7 +712,7 @@ func (m *ManagerImpl) resolveAndExecuteTask(
 
 	resp, err := m.executeTask(ctx, task, targetRack, &rule.RuleDefinition)
 	if err != nil {
-		deferred, deferErr := m.deferUnlinkedTask(ctx, task, err)
+		deferred, deferErr := m.deferUnlinkedTask(ctx, task, err, transactionActive)
 		if deferred {
 			return deferErr
 		}
@@ -719,6 +740,7 @@ func (m *ManagerImpl) deferUnlinkedTask(
 	ctx context.Context,
 	task *taskdef.Task,
 	executionErr error,
+	transactionActive bool,
 ) (bool, error) {
 	var unlinkedErr *unlinkedTargetsError
 	if !errors.As(executionErr, &unlinkedErr) {
@@ -755,7 +777,7 @@ func (m *ManagerImpl) deferUnlinkedTask(
 		if limit <= 0 {
 			limit = defaultMaxWaitingPerRack
 		}
-		if err := m.taskStore.RunInTransaction(ctx, func(txCtx context.Context) error {
+		persistWaiting := func(txCtx context.Context) error {
 			if err := m.taskStore.LockRack(txCtx, task.RackID); err != nil {
 				return err
 			}
@@ -782,7 +804,15 @@ func (m *ManagerImpl) deferUnlinkedTask(
 				update.QueueExpiresAt = deadline
 			}
 			return m.taskStore.UpdateTaskStatus(txCtx, update)
-		}); err != nil {
+		}
+
+		var err error
+		if transactionActive {
+			err = persistWaiting(ctx)
+		} else {
+			err = m.taskStore.RunInTransaction(ctx, persistWaiting)
+		}
+		if err != nil {
 			return true, fmt.Errorf("defer task awaiting target linkage: %w", err)
 		}
 	}
