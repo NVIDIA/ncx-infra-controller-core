@@ -14,6 +14,7 @@ import (
 	tsdkClient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/contrib/opentelemetry"
 	tsdkConverter "go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/interceptor"
 	tsdkLog "go.temporal.io/sdk/log"
 
 	cotel "github.com/NVIDIA/infra-controller/rest-api/common/pkg/otel"
@@ -60,8 +61,23 @@ func ConfigureClientOptions(opts tsdkClient.Options) (tsdkClient.Options, error)
 	if opts.DataConverter == nil {
 		opts.DataConverter = DataConverter()
 	}
+	tracing, err := TracingInterceptor()
+	if err != nil {
+		return opts, err
+	}
+	if tracing != nil {
+		opts.Interceptors = append(opts.Interceptors, tracing)
+	}
+	return opts, nil
+}
+
+// TracingInterceptor returns the OpenTelemetry Temporal interceptor once
+// Bootstrap has enabled transport instrumentation, and nil otherwise. The
+// value satisfies both the client and the worker interceptor interfaces, so a
+// worker attaches the same instrumentation as the client it polls through.
+func TracingInterceptor() (interceptor.Interceptor, error) {
 	if !cotel.TransportEnabled() {
-		return opts, nil
+		return nil, nil
 	}
 
 	otelInterceptor, err := opentelemetry.NewTracingInterceptor(opentelemetry.TracerOptions{
@@ -69,8 +85,7 @@ func ConfigureClientOptions(opts tsdkClient.Options) (tsdkClient.Options, error)
 		DisableBaggage:    true,
 	})
 	if err != nil {
-		return opts, fmt.Errorf("failed to create Temporal tracing interceptor: %w", err)
+		return nil, fmt.Errorf("failed to create Temporal tracing interceptor: %w", err)
 	}
-	opts.Interceptors = append(opts.Interceptors, otelInterceptor)
-	return opts, nil
+	return otelInterceptor, nil
 }

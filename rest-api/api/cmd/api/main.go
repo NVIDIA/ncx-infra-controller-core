@@ -40,8 +40,11 @@ const (
 	// ZerologLevelFieldName specifies the field name for log level
 	ZerologLevelFieldName = "type"
 
-	apiListenAddress      = ":8388"
-	serverShutdownTimeout = 10 * time.Second
+	apiListenAddress = ":8388"
+	// serverShutdownTimeout bounds the drain of in-flight requests on SIGTERM
+	// and, separately, the final trace export flush that follows it. Handler
+	// waits such as the Temporal proxy timeout ladders must complete inside it.
+	serverShutdownTimeout = 30 * time.Second
 )
 
 // @title NVIDIA NICo REST API

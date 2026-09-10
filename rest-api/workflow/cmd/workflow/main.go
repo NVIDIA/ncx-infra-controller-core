@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -18,18 +17,15 @@ import (
 	"logur.dev/logur"
 
 	tsdkClient "go.temporal.io/sdk/client"
-	tsdkConverter "go.temporal.io/sdk/converter"
-	tsdkWorker "go.temporal.io/sdk/worker"
-
-	"go.opentelemetry.io/otel"
-	"go.temporal.io/sdk/contrib/opentelemetry"
 	"go.temporal.io/sdk/interceptor"
+	tsdkWorker "go.temporal.io/sdk/worker"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	cotel "github.com/NVIDIA/infra-controller/rest-api/common/pkg/otel"
+	ctemporal "github.com/NVIDIA/infra-controller/rest-api/common/pkg/temporal"
 	cdb "github.com/NVIDIA/infra-controller/rest-api/db/pkg/db"
 
 	"github.com/NVIDIA/infra-controller/rest-api/workflow/internal/config"
@@ -203,39 +199,25 @@ func main() {
 		log.Panic().Err(err).Msg("failed to get Temporal config")
 	}
 
-	var tInterceptors []interceptor.ClientInterceptor
-	var wInterceptors []interceptor.WorkerInterceptor
-
-	if cotel.TransportEnabled() {
-		otelInterceptor, err := opentelemetry.NewTracingInterceptor(opentelemetry.TracerOptions{
-			TextMapPropagator: otel.GetTextMapPropagator(),
-			DisableBaggage:    true,
-		})
-		if err != nil {
-			log.Panic().Err(err).Msg("unable to get otelInterceptor")
-		}
-		tInterceptors = append(tInterceptors, otelInterceptor)
-		wInterceptors = append(wInterceptors, otelInterceptor)
+	// Shared options carry the payload converter every binary agrees on and,
+	// when transport tracing is configured, the OpenTelemetry client
+	// interceptor. The worker gets the same interceptor so workflow and
+	// activity executions join the trace of the request that started them.
+	tOptions, err := ctemporal.ClientOptions(tcfg.GetHostPort(), tcfg.Namespace, tcfg.ClientTLSCfg, tLogger)
+	if err != nil {
+		log.Panic().Err(err).Msg("failed to build Temporal client options")
 	}
 
-	tc, err = tsdkClient.NewLazyClient(tsdkClient.Options{
-		HostPort:  fmt.Sprintf("%v:%v", tcfg.Host, tcfg.Port),
-		Namespace: tcfg.Namespace,
-		ConnectionOptions: tsdkClient.ConnectionOptions{
-			TLS: tcfg.ClientTLSCfg,
-		},
-		DataConverter: tsdkConverter.NewCompositeDataConverter(
-			tsdkConverter.NewNilPayloadConverter(),
-			tsdkConverter.NewByteSlicePayloadConverter(),
-			tsdkConverter.NewProtoJSONPayloadConverterWithOptions(tsdkConverter.ProtoJSONPayloadConverterOptions{
-				AllowUnknownFields: true,
-			}),
-			tsdkConverter.NewProtoPayloadConverter(),
-			tsdkConverter.NewJSONPayloadConverter(),
-		),
-		Interceptors: tInterceptors,
-		Logger:       tLogger,
-	})
+	var wInterceptors []interceptor.WorkerInterceptor
+	tracingInterceptor, err := ctemporal.TracingInterceptor()
+	if err != nil {
+		log.Panic().Err(err).Msg("failed to create Temporal tracing interceptor")
+	}
+	if tracingInterceptor != nil {
+		wInterceptors = append(wInterceptors, tracingInterceptor)
+	}
+
+	tc, err = tsdkClient.NewLazyClient(tOptions)
 
 	if err != nil {
 		log.Panic().Err(err).Msg("failed to create Temporal client")

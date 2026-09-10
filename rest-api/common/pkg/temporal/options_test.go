@@ -83,3 +83,34 @@ func TestClientOptions(t *testing.T) {
 		})
 	}
 }
+
+// TestTracingInterceptor proves the worker-facing contract: a worker gets an
+// interceptor exactly when transport instrumentation is on, so workflow tasks
+// join the trace the client started and nothing is attached when propagation
+// is switched off.
+func TestTracingInterceptor(t *testing.T) {
+	tcs := []struct {
+		descr           string
+		propagators     string
+		wantInterceptor bool
+	}{
+		{descr: "transport enabled", wantInterceptor: true},
+		{descr: "propagation disabled", propagators: "none"},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.descr, func(t *testing.T) {
+			previousPropagator := otel.GetTextMapPropagator()
+			t.Cleanup(func() { otel.SetTextMapPropagator(previousPropagator) })
+			t.Setenv("OTEL_PROPAGATORS", tc.propagators)
+			shutdown, err := cotel.Bootstrap(context.Background(), false, "temporal-test")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, shutdown(context.Background())) })
+
+			got, err := TracingInterceptor()
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantInterceptor, got != nil)
+		})
+	}
+}
