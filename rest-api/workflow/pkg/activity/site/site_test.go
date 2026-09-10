@@ -369,6 +369,72 @@ func TestManageSite_DeleteSiteComponentsFromDB(t *testing.T) {
 	}
 }
 
+func TestManageSite_DeleteTenantManagedSitePrefixIPBlocksFromDB(t *testing.T) {
+	ctx := context.Background()
+	dbSession := testSiteInitDB(t)
+	defer dbSession.Close()
+	util.TestSetupSchema(t, dbSession)
+
+	providerOrg := "site-prefix-purge-provider"
+	user := util.TestBuildUser(t, dbSession, uuid.NewString(), []string{providerOrg}, []string{"FORGE_PROVIDER_ADMIN"})
+	provider := util.TestBuildInfrastructureProvider(t, dbSession, "site-prefix-purge-provider", providerOrg, user)
+	tenant := util.TestBuildTenant(t, dbSession, "site-prefix-purge-tenant", "site-prefix-purge-tenant", nil, user)
+	targetSite := util.TestBuildSite(t, dbSession, provider, "site-prefix-purge-target", cdbm.SiteStatusPending, nil, user)
+	retainedSite := util.TestBuildSite(t, dbSession, provider, "site-prefix-purge-retained", cdbm.SiteStatusPending, nil, user)
+
+	ipBlockDAO := cdbm.NewIPBlockDAO(dbSession)
+	targetSitePrefixID := uuid.New()
+	target, err := ipBlockDAO.Create(ctx, nil, cdbm.IPBlockCreateInput{
+		Name:                     "target-tenant-site-prefix",
+		SiteID:                   targetSite.ID,
+		InfrastructureProviderID: provider.ID,
+		TenantID:                 &tenant.ID,
+		SitePrefixID:             &targetSitePrefixID,
+		RoutingType:              cdbm.IPBlockRoutingTypeDatacenterOnly,
+		Prefix:                   "10.60.0.0",
+		PrefixLength:             24,
+		ProtocolVersion:          cdbm.IPBlockProtocolVersionV4,
+		Status:                   cdbm.IPBlockStatusReady,
+		CreatedBy:                &user.ID,
+	})
+	require.NoError(t, err)
+
+	retainedSitePrefixID := uuid.New()
+	retained, err := ipBlockDAO.Create(ctx, nil, cdbm.IPBlockCreateInput{
+		Name:                     "retained-tenant-site-prefix",
+		SiteID:                   retainedSite.ID,
+		InfrastructureProviderID: provider.ID,
+		TenantID:                 &tenant.ID,
+		SitePrefixID:             &retainedSitePrefixID,
+		RoutingType:              cdbm.IPBlockRoutingTypeDatacenterOnly,
+		Prefix:                   "10.61.0.0",
+		PrefixLength:             24,
+		ProtocolVersion:          cdbm.IPBlockProtocolVersionV4,
+		Status:                   cdbm.IPBlockStatusReady,
+		CreatedBy:                &user.ID,
+	})
+	require.NoError(t, err)
+
+	manager := ManageSite{dbSession: dbSession}
+	err = manager.DeleteSiteComponentsFromDB(ctx, targetSite.ID, provider.ID, false)
+	require.NoError(t, err)
+
+	rows, _, err := ipBlockDAO.GetAll(
+		ctx,
+		nil,
+		cdbm.IPBlockFilterInput{IPBlockIDs: []uuid.UUID{target.ID}, IncludeDeleted: true},
+		cdbp.PageInput{Limit: cutil.GetPtr(cdbp.TotalLimit)},
+		nil,
+	)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].Deleted)
+
+	active, err := ipBlockDAO.GetByID(ctx, nil, retained.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, retained.ID, active.ID)
+}
+
 func TestNewManageSite(t *testing.T) {
 	type args struct {
 		dbSession         *cdb.Session
@@ -1753,7 +1819,14 @@ func TestManageSite_UpdateIPBlocksInDBFromFabricPrefixes_ReturnsErrorWhenFabricB
 	mst := NewManageSite(resources.dbSession, nil, nil, nil, nil)
 
 	err := cdb.WithTx(ctx, resources.dbSession, func(tx *cdb.Tx) error {
-		require.NoError(t, tx.AcquireAdvisoryLock(ctx, getSiteFabricIPBlockLockID(resources.site), false))
+		require.NoError(t, tx.AcquireAdvisoryLock(
+			ctx,
+			cdbm.SiteFabricIPBlockLockID(
+				resources.site.InfrastructureProviderID,
+				resources.site.ID,
+			),
+			false,
+		))
 
 		derr := mst.UpdateIPBlocksInDBFromFabricPrefixes(ctx, resources.site.ID, []string{"10.0.0.0/16"})
 		assert.ErrorIs(t, derr, cdb.ErrXactAdvisoryLockFailed)
