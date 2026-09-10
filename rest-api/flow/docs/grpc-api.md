@@ -2981,6 +2981,7 @@ QueueOptions controls how a task behaves when a conflict is detected.
 | nvl_domain_ids | [UUID](#v1-UUID) | repeated | NVLink Domains containing this rack; empty when unassigned |
 | task_stats | [TaskStats](#v1-TaskStats) |  | All active Tasks on this rack, including component-scoped Tasks. |
 | external_id | [string](#string) |  |  |
+| operation_status | [Phase](#v1-Phase) |  | Flow-derived operability summary across active Compute, NVSwitch, and PowerShelf components in this rack. Unknown or missing component status wins, followed by Error, Initializing, Deleting, InUse, and Ready. A rack with no supported active components is Unknown. This is independent of component expansion and is not the Core rack lifecycle/controller state. |
 
 
 
@@ -3832,9 +3833,9 @@ execution for the same scope is still active.
 <a name="v1-Phase"></a>
 
 ### Phase
-Phase is the coarse lifecycle bucket a component is in, derived from
-core&#39;s per-component state machine. Shared across compute, nvswitch,
-and power shelf.
+Phase is Flow&#39;s coarse operability bucket. Component phases are derived from
+Core&#39;s type-specific state machines; Rack.operation_status aggregates those
+component phases.
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |

@@ -252,6 +252,9 @@ type APIRack struct {
 	Model        string `json:"model"`
 	SerialNumber string `json:"serialNumber"`
 	Description  string `json:"description"`
+	// OperationStatus is Flow's aggregate operability phase across supported
+	// active components in the Rack. It is not the Core Rack lifecycle state.
+	OperationStatus string `json:"operationStatus"`
 	// NVLinkDomainIDs identifies the NVLink Domains containing the Rack.
 	// It is empty when the Rack is not assigned to an NVLink Domain.
 	NVLinkDomainIDs []string            `json:"nvLinkDomainIds"`
@@ -267,6 +270,7 @@ func (ar *APIRack) FromProto(protoRack *flowv1.Rack, includeComponents bool) {
 	}
 
 	ar.ID = protoRack.GetExternalId()
+	ar.OperationStatus = enumOr(ProtoToAPIPhaseName, protoRack.GetOperationStatus(), "Unknown")
 	// Get info from DeviceInfo
 	if protoRack.GetInfo() != nil {
 		info := protoRack.GetInfo()

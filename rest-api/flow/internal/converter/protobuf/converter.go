@@ -263,10 +263,11 @@ func RackFrom(r *pb.Rack) *rack.Rack {
 		components = append(components, *converted)
 	}
 	result := &rack.Rack{
-		Info:       DeviceInfoFrom(r.GetInfo()),
-		ExternalID: r.GetExternalId(),
-		Loc:        LocationFrom(r.GetLocation()),
-		Components: components,
+		Info:            DeviceInfoFrom(r.GetInfo()),
+		ExternalID:      r.GetExternalId(),
+		Loc:             LocationFrom(r.GetLocation()),
+		Components:      components,
+		OperationStatus: PhaseFrom(r.GetOperationStatus()),
 	}
 	result.NVLDomainID = domainID
 	return result
@@ -679,6 +680,24 @@ func PhaseTo(p types.Phase) pb.Phase {
 	}
 }
 
+// PhaseFrom converts a protobuf operability phase to the internal form.
+func PhaseFrom(phase pb.Phase) types.Phase {
+	switch phase {
+	case pb.Phase_PHASE_INITIALIZING:
+		return types.PhaseInitializing
+	case pb.Phase_PHASE_READY:
+		return types.PhaseReady
+	case pb.Phase_PHASE_IN_USE:
+		return types.PhaseInUse
+	case pb.Phase_PHASE_ERROR:
+		return types.PhaseError
+	case pb.Phase_PHASE_DELETING:
+		return types.PhaseDeleting
+	default:
+		return types.PhaseUnknown
+	}
+}
+
 // operationTypeFromTypesTo converts a Flow types.OperationType into its
 // protobuf counterpart. Distinct from OperationTypeToProto (which converts
 // from taskcommon.TaskType).
@@ -729,10 +748,11 @@ func RackTo(r *rack.Rack) *pb.Rack {
 	}
 
 	result := &pb.Rack{
-		Info:       DeviceInfoTo(&r.Info),
-		ExternalId: r.ExternalID,
-		Location:   LocationTo(&r.Loc),
-		Components: components,
+		Info:            DeviceInfoTo(&r.Info),
+		ExternalId:      r.ExternalID,
+		Location:        LocationTo(&r.Loc),
+		Components:      components,
+		OperationStatus: PhaseTo(r.OperationStatus),
 	}
 	if r.NVLDomainID != uuid.Nil {
 		result.NvlDomainIds = UUIDsTo([]uuid.UUID{r.NVLDomainID})
