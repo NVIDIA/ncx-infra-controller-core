@@ -47,15 +47,17 @@ func TestWorkflowOrchestrator(t *testing.T) {
 	expiration := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	tests := []struct {
-		name       string
-		master     bool
-		reload     bool
-		invalidKey bool
-		nilGauge   bool
+		name         string
+		master       bool
+		reload       bool
+		failedReload bool
+		invalidKey   bool
+		nilGauge     bool
 	}{
 		{name: "master loads existing client certificate", master: true},
 		{name: "non-master loads existing client certificate"},
 		{name: "reload updates client expiration", reload: true},
+		{name: "failed reload retains previous expiration", failedReload: true},
 		{name: "invalid key leaves metric unchanged", invalidKey: true},
 		{name: "missing gauge does not interrupt certificate loading", nilGauge: true},
 	}
@@ -146,6 +148,13 @@ func TestWorkflowOrchestrator(t *testing.T) {
 			require.NoError(t, gatherErr)
 			require.Len(t, metrics, 1)
 			assert.Equal(t, "nico_rest_site_agent_temporal_cert_expiration", metrics[0].GetName())
+			if tt.failedReload {
+				err = os.WriteFile(conf.Temporal.GetTemporalClientKeyFullPath(), []byte("invalid PEM"), 0600)
+				require.NoError(t, err)
+				loadErr = workflowOrchestrator()
+				require.ErrorContains(t, loadErr, "PEM data in key input")
+				assert.Equal(t, float64(expiration.Unix()), gaugeValue())
+			}
 			if tt.reload {
 				newExpiration := expiration.Add(24 * time.Hour)
 				writeCertificate(newExpiration)
