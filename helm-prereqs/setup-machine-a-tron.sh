@@ -119,7 +119,12 @@
 #                          from nico-core site config if unset.
 #   ADMIN_DHCP_RELAY       Relay MAT uses for DPU OOB and switch NVOS DHCP
 #                          (MAT underlay_dhcp_relay_address). Scale mode:
-#                          simulated-underlay gateway; else auto-detected.
+#                          simulated-underlay gateway. Override mode: the
+#                          first site gateway, as before; set it when DPU
+#                          OOB must relay through another segment.
+#   SWITCH_COUNT           Override the switch total (NVOS leases) used by
+#                          the pool-fit check. Default: sum of hostCount over
+#                          machine groups whose hwType contains "switch".
 #   HOST_COUNT             Override machines.dell-hosts.hostCount.
 #   DPU_PER_HOST           Override machines.dell-hosts.dpuPerHostCount.
 #   CHART_DIR              Path to the nico-machine-a-tron chart.
@@ -292,7 +297,7 @@ for arg in "$@"; do
         --scale) MAT_MODE="scale" ;;
         --skip-nico-core-config) SKIP_NICO_CORE_CONFIG=true ;;
         --skip-dpf-sim) SKIP_DPF_SIM=true ;;
-        -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//' | head -130; exit 0 ;;
+        -h|--help) awk 'NR==1{next} /^# =+$/{r++; if(r==2) exit} /^#/{sub(/^# ?/,""); print}' "$0"; exit 0 ;;
         *) echo "Unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -383,6 +388,35 @@ DPU_PER_HOST="${DPU_PER_HOST:-$(grep -E '^[[:space:]]*dpuPerHostCount:' "$VALUES
 [[ -n "$MAT_IMAGE_TAG" ]] || die "MAT_IMAGE_TAG is unset and the values file has no image.tag"
 [[ "$HOST_COUNT" =~ ^[0-9]+$ && "$DPU_PER_HOST" =~ ^[0-9]+$ ]] \
     || die "could not determine hostCount/dpuPerHostCount from $VALUES_FILE (set HOST_COUNT / DPU_PER_HOST)"
+# Switches take one NVOS lease each from the underlay pool. Sum the hostCount
+# of every machine group whose hwType names a switch (same dependency-free
+# line walk as the multipod validator; commented-out groups are ignored).
+SWITCH_COUNT="${SWITCH_COUNT:-$(python3 - "$VALUES_FILE" <<'PY'
+import re, sys
+total, cur, ind = 0, None, None
+for raw in open(sys.argv[1]).read().splitlines():
+    if not raw.strip() or raw.lstrip().startswith("#"):
+        continue
+    indent = len(raw) - len(raw.lstrip())
+    m = re.match(r'\s*([A-Za-z0-9_.-]+)\s*:\s*(\S.*)?$', raw)
+    if not m:
+        continue
+    key, val = m.group(1), re.sub(r"\s+#.*$", "", m.group(2) or "").strip().strip('"\'')
+    if cur is not None and indent < ind:
+        total += cur["hosts"] if "switch" in cur["hw"] else 0
+        cur = None
+    if key in ("hostCount", "hwType") and cur is None:
+        cur, ind = {"hosts": 0, "hw": ""}, indent
+    if key == "hostCount":
+        cur["hosts"] = int(re.sub(r"\D", "", val) or 0)
+    elif key == "hwType":
+        cur["hw"] = val.lower()
+if cur is not None and "switch" in cur["hw"]:
+    total += cur["hosts"]
+print(total)
+PY
+)}"
+[[ "$SWITCH_COUNT" =~ ^[0-9]+$ ]] || die "SWITCH_COUNT must be a number (got '${SWITCH_COUNT}')"
 # Passwords are inlined into sh -c JSON heredocs on the vault pod; quotes,
 # backslashes, or whitespace would break quoting or corrupt the JSON silently.
 for _pw in "$BMC_PASSWORD" "$UEFI_DPU_PASSWORD" "$UEFI_HOST_PASSWORD"; do
@@ -844,6 +878,20 @@ reserve_first = {env["SCALE_RESERVE"]}
 # ("Resource pool lo-ip is empty"). Pools DO reconcile at startup (unlike
 # networks), so appending a simulated range takes effect on restart.
 SIM_LO = ', { start = "10.103.0.1", end = "10.103.63.254" }]'
+import re
+def stanza_values(txt, name):
+    """(prefix, gateway) of an existing [networks.<name>] stanza, or None."""
+    m = re.search(r'^\[networks\.' + re.escape(name) + r'\][ \t]*$(.*?)(?=^\[|\Z)', txt, re.M | re.S)
+    if not m:
+        return None
+    pfx = re.search(r'^\s*prefix\s*=\s*"([^"]+)"', m.group(1), re.M)
+    gw = re.search(r'^\s*gateway\s*=\s*"([^"]+)"', m.group(1), re.M)
+    return (pfx.group(1) if pfx else "", gw.group(1) if gw else "")
+WANT = {
+    "simulated-oob": (env["SCALE_OOB_PREFIX"], env["SCALE_OOB_GW"]),
+    "simulated-admin": (env["SCALE_ADMIN_PREFIX"], env["SCALE_ADMIN_GW"]),
+    "simulated-underlay": (env["SCALE_UNDERLAY_PREFIX"], env["SCALE_UNDERLAY_GW"]),
+}
 changed = False
 for k, v in cm["data"].items():
     if "[site_explorer]" not in v:
@@ -889,6 +937,13 @@ for k, v in cm["data"].items():
             seen_secs.add(s)
             out.extend(tuning_secs[s][1])
     new = "\n".join(out) + ("\n" if v_work.endswith("\n") else "")
+    # A stanza left by an earlier run with other SCALE_* values would keep
+    # its old prefix while MAT relays to the new gateway; stop before apply.
+    for name, want in WANT.items():
+        have = stanza_values(new, name)
+        if have is not None and have != want:
+            print(f"mismatch [networks.{name}] has prefix {have[0]} gateway {have[1]}, requested {want[0]} gateway {want[1]}")
+            sys.exit(0)
     if "[networks.simulated-oob]" not in new:
         new = new.rstrip("\n") + "\n" + networks
     if "[networks.simulated-underlay]" not in new:
@@ -911,13 +966,16 @@ json.dump(cm, open(path, "w"))
 print("changed" if changed else "nochange")
 PY
 )"
+    if [[ "$_PATCH_RESULT" == mismatch* ]]; then
+        die "site config ${_PATCH_RESULT#mismatch } - keep the SCALE_* prefixes this site was set up with, or remove the stanza and its network segment before re-running"
+    fi
     if [[ "$_PATCH_RESULT" == "changed" ]]; then
         kubectl apply -f "$CM_JSON" >/dev/null
         info "scale config applied (proxy-direct bmc_proxy, simulated networks, knobs, lo-ip); restarting nico-api"
         kubectl rollout restart deployment/nico-api -n "$NICO_SYSTEM_NS" >/dev/null
         kubectl rollout status deployment/nico-api -n "$NICO_SYSTEM_NS" --timeout=180s >/dev/null \
             || warn "nico-api rollout did not complete in time; continuing"
-        ok "scale networks: oob ${SCALE_OOB_PREFIX} (gw ${SCALE_OOB_GW}), admin ${SCALE_ADMIN_PREFIX} (gw ${SCALE_ADMIN_GW})"
+        ok "scale networks: oob ${SCALE_OOB_PREFIX} (gw ${SCALE_OOB_GW}), admin ${SCALE_ADMIN_PREFIX} (gw ${SCALE_ADMIN_GW}), underlay ${SCALE_UNDERLAY_PREFIX} (gw ${SCALE_UNDERLAY_GW})"
         ok "site_explorer knobs: concurrent=${SCALE_CONCURRENT_EXPLORATIONS} per_run=${SCALE_EXPLORATIONS_PER_RUN} create/run=${SCALE_MACHINES_CREATED_PER_RUN}"
         [[ -n "${SCALE_RUN_INTERVAL:-}${SCALE_FW_CONCURRENCY:-}${SCALE_FW_RUN_INTERVAL:-}${SCALE_STATE_MAX_CONCURRENCY:-}" ]] && \
             ok "tuning overrides (#3738): se.run_interval=${SCALE_RUN_INTERVAL:-·} fw.concurrency=${SCALE_FW_CONCURRENCY:-·} fw.run_interval=${SCALE_FW_RUN_INTERVAL:-·} state.max_concurrency=${SCALE_STATE_MAX_CONCURRENCY:-·}"
@@ -936,7 +994,16 @@ PY
     _ensure_segment() {   # $1=name $2=type-ilike $3=prefix $4=gateway $5=reserve
         local name="$1" typ="$2" pfx="$3" gw="$4" rsv="$5"
         if [[ "$(psql_count "SELECT count(*) FROM network_segments WHERE name='${name}';")" != "0" ]]; then
-            ok "segment ${name} present"
+            # Re-runs with other SCALE_* values would leave MAT relaying to a
+            # gateway the persisted segment does not own; refuse to continue.
+            local have
+            have="$(psql_q "SELECT np.prefix::text || ' ' || host(np.gateway)
+                FROM network_prefixes np JOIN network_segments ns ON ns.id = np.segment_id
+                WHERE ns.name='${name}' ORDER BY np.prefix LIMIT 1;" || true)"
+            if [[ -n "$have" && "$have" != "${pfx} ${gw}" ]]; then
+                die "segment ${name} exists as ${have} but ${pfx} ${gw} was requested - keep the SCALE_* values this site was set up with, or delete the segment and its site-config stanza before re-running"
+            fi
+            ok "segment ${name} present (${have:-prefix not checked})"
             return
         fi
         warn "segment ${name} missing (config seeding is bootstrap-once on multi-domain sites) — creating from template"
@@ -1126,6 +1193,8 @@ fi
     || die "could not resolve DHCP relays; set OOB_DHCP_RELAY and ADMIN_DHCP_RELAY"
 ok "OOB:   relay ${OOB_DHCP_RELAY}   prefix ${OOB_PREFIX:-unknown}"
 ok "admin: pool ${ADMIN_PREFIX:-unknown}   DPU/switch DHCP relay ${ADMIN_DHCP_RELAY} (underlay pool ${UNDERLAY_PREFIX:-n/a})"
+# _usable <cidr> <reserve_first>: leases a pool can hand out (size minus the
+# reserved leading addresses and broadcast), floored at zero.
 _usable() { local m="${1##*/}" r="$2"; local u=$(( (1 << (32 - m)) - r - 1 )); (( u < 0 )) && u=0; echo "$u"; }
 # Demand per pool (measured live):
 #   OOB   = hostCount*(1 + dpuPerHost)   — one BMC IP per host and per DPU
@@ -1141,11 +1210,17 @@ if [[ "${OOB_PREFIX:-}" == */* && "${ADMIN_PREFIX:-}" == */* ]]; then
     FIT_ADMIN=$(( ADMIN_USABLE / (DPU_PER_HOST + 1) ))
     FIT=$(( FIT_OOB < FIT_ADMIN ? FIT_OOB : FIT_ADMIN ))
     FIT_NOTE=""
-    if [[ "${UNDERLAY_PREFIX:-}" == */* && "${DPU_PER_HOST:-0}" -gt 0 ]]; then
+    if [[ "${UNDERLAY_PREFIX:-}" == */* ]]; then
         UNDERLAY_USABLE="$(_usable "$UNDERLAY_PREFIX" "${UNDERLAY_RESERVE:-$ADMIN_RESERVE}")"
-        FIT_UNDERLAY=$(( UNDERLAY_USABLE / DPU_PER_HOST ))   # switch NVOS demand not counted
-        FIT=$(( FIT < FIT_UNDERLAY ? FIT : FIT_UNDERLAY ))
-        FIT_NOTE="; underlay ${UNDERLAY_PREFIX} ≈${UNDERLAY_USABLE} usable → ≤${FIT_UNDERLAY} hosts"
+        # one NVOS lease per switch comes off the top, the rest is DPU OOB
+        UNDERLAY_FOR_DPUS=$(( UNDERLAY_USABLE - SWITCH_COUNT )); (( UNDERLAY_FOR_DPUS < 0 )) && UNDERLAY_FOR_DPUS=0
+        if (( DPU_PER_HOST > 0 )); then
+            FIT_UNDERLAY=$(( UNDERLAY_FOR_DPUS / DPU_PER_HOST ))
+            FIT=$(( FIT < FIT_UNDERLAY ? FIT : FIT_UNDERLAY ))
+            FIT_NOTE="; underlay ${UNDERLAY_PREFIX} ≈${UNDERLAY_USABLE} usable, ${SWITCH_COUNT} switch leases → ≤${FIT_UNDERLAY} hosts"
+        elif [[ "${MAT_MULTIPOD:-0}" != "1" ]] && (( SWITCH_COUNT > UNDERLAY_USABLE )); then   # multipod: MPCHK checks per relay
+            die "underlay ${UNDERLAY_PREFIX} provides ~${UNDERLAY_USABLE} leases but ${SWITCH_COUNT} switches need one each - widen SCALE_UNDERLAY_PREFIX or lower the switch count"
+        fi
     fi
     info "pool fit: OOB ${OOB_PREFIX} ≈${OOB_USABLE} usable → ≤${FIT_OOB} hosts; admin ${ADMIN_PREFIX} ≈${ADMIN_USABLE} usable → ≤${FIT_ADMIN} hosts${FIT_NOTE}"
     if [[ "${MAT_MULTIPOD:-0}" == "1" ]]; then
@@ -1155,10 +1230,14 @@ if [[ "${OOB_PREFIX:-}" == */* && "${ADMIN_PREFIX:-}" == */* ]]; then
         #   * pods SHARING a relay          -> their demand is additive on one
         #                                      pool, and must be checked
         # Parse every pod group out of the values file and validate per relay.
-        _MP_REPORT="$(python3 - "$VALUES_FILE" "$OOB_PREFIX" "$OOB_RESERVE" <<'MPCHK'
+        _MP_REPORT="$(python3 - "$VALUES_FILE" "$OOB_PREFIX" "$OOB_RESERVE" \
+            "${UNDERLAY_PREFIX:-}" "${ADMIN_DHCP_RELAY:-}" "${UNDERLAY_RESERVE:-$ADMIN_RESERVE}" <<'MPCHK'
 import ipaddress, re, sys
 
 values_file, default_prefix, default_reserve = sys.argv[1], sys.argv[2], sys.argv[3]
+# Shared underlay pool (DPU OOB + switch NVOS leases): known in scale mode,
+# empty in override mode where only a documented prefix can size it.
+underlay_prefix, underlay_gw, underlay_reserve = sys.argv[4], sys.argv[5], sys.argv[6]
 text = open(values_file).read()
 
 def groups_from_yaml(doc):
@@ -1177,6 +1256,8 @@ def groups_from_yaml(doc):
                 "hosts": hosts,
                 "dpus": int(grp.get("dpuPerHostCount") or 0),
                 "relay": str(grp.get("oobDhcpRelayAddress") or "").strip(),
+                "hw": str(grp.get("hwType") or "").lower(),
+                "urelay": str(grp.get("adminDhcpRelayAddress") or "").strip(),
             })
     return out
 
@@ -1203,19 +1284,23 @@ for raw in text.splitlines():
     m = re.match(r'\s*([A-Za-z0-9_.-]+)\s*:\s*(\S.*)?$', raw)
     if not m:
         continue
-    key, val = m.group(1), (m.group(2) or "").strip()
+    key, val = m.group(1), re.sub(r"\s+#.*$", "", m.group(2) or "").strip()
     # Close the group only on a real dedent: sibling keys (dpuRebootDelay, etc.)
     # sit at the same indent as hostCount and must not end the group.
     if cur is not None and cur_indent is not None and indent < cur_indent:
         groups.append(cur); cur, cur_indent = None, None
+    if key in ("hostCount", "hwType") and cur is None:
+        cur, cur_indent = {"hosts": 0, "dpus": 0, "relay": "", "hw": "", "urelay": ""}, indent
     if key == "hostCount":
-        if cur is None:
-            cur, cur_indent = {"hosts": 0, "dpus": 0, "relay": ""}, indent
         cur["hosts"] = int(re.sub(r"\D", "", val) or 0)
+    elif key == "hwType" and cur is not None:
+        cur["hw"] = val.strip('"\'').lower()
     elif key == "dpuPerHostCount" and cur is not None:
         cur["dpus"] = int(re.sub(r"\D", "", val) or 0)
     elif key == "oobDhcpRelayAddress" and cur is not None:
         cur["relay"] = val.strip('"\'')
+    elif key == "adminDhcpRelayAddress" and cur is not None:
+        cur["urelay"] = val.strip('"\'')
 if cur is not None:
     groups.append(cur)
 
@@ -1261,6 +1346,41 @@ for relay, need in sorted(demand.items()):
     if not ok:
         problems.append(f"relay {relay} needs {need} IPs but {cidr} only provides ~{cap}")
 
+# Underlay demand is additive across every group that relays DPU OOB / switch
+# NVOS DHCP to the same adminDhcpRelayAddress: one lease per DPU, one per switch.
+underlay = {}
+for g in groups:
+    need = g["hosts"] * g["dpus"] + (g["hosts"] if "switch" in g["hw"] else 0)
+    if need:
+        r = g["urelay"] or "<default>"
+        underlay[r] = underlay.get(r, 0) + need
+
+def underlay_prefix_for(relay):
+    if underlay_prefix and relay == underlay_gw:
+        return underlay_prefix
+    if relay == "<default>":
+        return None
+    best = None
+    for cand in re.findall(r'([0-9]+(?:\.[0-9]+){3}/[0-9]+)', text):
+        try:
+            net = ipaddress.ip_network(cand, strict=False)
+            if ipaddress.ip_address(relay) in net and (best is None or net.prefixlen > best.prefixlen):
+                best = net
+        except ValueError:
+            pass
+    return str(best) if best else None
+
+for relay, need in sorted(underlay.items()):
+    cidr = underlay_prefix_for(relay)
+    if cidr is None:
+        lines.append(f"  underlay relay {relay}: needs {need} IPs, pool prefix unknown (not checked)")
+        continue
+    cap = usable(cidr, underlay_reserve or default_reserve)
+    ok = need <= cap
+    lines.append(f"  underlay relay {relay}: needs {need} IPs, {cidr} provides ~{cap} -> {'OK' if ok else 'TOO SMALL'}")
+    if not ok:
+        problems.append(f"underlay relay {relay} needs {need} IPs but {cidr} only provides ~{cap}")
+
 print("\n".join(lines))
 if problems:
     print("FAIL " + "; ".join(problems))
@@ -1279,7 +1399,7 @@ MPCHK
         fi
         ok "multipod sizing validated across all pod groups"
     elif (( HOST_COUNT > FIT )); then
-        (( FIT < 1 )) && die "pools too small for even 1 host × ${DPU_PER_HOST} DPUs — widen the admin/OOB prefixes or lower DPU_PER_HOST"
+        (( FIT < 1 )) && die "pools too small for even 1 host × ${DPU_PER_HOST} DPUs — widen the admin/OOB/underlay prefixes or lower DPU_PER_HOST or the switch count"
         warn "requested ${HOST_COUNT} hosts exceeds pool capacity (${FIT}) — auto-fitting hostCount=${FIT}"
         warn "  (override with HOST_COUNT/DPU_PER_HOST env vars, or widen the site's DHCP prefixes)"
         confirm "Proceed with hostCount=${FIT} × ${DPU_PER_HOST} DPUs?" || die "aborted on sizing"
